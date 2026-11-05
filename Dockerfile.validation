@@ -1,0 +1,11 @@
+# syntax=docker/dockerfile:1
+FROM --platform=linux/amd64 node:22-bookworm
+
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+    ca-certificates curl dnsutils file gawk git libguestfs-tools make \
+    openssh-client openssl python3 qemu-system-x86 qemu-utils rsync \
+    subversion unzip wget zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash", "scripts/integration/run-local-linux-validation.sh"]

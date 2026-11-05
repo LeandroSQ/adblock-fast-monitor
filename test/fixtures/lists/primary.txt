@@ -1,0 +1,4 @@
+# Deterministic local ad-block fixture. Do not replace with a network URL.
+0.0.0.0 ads.example.test
+0.0.0.0 telemetry.example.test
+127.0.0.1 metrics.example.test

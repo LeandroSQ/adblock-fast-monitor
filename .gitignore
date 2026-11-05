@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.ci-work/
+.local-validation/
+openwrt-sdk-*/
+sdk.tar.zst
+*.img
+*.img.gz
+playwright-report/
+test-results/

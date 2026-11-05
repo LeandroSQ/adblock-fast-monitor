@@ -1,0 +1,123 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+
+. /usr/share/libubox/jshn.sh
+. /usr/lib/adblock-fast-monitor/common.sh
+
+STATE_DIR="$MONITOR_STATE"
+JOB_FILE="$STATE_DIR/job"
+LOCK_DIR="$STATE_DIR/action.lock"
+WORKER=/usr/libexec/adblock-fast-monitor-job
+
+action_state_init() {
+	for protected_path in "$MONITOR_STATE" "$MONITOR_JOB" "$LOCK_DIR"; do
+		[ -L "$protected_path" ] && return 1
+		[ -e "$protected_path" ] || continue
+		[ "$(stat -c '%u' "$protected_path" 2>/dev/null)" = 0 ] || return 1
+		case "$protected_path" in
+			"$MONITOR_STATE") [ -d "$protected_path" ] && [ "$(stat -c '%a' "$protected_path" 2>/dev/null)" = 700 ] || return 1 ;;
+			"$MONITOR_JOB") [ -f "$protected_path" ] && [ "$(stat -c '%a' "$protected_path" 2>/dev/null)" = 600 ] || return 1 ;;
+			"$LOCK_DIR") [ -d "$protected_path" ] && [ "$(stat -c '%a' "$protected_path" 2>/dev/null)" = 700 ] || return 1 ;;
+		esac
+	done
+	monitor_state_init
+}
+
+read_request() {
+	local request
+	IFS= read -r request
+	json_load "${request:-{}}"
+}
+
+reply_error() {
+	json_init
+	json_add_boolean accepted 0
+	json_add_string error "$1"
+	json_add_string message "$2"
+	json_dump
+}
+
+reply_job() {
+	state=unknown
+	result=unknown
+	action=
+	domain=
+	current_rule=unknown
+	persisted=0
+	rebuild=unknown
+	active_dns=unknown
+	message='No domain-rule job has run.'
+	if [ -r "$JOB_FILE" ]; then
+		while IFS='=' read -r key value; do
+			case "$key" in
+				state) state=$value ;;
+				result) result=$value ;;
+				action) action=$value ;;
+				domain) domain=$value ;;
+				current_rule) current_rule=$value ;;
+				persisted) persisted=$value ;;
+				rebuild) rebuild=$value ;;
+				active_dns) active_dns=$value ;;
+				message) message=$value ;;
+			esac
+		done < "$JOB_FILE"
+	fi
+	json_init
+	json_add_string state "$state"
+	json_add_string result "$result"
+	json_add_string action "$action"
+	json_add_string domain "$domain"
+	json_add_string current_rule "$current_rule"
+	json_add_boolean persisted "$persisted"
+	json_add_string rebuild "$rebuild"
+	json_add_string active_dns "$active_dns"
+	json_add_string message "$message"
+	json_dump
+}
+
+case "$1" in
+	list)
+		echo '{"action":{"action":"String","domain":"String","confirm_rebuild":"Boolean"},"job":{}}'
+		;;
+	job)
+		reply_job
+		;;
+	action)
+		read_request || { reply_error invalid-request 'Malformed JSON request.'; exit 0; }
+		json_get_var action action
+		json_get_var domain domain
+		json_get_type confirmation_type confirm_rebuild
+		json_get_var confirm_rebuild confirm_rebuild
+		case "$action" in allow|unallow|block|unblock) ;; *)
+			reply_error invalid-action 'Unsupported action.'
+			exit 0
+			;;
+		esac
+		[ -n "$domain" ] || { reply_error invalid-domain 'A domain is required.'; exit 0; }
+		case "$action" in
+			block|unallow|unblock)
+				[ "$confirmation_type" = boolean ] && [ "$confirm_rebuild" = 1 ] || {
+					reply_error confirmation-required 'This operation runs a full adblock-fast rebuild and requires confirm_rebuild=true.'
+					exit 0
+				}
+				;;
+		esac
+		action_state_init || { reply_error state-insecure 'Refusing to use insecure action state.'; exit 0; }
+		mkdir "$LOCK_DIR" 2>/dev/null || {
+			reply_error busy 'Another domain-rule operation is already running.'
+			exit 0
+		}
+		case "$action" in
+			block|unallow|unblock) rebuild_confirmation=confirmed ;;
+			*) rebuild_confirmation=not-required ;;
+		esac
+		"$WORKER" "$action" "$domain" held "$rebuild_confirmation" >/dev/null 2>&1 &
+		json_init
+		json_add_boolean accepted 1
+		json_add_string state queued
+		json_add_string action "$action"
+		json_add_string domain "$domain"
+		json_dump
+		;;
+	*) reply_error unsupported-method 'Unsupported RPC method.' ;;
+esac

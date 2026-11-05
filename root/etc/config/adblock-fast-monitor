@@ -1,0 +1,5 @@
+config monitor 'config'
+	option enabled '0'
+	option max_events '256'
+	option poll_interval '5'
+	option own_logqueries '0'

@@ -1,0 +1,17 @@
+{
+  "$schema": "../../schemas/runtime-test-manifest.schema.json",
+  "fixtureLists": [
+    "test/fixtures/lists/primary.txt",
+    "test/fixtures/lists/allow.txt"
+  ],
+  "requiredAdapters": {
+    "browser": "test/browser/",
+    "qemu": "scripts/integration/runtime-dns-lifecycle.sh",
+    "performance": "root/test/performance/results.json"
+  },
+  "performanceBudgets": {
+    "dnsQueryP95Ms": 25,
+    "peakRssMiB": 96,
+    "refreshSeconds": 30
+  }
+}

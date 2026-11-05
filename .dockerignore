@@ -1,0 +1,7 @@
+.git
+node_modules
+dist
+.ci-work
+.local-validation
+playwright-report
+test-results

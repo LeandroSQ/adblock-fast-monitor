@@ -1,0 +1,33 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+. /usr/lib/adblock-fast-monitor/common.sh
+
+cleanup() {
+	monitor_state_init || exit 1
+	# Always release a monitor-owned value, including after own_logqueries was
+	# turned off. A user-modified live value is deliberately left untouched.
+	monitor_dnsmasq_release
+}
+
+[ "$1" = cleanup ] && { cleanup; exit 0; }
+monitor_state_init || exit 1
+
+if ! uci -q get "$MONITOR_CONFIG.config.enabled" | grep -qx 1; then
+	monitor_dnsmasq_release
+	monitor_set state disabled
+	exit 0
+fi
+
+if uci -q get "$MONITOR_CONFIG.config.own_logqueries" | grep -qx 1; then
+	monitor_dnsmasq_acquire || { monitor_set state degraded; exit 1; }
+else
+	monitor_dnsmasq_release
+fi
+
+max="$(monitor_max_events)"
+monitor_set state running
+monitor_set started "$(date +%s)"
+monitor_set capacity "$max"
+umask 077
+/usr/bin/ucode /usr/libexec/adblock-fast-monitor-ring.uc "$MONITOR_STATE" "$max"
+monitor_set state degraded

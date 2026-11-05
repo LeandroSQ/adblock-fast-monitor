@@ -1,0 +1,14 @@
+{
+  "measurementState": "proposed",
+  "p0": {
+    "classification": "proposed",
+    "label": "P0 proposed baseline — not measured"
+  },
+  "dnsQueryP95Ms": 20,
+  "peakRssMiB": 72,
+  "refreshSeconds": 20,
+  "environment": {
+    "kind": "unmeasured",
+    "note": "Replace only with output from the isolated OpenWrt QEMU measurement adapter."
+  }
+}

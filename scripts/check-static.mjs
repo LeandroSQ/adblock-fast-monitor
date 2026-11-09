@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { projectRoot } from './lib/manifest.mjs';
 
-const ignored = new Set(['node_modules', 'dist', '.git', '.ci-work']);
+const ignored = new Set(['node_modules', 'dist', '.git', '.ci-work', '.local-validation']);
 const files = [];
 
 async function walk(directory) {

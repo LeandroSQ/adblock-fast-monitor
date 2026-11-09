@@ -39,15 +39,20 @@ function textNode(value) {
 }
 
 function labelForHealth(status) {
-	if (status.enabled === false)
-		return _('Disabled');
-	if (status.stale)
-		return _('Stale');
-	if (status.degraded)
-		return _('Degraded');
-	if (status.health === 'healthy' || status.health === 'ok')
-		return _('Healthy');
-	return model.text(status.health, _('Unknown'));
+	var labels = {
+		disabled: _('Disabled'),
+		degraded: _('Degraded'),
+		stale: _('Stale'),
+		error: _('Error'),
+		pending: _('Pending'),
+		applying: _('Applying'),
+		applied: _('Applied'),
+		failed: _('Failed'),
+		healthy: _('Healthy'),
+		unknown: _('Unknown')
+	};
+
+	return labels[status.state] || labels.unknown;
 }
 
 return view.extend({
@@ -111,9 +116,7 @@ return view.extend({
 
 	_renderStatus: function(status) {
 		var health = labelForHealth(status);
-		var stateClass = status.state === 'disabled' ? 'warning' :
-			(status.state === 'degraded' || status.state === 'stale' || status.state === 'failed' ? 'warning' :
-				(status.state === 'healthy' || status.state === 'applied' ? 'success' : ''));
+		var stateClass = model.stateClass(status.state);
 
 		dom.content(this.statusNode, [
 			node('div', { 'class': 'cbi-section-node' }, [

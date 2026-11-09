@@ -1,0 +1,10 @@
+{
+  "release": "25.12.6",
+  "target": "x86/64",
+  "unavailablePackageDependencies": [
+    {
+      "name": "rpcd-mod-uci",
+      "observedError": "ERROR: unable to select packages:\n  rpcd-mod-uci (no such package)"
+    }
+  ]
+}

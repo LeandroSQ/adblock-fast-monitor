@@ -16,7 +16,16 @@ test('QEMU DNS lifecycle executes real domain-action lifecycle coverage', async 
   assert.match(actions, /\/etc\/init\.d\/adblock-fast check/);
   assert.match(actions, /assert_blocked_a action-cname\.example\.test/);
   assert.match(actions, /assert_blocked_aaaa/);
+  assert.match(actions, /assert_not_blocked_a action-block\.example\.test/);
+  assert.match(actions, /assert_job_boolean persisted/);
+  assert.match(actions, /assert_job_string active_dns unknown/);
   assert.match(actions, /rebuild-failed-active-unverified/);
+  assert.match(actions, /confirmation_denied/);
+  assert.match(actions, /conflict_denied/);
+  assert.match(actions, /malformed=/);
+  assert.match(actions, /bad;domain/);
+  assert.match(actions, /foo\.ck/);
+  assert.match(actions, /assert_blocked_a ads\.example\.test/);
   assert.match(actions, /error' \| grep -qx busy/);
   assert.match(actions, /wait_terminal_state/);
   assert.match(actions, /sync; reboot/);

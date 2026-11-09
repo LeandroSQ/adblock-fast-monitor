@@ -17,15 +17,20 @@ remote "
 	uci set dhcp.@dnsmasq[0].logqueries=0
 	uci commit dhcp
 	/etc/init.d/dnsmasq restart
+	ABFM_RESOLVER_ARTIFACTS=/root/adblock-fast-monitor-test/dns-lifecycle-ready
+	. /root/adblock-fast-monitor-test/dns-resolver-readiness.sh
+	abfm_wait_dns_a_fixture ads.example.test 0.0.0.0
 	uci set adblock-fast-monitor.config.own_logqueries=1
 	uci commit adblock-fast-monitor
 	/etc/init.d/adblock-fast-monitor start
+	abfm_wait_dns_a_fixture ads.example.test 0.0.0.0
 	test -f /var/run/adblock-fast-monitor/dnsmasq-logqueries.owner
 	test \"\$(stat -c '%u:%a' /var/run/adblock-fast-monitor/dnsmasq-logqueries.owner)\" = '0:600'
 	test \"\$(uci -q get dhcp.@dnsmasq[0].logqueries)\" = 1
 	uci set adblock-fast-monitor.config.own_logqueries=0
 	uci commit adblock-fast-monitor
 	/etc/init.d/adblock-fast-monitor restart
+	abfm_wait_dns_a_fixture ads.example.test 0.0.0.0
 	test ! -e /var/run/adblock-fast-monitor/dnsmasq-logqueries.owner
 	test \"\$(uci -q get dhcp.@dnsmasq[0].logqueries)\" = 0
 	ubus call adblock-fast-monitor status >/dev/null

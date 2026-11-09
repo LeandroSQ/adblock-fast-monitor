@@ -23,8 +23,11 @@ test('worker rejects malicious and broad domains before UCI mutation', () => {
   assert.match(job, /\*\[!a-z0-9\.-\]\*/);
   assert.match(job, /public-suffix-data-unavailable/);
   assert.match(job, /Refusing a public-suffix rule/);
+  assert.ok(job.includes('$0 ~ /^\\*\\./'));
+  assert.match(job, /\$0 == "!" candidate/);
   assert.match(job, /config\.blocked_domain=\$domain/);
   assert.match(job, /grep -Fqx -- "\$domain"/);
+  assert.match(job, /job_domain=invalid/);
 });
 
 test('worker has idempotency, conflicts, and honest DNS verification outcomes', () => {
@@ -42,6 +45,9 @@ test('RPC isolates write capability and gates rebuilding operations', () => {
   assert.match(rpc, /confirm_rebuild=true/);
   assert.match(rpc, /mkdir "\$LOCK_DIR"/);
   assert.match(rpc, /action_state_init \|\| \{ reply_error state-insecure/);
+  assert.match(rpc, /validate_domain \|\| \{ reply_error invalid-domain/);
+  assert.match(rpc, /state=queued/);
+  assert.match(rpc, /write_queued_job "\$rebuild_state"/);
   assert.match(rpc, /"\$WORKER" "\$action" "\$domain" held/);
   assert.doesNotMatch(rpc, /\/bin\/sh -c|eval|exec "\$/);
   assert.match(api, /"adblock-fast-monitor-actions": \[ "job" \]/);

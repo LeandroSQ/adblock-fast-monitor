@@ -33,6 +33,21 @@ assert.strictEqual(page.events[0].domain, '<img src=x>');
 assert.strictEqual(page.nextCursor, 'next');
 assert.strictEqual(page.events[0].ruleState, 'blocked');
 
+for (const [state, expectedClass] of Object.entries({
+	disabled: 'warning',
+	degraded: 'warning',
+	stale: 'warning',
+	error: 'error',
+	pending: 'warning',
+	applying: 'warning',
+	applied: 'success',
+	failed: 'error'
+})) {
+	assert.strictEqual(model.status({ state }).state, state);
+	assert.strictEqual(model.stateClass(state), expectedClass);
+}
+assert.strictEqual(model.status({ state: 'unsafe-server-text' }).state, 'unknown');
+
 const view = fs.readFileSync(
 	'root/www/luci-static/resources/view/adblock-fast-monitor/overview.js', 'utf8'
 );

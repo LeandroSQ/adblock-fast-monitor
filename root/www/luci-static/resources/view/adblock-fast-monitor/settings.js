@@ -20,7 +20,7 @@ return view.extend({
 		option.description = _('Seconds between collector polls.');
 
 		option = section.option(form.Flag, 'own_logqueries', _('Manage dnsmasq log queries'));
-		option.description = _('Only enable when this monitor may manage dnsmasq logging.');
+		option.description = _('Only enable when this monitor may manage dnsmasq logging. dnsmasq expands the boolean setting to detailed query logging.');
 
 		return map.render();
 	}

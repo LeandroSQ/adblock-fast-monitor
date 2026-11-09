@@ -54,6 +54,7 @@ call_action() {
 		printf 'action was not accepted: %s\n' "$response" >&2
 		return 1
 	}
+	printf '%s' "$response" | jsonfilter -e '@.state' | grep -qx queued
 }
 
 assert_blocked_a() {
@@ -68,6 +69,14 @@ assert_blocked_aaaa() {
 
 assert_not_blocked_a() {
 	! dns_a "$1" | grep -qx '0.0.0.0'
+}
+
+assert_job_string() {
+	remote "ubus call adblock-fast-monitor-actions job '{}' | jsonfilter -e '@.$1'" | grep -qx "$2"
+}
+
+assert_job_boolean() {
+	remote "ubus call adblock-fast-monitor-actions job '{}' | jsonfilter -e '@.$1'" | grep -Eq 'true|1'
 }
 
 remote "
@@ -98,37 +107,62 @@ remote "
 	/etc/init.d/dnsmasq restart
 	/etc/init.d/adblock-fast enable
 	/etc/init.d/adblock-fast dl
+	ABFM_RESOLVER_ARTIFACTS=/root/adblock-fast-monitor-test/domain-actions-ready
+	. /root/adblock-fast-monitor-test/dns-resolver-readiness.sh
+	abfm_wait_dns_a_fixture ads.example.test 0.0.0.0
 	/etc/init.d/adblock-fast check ads.example.test | grep -F 'Found'
 "
 
 # A real generated list must block the fixture domain before allow removes it.
 assert_blocked_a ads.example.test
+confirmation_denied="$(remote "ubus call adblock-fast-monitor-actions action '{\"action\":\"block\",\"domain\":\"action-unconfirmed.example.test\",\"confirm_rebuild\":false}'")"
+printf '%s' "$confirmation_denied" | jsonfilter -e '@.error' | grep -qx confirmation-required
+remote "! uci -q get adblock-fast.config.blocked_domain | tr ' ' '\n' | grep -Fx action-unconfirmed.example.test"
+conflict_denied="$(remote "ubus call adblock-fast-monitor-actions action '{\"action\":\"block\",\"domain\":\"ads.example.test\",\"confirm_rebuild\":true}'")"
+printf '%s' "$conflict_denied" | jsonfilter -e '@.accepted' | grep -Eq 'true|1'
+[ "$(wait_job rejected)" = conflict ]
 call_action allow ads.example.test false
 [ "$(wait_job degraded)" = persisted-active-unknown ]
 remote "uci -q get adblock-fast.config.allowed_domain | tr ' ' '\n' | grep -Fx ads.example.test"
+assert_job_boolean persisted
+assert_job_string active_dns unknown
 assert_not_blocked_a ads.example.test
 call_action unallow ads.example.test true
 [ "$(wait_job degraded)" = persisted-active-unknown ]
+remote "! uci -q get adblock-fast.config.allowed_domain | tr ' ' '\n' | grep -Fx ads.example.test"
+assert_job_string persisted false
+assert_job_string active_dns unknown
 assert_blocked_a ads.example.test
 
 # Cache a pre-action response, then verify the real dl lifecycle changes both
 # direct and CNAME resolution. IPv6 must not expose a routable response.
+assert_not_blocked_a action-block.example.test
 dns_a action-block.example.test >/dev/null || true
 remote "
 	uci -q add_list dhcp.@dnsmasq[0].cname='action-cname.example.test,action-block.example.test'
 	uci commit dhcp
 	/etc/init.d/dnsmasq restart
+	abfm_wait_dns_a_fixture ads.example.test 0.0.0.0
 "
 call_action block action-block.example.test true
 [ "$(wait_job degraded)" = persisted-active-unknown ]
 remote "/etc/init.d/adblock-fast check action-block.example.test | grep -F 'Found'"
+remote "uci -q get adblock-fast.config.blocked_domain | tr ' ' '\n' | grep -Fx action-block.example.test"
+assert_job_boolean persisted
+assert_job_string active_dns unknown
 assert_blocked_a action-block.example.test
 assert_blocked_a action-cname.example.test
 assert_blocked_aaaa action-block.example.test
+call_action block action-block.example.test true
+[ "$(wait_job completed)" = noop ]
+assert_blocked_a action-block.example.test
 
 # Removing the custom rule runs dl again; it must invalidate the cached block.
 call_action unblock action-block.example.test true
 [ "$(wait_job degraded)" = persisted-active-unknown ]
+remote "! uci -q get adblock-fast.config.blocked_domain | tr ' ' '\n' | grep -Fx action-block.example.test"
+assert_job_string persisted false
+assert_job_string active_dns unknown
 assert_not_blocked_a action-block.example.test
 
 # An actual lifecycle execution failure must not be reported as a successful
@@ -145,11 +179,26 @@ remote 'mv /etc/init.d/adblock-fast /etc/init.d/adblock-fast.runtime-test-disabl
 init_disabled=1
 call_action block action-failure.example.test true
 [ "$(wait_job failed)" = rebuild-failed-active-unverified ]
+assert_job_boolean persisted
+assert_job_string active_dns unknown
+assert_blocked_a ads.example.test
 restore_init
 init_disabled=0
 remote "uci -q get adblock-fast.config.blocked_domain | tr ' ' '\n' | grep -Fx action-failure.example.test"
 call_action unblock action-failure.example.test true
 [ "$(wait_job degraded)" = persisted-active-unknown ]
+
+# Production RPC validation rejects malformed payloads before it writes a
+# queued job; PSL cases are then rejected by the worker before lifecycle use.
+malformed="$(remote "ubus call adblock-fast-monitor-actions action '{\"action\":\"block\",\"domain\":\"bad;domain\",\"confirm_rebuild\":true}'")"
+printf '%s' "$malformed" | jsonfilter -e '@.error' | grep -qx invalid-domain
+call_action block co.uk true
+[ "$(wait_job rejected)" = public-suffix ]
+remote "
+	printf '*.ck\n!www.ck\n' >> /usr/share/publicsuffix/public_suffix_list.dat
+"
+call_action block foo.ck true
+[ "$(wait_job rejected)" = public-suffix ]
 
 # A real slow file_url keeps the first lifecycle job active long enough to
 # prove the RPC lock rejects a concurrent request without launching another dl.
@@ -198,6 +247,7 @@ for _ in $(seq 1 90); do
 done
 remote true
 assert_blocked_a action-reboot.example.test
+remote "uci -q get adblock-fast.config.blocked_domain | tr ' ' '\n' | grep -Fx action-reboot.example.test"
 job_after_reboot="$(remote "ubus call adblock-fast-monitor-actions job '{}'")"
 printf '%s' "$job_after_reboot" | jsonfilter -e '@.state' | grep -qx unknown
 

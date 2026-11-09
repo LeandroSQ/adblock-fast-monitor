@@ -35,11 +35,13 @@ action_state_init() {
 write_job() {
 	umask 077
 	tmp="$(mktemp "$STATE_DIR/.job.XXXXXX")" || return 1
+	job_domain="$domain"
+	case "$job_domain" in ''|*[!a-z0-9.-]*) job_domain=invalid ;; esac
 	{
 		printf 'state=%s\n' "$1"
 		printf 'result=%s\n' "$2"
 		printf 'action=%s\n' "$action"
-		printf 'domain=%s\n' "$domain"
+		printf 'domain=%s\n' "$job_domain"
 		printf 'current_rule=%s\n' "$3"
 		printf 'persisted=%s\n' "$4"
 		printf 'rebuild=%s\n' "$5"
@@ -88,8 +90,16 @@ is_public_suffix() {
 	[ -r "$PSL_FILE" ] || return 2
 	awk -v candidate="$domain" '
 		/^[[:space:]]*($|\/\/)/ { next }
-		$0 == candidate { found = 1 }
-		END { exit found ? 0 : 1 }
+		{
+			gsub(/\r$/, "")
+			if ($0 == "!" candidate) exception = 1
+			else if ($0 == candidate) found = 1
+			else if ($0 ~ /^\*\./) {
+				suffix = substr($0, 3)
+				if (candidate ~ ("^[^.]+\\." suffix "$")) found = 1
+			}
+		}
+		END { exit found && !exception ? 0 : 1 }
 	' "$PSL_FILE"
 }
 
@@ -148,8 +158,8 @@ case "$action" in
 		[ "$blocked" = 0 ] || finish rejected conflict block 1 not-requested unknown 'A block rule already applies to this domain.'
 		[ "$allowed" = 0 ] || finish completed noop allow 1 not-required unknown 'Allow rule already exists; no change was made.'
 		write_job applying running none 0 not-required unknown 'Persisting allow rule through adblock-fast.'
-		if timeout "$ACTION_TIMEOUT" /etc/init.d/adblock-fast allow "$domain" >/dev/null 2>&1 &&
-			has_rule allowed_domain; then
+		timeout "$ACTION_TIMEOUT" /etc/init.d/adblock-fast allow "$domain" >/dev/null 2>&1 || true
+		if has_rule allowed_domain; then
 			finish degraded persisted-active-unknown allow 1 resolver-restart-requested unknown 'Allow rule persisted. adblock-fast requested a resolver restart, but active DNS is not verifiable for cached, CNAME, or IPv6 responses.'
 		fi
 		finish failed allow-not-persisted none 0 not-required unknown 'adblock-fast allow did not persist the rule.'
@@ -168,7 +178,9 @@ case "$action" in
 		fi
 		persisted=0
 		has_rule blocked_domain && persisted=1
-		finish failed rebuild-failed-active-unverified none "$persisted" failed unknown 'Block rule persistence was rechecked, but the rebuild failed. No further DNS restart was attempted, so any prior active blocking was left for adblock-fast to preserve; its active state could not be verified.'
+		current_rule=none
+		[ "$persisted" = 1 ] && current_rule=block
+		finish failed rebuild-failed-active-unverified "$current_rule" "$persisted" failed unknown 'Block rule persistence was rechecked, but the rebuild failed. No further DNS restart was attempted, so any prior active blocking was left for adblock-fast to preserve; its active state could not be verified.'
 		;;
 	unallow)
 		[ "$rebuild_confirmed" = confirmed ] ||
@@ -183,7 +195,9 @@ case "$action" in
 		fi
 		persisted=0
 		! has_rule allowed_domain && persisted=1
-		finish failed rebuild-failed-active-unverified allow "$persisted" failed unknown 'Allow rule removal persistence was rechecked, but the rebuild failed. No further DNS restart was attempted, so any prior active blocking was left for adblock-fast to preserve; its active state could not be verified.'
+		current_rule=allow
+		[ "$persisted" = 1 ] && current_rule=none
+		finish failed rebuild-failed-active-unverified "$current_rule" "$persisted" failed unknown 'Allow rule removal persistence was rechecked, but the rebuild failed. No further DNS restart was attempted, so any prior active blocking was left for adblock-fast to preserve; its active state could not be verified.'
 		;;
 	unblock)
 		[ "$rebuild_confirmed" = confirmed ] ||
@@ -198,6 +212,8 @@ case "$action" in
 		fi
 		persisted=0
 		! has_rule blocked_domain && persisted=1
-		finish failed rebuild-failed-active-unverified block "$persisted" failed unknown 'Block rule removal persistence was rechecked, but the rebuild failed. No further DNS restart was attempted, so any prior active blocking was left for adblock-fast to preserve; its active state could not be verified.'
+		current_rule=block
+		[ "$persisted" = 1 ] && current_rule=none
+		finish failed rebuild-failed-active-unverified "$current_rule" "$persisted" failed unknown 'Block rule removal persistence was rechecked, but the rebuild failed. No further DNS restart was attempted, so any prior active blocking was left for adblock-fast to preserve; its active state could not be verified.'
 		;;
 esac

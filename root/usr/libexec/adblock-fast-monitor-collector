@@ -25,6 +25,7 @@ else
 fi
 
 max="$(monitor_max_events)"
+monitor_refresh_known_blocks || { monitor_set state degraded; exit 1; }
 monitor_set state running
 monitor_set started "$(date +%s)"
 monitor_set capacity "$max"

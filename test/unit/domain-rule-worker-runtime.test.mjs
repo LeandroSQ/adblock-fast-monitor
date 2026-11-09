@@ -97,6 +97,7 @@ test('malicious and public-suffix domains do not mutate UCI or invoke lifecycle 
   await run('block', 'bad;domain', 'confirmed');
   let job = await readFile(join(state, 'job'), 'utf8');
   assert.match(job, /result=invalid-domain/);
+  assert.match(job, /domain=invalid/);
   assert.equal((await stat(join(state, 'job'))).mode & 0o777, 0o600);
   await run('block', 'public.example.test', 'confirmed');
   job = await readFile(join(state, 'job'), 'utf8');
@@ -132,7 +133,18 @@ test('rebuild failure preserves its rechecked UCI result and does not claim acti
   assert.match(job, /state=failed/);
   assert.match(job, /result=rebuild-failed-active-unverified/);
   assert.match(job, /persisted=1/);
+  assert.match(job, /current_rule=block/);
   assert.match(job, /active_dns=unknown/);
+});
+
+test('public-suffix wildcard and exception entries remain bounded', async () => {
+  await writeFile(psl, 'com\nco.uk\npublic.example.test\n*.ck\n!www.ck\n');
+  await run('block', 'foo.ck', 'confirmed');
+  let job = await readFile(join(state, 'job'), 'utf8');
+  assert.match(job, /result=public-suffix/);
+  await run('block', 'www.ck');
+  job = await readFile(join(state, 'job'), 'utf8');
+  assert.match(job, /result=confirmation-required/);
 });
 
 test('one lock prevents concurrent rebuilds', async () => {

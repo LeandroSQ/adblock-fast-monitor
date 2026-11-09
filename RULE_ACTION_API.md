@@ -21,6 +21,8 @@ that confirmation, so `dl` is never silently queued or run. `allow` exclusively
 calls the supported `/etc/init.d/adblock-fast allow DOMAIN` lifecycle action.
 
 The immediate `action` reply only means that one bounded asynchronous job was
+accepted. It atomically publishes `state=queued` before the worker starts, so
+`job` never returns a prior action's result after a new action has been
 accepted. Read `job` for its terminal outcome. The worker stores that outcome
 as trusted, fixed-key `key=value` data at `/tmp/adblock-fast-monitor/job`.
 Terminal `degraded` with `persisted-active-unknown` is intentional: this
@@ -39,6 +41,26 @@ unsafe broad syntax. A complete public-suffix data file is mandatory at
 `/usr/share/publicsuffix/public_suffix_list.dat`; without it, the worker rejects
 every mutable operation rather than risk a public-suffix action. Existing
 allow/block conflicts are rejected, and already-correct state is idempotent.
+The public-suffix check supports exact, wildcard, and exception PSL entries.
+Malformed domains are rejected synchronously by `action`, before a job file or
+worker is created; PSL rejection is reported by the bounded worker job.
+
+## Production-path verification
+
+`scripts/integration/runtime-domain-actions.sh` runs in the QEMU guest against
+the packaged RPC adapter, adblock-fast, and dnsmasq. It covers:
+
+* accepted queued progress, confirmation denial, conflicts, idempotency, and
+  the single-action lock;
+* all four actions, persisted UCI state, generated-list checks, and real A,
+  AAAA, CNAME, and negative-cache behavior; terminal `persisted` and
+  `active_dns` job fields are asserted separately from those resolver effects;
+* malformed and public-suffix input, failed `dl` preservation, and reboot
+  persistence with volatile job state reset.
+
+ACL enforcement is transport-owned: the lifecycle QEMU test verifies a
+read-only rpcd session is denied `adblock-fast-monitor-actions.action` before
+this adapter can create a job.
 
 ## Required ACL change
 

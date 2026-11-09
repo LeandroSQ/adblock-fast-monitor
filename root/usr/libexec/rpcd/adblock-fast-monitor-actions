@@ -23,6 +23,24 @@ action_state_init() {
 	monitor_state_init
 }
 
+validate_domain() {
+	[ -n "$domain" ] && [ "${#domain}" -le 253 ] || return 1
+	case "$domain" in
+		.*|*.|*..*|*/*|*\\*|*\"*|*\'*|*[\ \	]*|*[!a-z0-9.-]*) return 1 ;;
+	esac
+	label_count=0
+	old_ifs="$IFS"
+	IFS=.
+	set -- $domain
+	IFS="$old_ifs"
+	for label; do
+		[ -n "$label" ] && [ "${#label}" -le 63 ] || return 1
+		case "$label" in *-|-*) return 1 ;; esac
+		label_count=$((label_count + 1))
+	done
+	[ "$label_count" -ge 2 ]
+}
+
 read_request() {
 	local request
 	IFS= read -r request
@@ -35,6 +53,22 @@ reply_error() {
 	json_add_string error "$1"
 	json_add_string message "$2"
 	json_dump
+}
+
+write_queued_job() {
+	umask 077
+	tmp="$(mktemp "$STATE_DIR/.job.XXXXXX")" || return 1
+	{
+		printf 'state=queued\n'
+		printf 'result=queued\n'
+		printf 'action=%s\n' "$action"
+		printf 'domain=%s\n' "$domain"
+		printf 'current_rule=unknown\n'
+		printf 'persisted=0\n'
+		printf 'rebuild=%s\n' "$1"
+		printf 'active_dns=unknown\n'
+		printf 'message=Domain-rule operation accepted and waiting for the worker.\n'
+	} > "$tmp" && chown root:root "$tmp" && chmod 0600 "$tmp" && mv -f "$tmp" "$JOB_FILE"
 }
 
 reply_job() {
@@ -93,7 +127,7 @@ case "$1" in
 			exit 0
 			;;
 		esac
-		[ -n "$domain" ] || { reply_error invalid-domain 'A domain is required.'; exit 0; }
+		validate_domain || { reply_error invalid-domain 'Domain must be a lowercase, fully-qualified hostname without wildcards or broad syntax.'; exit 0; }
 		case "$action" in
 			block|unallow|unblock)
 				[ "$confirmation_type" = boolean ] && [ "$confirm_rebuild" = 1 ] || {
@@ -108,9 +142,20 @@ case "$1" in
 			exit 0
 		}
 		case "$action" in
-			block|unallow|unblock) rebuild_confirmation=confirmed ;;
-			*) rebuild_confirmation=not-required ;;
+			block|unallow|unblock)
+				rebuild_confirmation=confirmed
+				rebuild_state=requested
+				;;
+			*)
+				rebuild_confirmation=not-required
+				rebuild_state=not-required
+				;;
 		esac
+		write_queued_job "$rebuild_state" || {
+			rmdir "$LOCK_DIR" 2>/dev/null || true
+			reply_error state-unavailable 'Cannot publish queued job state.'
+			exit 0
+		}
 		"$WORKER" "$action" "$domain" held "$rebuild_confirmation" >/dev/null 2>&1 &
 		json_init
 		json_add_boolean accepted 1

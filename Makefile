@@ -15,7 +15,7 @@ define Package/$(PKG_NAME)
   SUBMENU:=3. Applications
   TITLE:=Bounded privacy-preserving monitor for adblock-fast
   PKGARCH:=all
-  DEPENDS:=+luci-base +adblock-fast +rpcd +rpcd-mod-uci +jsonfilter +ucode
+  DEPENDS:=+luci-base +adblock-fast +rpcd +jsonfilter +ucode +ucode-mod-io +ucode-mod-uloop
 endef
 
 define Package/$(PKG_NAME)/description
@@ -39,6 +39,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_BIN) ./root/etc/init.d/adblock-fast-monitor $(1)/etc/init.d/adblock-fast-monitor
 	$(INSTALL_BIN) ./root/usr/libexec/adblock-fast-monitor-collector $(1)/usr/libexec/adblock-fast-monitor-collector
 	$(INSTALL_BIN) ./root/usr/libexec/adblock-fast-monitor-job $(1)/usr/libexec/adblock-fast-monitor-job
+	$(INSTALL_BIN) ./root/usr/libexec/adblock-fast-monitor-metadata.uc $(1)/usr/libexec/adblock-fast-monitor-metadata.uc
 	$(INSTALL_BIN) ./root/usr/libexec/adblock-fast-monitor-ring.uc $(1)/usr/libexec/adblock-fast-monitor-ring.uc
 	$(INSTALL_BIN) ./root/usr/libexec/rpcd/adblock-fast-monitor $(1)/usr/libexec/rpcd/adblock-fast-monitor
 	$(INSTALL_BIN) ./root/usr/libexec/rpcd/adblock-fast-monitor-actions $(1)/usr/libexec/rpcd/adblock-fast-monitor-actions

@@ -25,7 +25,21 @@ function status(value) {
 	var unknown = number(counters.unknown, 0);
 	var classified = allowed + blocked;
 	var observed = classified + unknown;
-	var state = text(value.state, 'unknown');
+	var state = text(value.state, 'unknown').toLowerCase();
+	var knownStates = {
+		disabled: true,
+		degraded: true,
+		stale: true,
+		error: true,
+		pending: true,
+		applying: true,
+		applied: true,
+		failed: true,
+		healthy: true,
+		unknown: true
+	};
+	if (!knownStates[state])
+		state = 'unknown';
 
 	return {
 		state: state,
@@ -41,6 +55,25 @@ function status(value) {
 		job: value.job || null,
 		raw: value
 	};
+}
+
+function stateClass(state) {
+	switch (state) {
+	case 'healthy':
+	case 'applied':
+		return 'success';
+	case 'error':
+	case 'failed':
+		return 'error';
+	case 'disabled':
+	case 'degraded':
+	case 'stale':
+	case 'pending':
+	case 'applying':
+		return 'warning';
+	default:
+		return '';
+	}
 }
 
 function event(value) {
@@ -76,6 +109,7 @@ return {
 	text: text,
 	number: number,
 	status: status,
+	stateClass: stateClass,
 	event: event,
 	activity: activity
 };

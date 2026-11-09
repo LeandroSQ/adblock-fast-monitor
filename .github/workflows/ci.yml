@@ -57,7 +57,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: luci-app-adblock-fast-monitor-apk
-          path: openwrt-sdk-*/bin/packages/**/luci-app-adblock-fast-monitor_*.apk
+          path: openwrt-sdk-*/bin/packages/**/luci-app-adblock-fast-monitor-*.apk
           if-no-files-found: error
 
   qemu-runtime:

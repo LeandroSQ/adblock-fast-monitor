@@ -195,7 +195,7 @@ function rpc(object, method, args_json, n) {
 	}
 	let text = last != null ? sprintf('%J', last) : null;
 	return { object: object, method: method, args: args, n: n, error: err, times_ms: times,
-		stats: stats(times), reply_bytes: text ? length(text) : 0,
+		stats: stats(times), reply_bytes: text ? length(text) : 0, reply_ok: last?.ok === true,
 		reply: text == null ? null : (length(text) <= 4096 ? last : substr(text, 0, 4096)) };
 }
 

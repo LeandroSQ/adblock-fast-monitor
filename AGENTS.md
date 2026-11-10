@@ -88,20 +88,20 @@ needed for Playwright (browser and T22). Details of every harness:
 [README Testing](README.md#testing). APK paths must be inside the worktree or
 `.local-validation/`.
 
-| Purpose | Command | Needs | Time |
+| Purpose | Command | Needs | Time (M-series Mac, TCG) |
 | --- | --- | --- | --- |
 | All host checks (run before every commit) | `npm run verify:host` | Docker | ~25 s |
 | Syntax: JSON, JS, `ash -n`, `bash -n`, `ucode -c` | `npm run check:static` | Docker | |
 | Node unit tests (`test/unit/**/*.test.mjs`) | `npm run test:unit` | Node | |
 | ucode suites on the pinned interpreter | `npm run test:ucode` (one file: `test/lib/ucode-runner FILE`) | Docker | |
 | BusyBox ash suites | `npm run test:shell` (one file: `test/lib/busybox-runner FILE`) | Docker | |
-| Build the APK (pinned SDK) | `scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh` | Docker, amd64 | minutes |
-| Guest (functional) tests | `npm run verify:guest -- PKG.apk [test/guest/FILE...]` | Docker/QEMU | ~1–5 min |
-| Guest + browser tests | `npm run verify:guest -- --browser PKG.apk` | Docker/QEMU, `npm ci` | |
-| T22 LuCI install from a signed feed | `scripts/release/verify-luci-install.sh PKG.apk` | Docker/QEMU, `npm ci` | |
+| Build the APK (pinned SDK; prints the APK path) | `scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh` | Docker, amd64 | ~9 min (cached SDK) |
+| Guest (functional) tests | `npm run verify:guest -- PKG.apk [test/guest/FILE...]` | Docker/QEMU | ~30 s boot + tests |
+| Guest + browser tests | `npm run verify:guest -- --browser PKG.apk` | Docker/QEMU, `npm ci` | ~6 min |
+| T22 LuCI install from a signed feed | `scripts/release/verify-luci-install.sh PKG.apk` | Docker/QEMU, `npm ci` | ~3 min |
 | P0 gate (T26) | `npm run test:performance:measure -- PKG.apk` | Docker/QEMU | 25–40 min |
 | Re-judge a perf run | `npm run test:performance` (SKIP without a run) | Node | |
-| Release signing self-test | `scripts/release/selftest.sh WORKDIR PKG.apk` | Linux x86_64 | |
+| Release signing self-test | `scripts/release/selftest.sh WORKDIR PKG.apk` (macOS: prefix `scripts/in-docker.sh --platform linux/amd64 --`) | Linux x86_64 | ~10 s |
 
 The baseline guest image is built once by `scripts/guest/prepare-baseline.sh`;
 never write to it. Lint workflows with

@@ -164,8 +164,7 @@ return view.extend({
 			E('h3', {}, T(_('Statistics'))),
 			this.statsNode,
 			this.missedNode,
-			E('div', { 'class': 'cbi-section-descr', 'id': 'abfm-buffer-hint' },
-				T(_('Only queries still in the system log buffer are shown; every service shares that buffer. To keep more, raise "System log buffer size" in System → System → Logging.')))
+			E('div', { 'class': 'cbi-section-descr', 'id': 'abfm-buffer-hint' }, T(this.bufferHint()))
 		]));
 
 		if (this.canWrite)
@@ -245,6 +244,15 @@ return view.extend({
 	},
 
 	/* ---- header ------------------------------------------------------------- */
+
+	bufferHint() {
+		const info = (this.infoResult && this.infoResult.ok) ? this.infoResult.data : null;
+		const kib = (info && info.logd && typeof(info.logd.size_kib) == 'number') ? info.logd.size_kib : null;
+		const where = _('To keep more, raise "System log buffer size" in System → System → Logging.');
+		return (kib != null
+			? _('Only queries still in the system log buffer (%d KiB, shared by every service) are shown.').format(kib)
+			: _('Only queries still in the system log buffer (shared by every service) are shown.')) + ' ' + where;
+	},
 
 	updateLogging() {
 		const s = model.loggingState(this.infoResult);

@@ -62,8 +62,10 @@ Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 | `/var/lock/adblock-fast-monitor.lock` | plugin + job | `flock` target (§7.3) |
 | `<confdir>/adblock-fast-monitor.conf` | `logging.uc`, 0644 | the single line `log-queries=extra` |
 
-The `abfm.*` modules are imported as `import … from 'abfm.<name>'`, which is
-ucode's default search path `/usr/share/ucode/`. Each module must load under a
+The `abfm.*` modules are loaded with `require('abfm.<name>')` from ucode's
+default search path `/usr/share/ucode/` and `return` their exports (an
+`export` module can't be `require`d, which the rpcd plugin and the scripts
+need, and `ucode -c` can't check it standalone). Each module must load under a
 ucode interpreter built at pin `85922056` on the CI host, with no OpenWrt
 runtime present. That is what makes the unit tests possible (§13).
 
@@ -178,7 +180,7 @@ syslog timestamp (`syslog.c` L174-186).
 
 ```
 PREFIX = ^[A-Z][a-z]{2} [A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4} [a-z0-9]+\.[a-z]+ dnsmasq\[([0-9]+)\]: (.*)$
-BODY   = ^(TCP |UDP )?([0-9]+) ([^ /]+)/([0-9]+) ([^ ]+) ([a-z0-9_.-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$
+BODY   = ^(TCP |UDP )?([0-9]+) ([^ /]+)/([0-9]+) ([^ ]+) ([a-z0-9_.:-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$
 LOST   = ^overflow: ([0-9]+) log entries lost$
 ```
 
@@ -187,17 +189,25 @@ LOST   = ^overflow: ([0-9]+) log entries lost$
 contain non-printable characters with `<name unprintable>` (`cache.c`
 L2014-2030). `BODY` therefore rejects that placeholder, uppercase, spaces and
 injected tokens. A label like `victim.com is 0.0.0.0.x` leaves trailing tokens,
-so the anchored `$` fails.
+so the anchored `$` fails. The name class includes `:` because dnsmasq logs
+the answer of a reverse lookup as the address (`config fd00::1 is NXDOMAIN`,
+captured on 2.93).
 
 `parse_line` returns `null` and `counters.rejected_lines++` for any line that
-matches `PREFIX` but neither `BODY` nor `LOST`. Lines that don't match
-`PREFIX` are ignored silently. A `LOST` match adds its count to
+matches `PREFIX` and whose message starts like a query-log line
+(`^(TCP |UDP )?[0-9]+ `) but matches neither `BODY` nor `LOST`. dnsmasq's
+informational lines (`started, version …`, `read /etc/hosts …`,
+`using nameserver …`) and lines that don't match `PREFIX` are ignored
+silently. A `LOST` match adds its count to
 `dropped.dnsmasq_reported`.
 
 `parse_line` returns
 `{pid, serial, client, port, source, name, verb, answer}` with integers for
-`pid`, `serial` and `port`. The correlation key is `pid + ':' + serial`,
-because serials are per dnsmasq instance.
+`pid`, `serial` and `port`. The correlation key is
+`pid + ':' + serial + ':' + client + '/' + port`: serials are per dnsmasq
+instance, and procd jails dnsmasq in a PID namespace, so every instance logs
+as `dnsmasq[1]` (observed on 25.12.6). All lines of one query carry the same
+`client/port`.
 
 Real line shapes follow the format `"%s%u %s/%u %s %s%s%s %s%s"`
 (`cache.c` L2511). Each example below is prefixed with
@@ -229,9 +239,15 @@ overflow: 12 log entries lost
 A query starts a pending entry. The **first** terminal line with the same key
 decides the outcome. Later lines for that key are ignored, including CNAME
 follow-ups. Lines whose key is unknown are counted in
-`counters.orphan_lines`. "Local" means the name is single-label, is under
-`arpa`, is `localhost`, or equals or is under a dhcp `domain` value or a
-`local` value with its slashes stripped. Those values are read from
+`counters.orphan_lines`. "Local" means the **query** name (the pending
+entry's name; reverse lookups log the address on the terminal line) is
+single-label, is an address, equals or is under one of the special-use TLDs
+`arpa`, `localhost`, `local`, `invalid`, `onion`, `bind` (OpenWrt's
+`rfc6761.conf` answers these with `server=/…/`, so they log
+`config … is NXDOMAIN`), or equals or is under a dhcp `domain` value or a
+`local` value with its slashes stripped. `test` is deliberately not in the
+list: it carries no real traffic and the test fixtures use it for listed ad
+domains. Those values are read from
 `/etc/config/dhcp`, refreshed at most every 300 s, and only lazily when a
 `config` line arrives (no timer).
 
@@ -303,8 +319,15 @@ Normal LRU eviction is **not** a drop.
 
 Errors use one shape across both objects:
 `{"api":1,"ok":false,"error":{"code":"<code>","message":"<text>"}}`, with
-ubus status 0. Any unknown request field is ignored. A field with the wrong
-type gives `invalid-argument`.
+ubus status 0. For `luci.adblock-fast-monitor`, any unknown request field is
+ignored and a field with the wrong type gives `invalid-argument`. The monitor
+object is published by `ucode-mod-ubus`, which checks the declared argument
+policy itself (`lib/ubus.c` L1441-1500): an undeclared field or a field
+whose blobmsg type differs (`offset`/`limit` must be int32, the others
+strings) is refused with ubus status 2 (`UBUS_STATUS_INVALID_ARGUMENT`)
+before the handler runs, so the UI must send only declared fields. Value
+errors (bad `view`, `decision` or `q`, negative `offset`) use the shape
+above.
 
 #### `status` (read)
 
@@ -356,7 +379,8 @@ Response for `recent`: items are sorted by `last_seen` descending, then by
 
 For `top_*`, items are `{"domain":"…","count":42,"error":0}`, sorted by
 `count` descending, then by `domain` ascending. `total` is the number of
-tracked entries that match `q`. Errors: `invalid-argument`.
+tracked entries that match `q`. An empty `q` means no filter.
+Errors: `invalid-argument`.
 
 #### `purge` (write)
 
@@ -380,7 +404,8 @@ adblock-fast. Response:
 - **Confdir.** `confdir = uci dhcp.<s>.confdir`, defaulting to
   `/tmp/dnsmasq.<s>.d` (`dnsmasq.init` L1172). Everything from the first `,`
   is cut. The result must be absolute; otherwise the instance is reported as
-  `confdir-invalid` and skipped. The file name ends in `.conf` so that common
+  `confdir-invalid` and skipped (its `status` entry has `"confdir":null` and
+  `"reason":"confdir-invalid"`). The file name ends in `.conf` so that common
   conf-dir suffix filters keep it.
 - **`enable`.** For each target that does **not** already have
   `dhcp.<s>.logqueries=1`, write `<confdir>/adblock-fast-monitor.conf`

@@ -32,6 +32,7 @@ let st = stats.create(cfg, started_at);
 let pid = +(fs.readlink('/proc/self') ?? 0);
 let dns_mode = sys.adblock_fast_dns(uci.cursor());
 let exit_code = 1;
+let stop_reason = null;
 
 let locals = null, locals_at = 0;
 let ctx = {
@@ -70,7 +71,7 @@ saved.fcntl(io.F_SETFD, io.FD_CLOEXEC);
 writer.dup2(1);
 let child = null;
 child = uloop.process(LOGREAD, [ '-f', '-e', '^dnsmasq\\[' ], {}, (code) => {
-	log(`logread exited (${code})`);
+	stop_reason ??= `logread exited (${code})`;
 	child = null;
 	uloop.end();
 });
@@ -134,7 +135,7 @@ let reader_handle = uloop.handle(reader, () => {
 		if (data == null)
 			break;                     // EAGAIN: drained
 		if (data === '') {
-			log('logread pipe closed');
+			stop_reason ??= 'logread output closed';
 			uloop.end();
 			return;
 		}
@@ -218,12 +219,12 @@ if (!obj) {
 
 let rc = uloop.run();
 
-if (rc > 0) {
+if (rc > 0 && stop_reason == null) {
 	// SIGTERM/SIGINT from procd: clean shutdown.
 	exit_code = 0;
 }
-else if (child) {
-	log('ubus connection lost or reader closed');
+else {
+	log(`stopping: ${stop_reason ?? 'ubus connection lost'}`);
 }
 
 kill_child();

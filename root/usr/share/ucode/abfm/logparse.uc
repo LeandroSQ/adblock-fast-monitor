@@ -12,19 +12,30 @@ const PREFIX = /^[A-Z][a-z]{2} [A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]
 const BODY = /^(TCP |UDP )?([0-9]+) ([^ \/]+)\/([0-9]+) ([^ ]+) ([a-z0-9_.:-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$/;
 const LOST = /^overflow: ([0-9]+) log entries lost$/;
 const QUERY_LOG = /^(TCP |UDP )?[0-9]+ /;
-const QUERY = /^query\[([^]]+)\]$/;
 const DIGITS = /^[0-9]+$/;
 
 // Special-use TLDs that OpenWrt answers locally (rfc6761.conf). `test` is
 // deliberately absent: it carries no real traffic and the test fixtures use
 // it to stand for listed ad domains.
-const SPECIAL = [ 'localhost', 'local', 'invalid', 'onion', 'bind', 'arpa' ];
+const SPECIAL = { localhost: true, local: true, invalid: true, onion: true, bind: true, arpa: true };
+const ADDRESS = /^[0-9.]+$/;
 const ROUTER = { '127.0.0.1': true, '::1': true };
 const CONFIG_BLOCK = {
 	'NXDOMAIN': true, 'NODATA': true, 'NODATA-IPv4': true, 'NODATA-IPv6': true,
 	'0.0.0.0': true, '::': true, '127.0.0.1': true
 };
 const REPLY_ERROR = { 'SERVFAIL': true, 'REFUSED': true, 'FORMERR': true };
+// Decisions are shared constants: callers must not modify them.
+const OTHER_LOCAL = { kind: 'decide', decision: 'other', source: 'local' };
+const BLOCKED_CONFIG = { kind: 'decide', decision: 'blocked', source: 'config' };
+const OTHER_CONFIG = { kind: 'decide', decision: 'other', source: 'config' };
+const BLOCKED_ADDNHOSTS = { kind: 'decide', decision: 'blocked', source: 'addnhosts' };
+const OTHER_HOSTS = { kind: 'decide', decision: 'other', source: 'hosts' };
+const OTHER_DHCP = { kind: 'decide', decision: 'other', source: 'dhcp' };
+const OTHER_ERROR = { kind: 'decide', decision: 'other', source: 'error' };
+const ALLOWED_UPSTREAM = { kind: 'decide', decision: 'allowed', source: 'upstream' };
+const ALLOWED_CACHE = { kind: 'decide', decision: 'allowed', source: 'cache' };
+const OTHER_AUTH = { kind: 'decide', decision: 'other', source: 'auth' };
 
 // Returns {pid, serial, client, port, source, name, verb, answer} or null.
 // A query-log line (serial first) that does not match BODY increments
@@ -63,7 +74,7 @@ function parse_line(line, counters) {
 function under(name, domain) {
 	let n = length(name), d = length(domain);
 	return n == d ? name == domain
-		: (n > d && substr(name, n - d - 1) == '.' + domain);
+		: (n > d && substr(name, n - d) == domain && substr(name, n - d - 1, 1) == '.');
 }
 
 // §4.4 "local": single label, an address (reverse lookups are logged as the
@@ -71,12 +82,13 @@ function under(name, domain) {
 // bind), or equal to / under a dhcp `domain` or `local` value (lower-case,
 // slashes already stripped).
 function is_local(name, local_domains) {
-	if (index(name, '.') < 0 || index(name, ':') >= 0 || match(name, /^[0-9.]+$/))
+	let dot = rindex(name, '.');
+	if (dot < 0 || SPECIAL[substr(name, dot + 1)] || index(name, ':') >= 0)
 		return true;
 
-	for (let d in SPECIAL)
-		if (under(name, d))
-			return true;
+	let c = ord(name, 0);
+	if (c >= 48 && c <= 57 && match(name, ADDRESS))
+		return true;
 
 	for (let d in (local_domains ?? []))
 		if (d != '' && under(name, d))
@@ -97,8 +109,11 @@ function classify(ev, ctx) {
 	let src = ev.source, ans = ev.answer;
 
 	if (ev.verb == 'from') {
-		let q = match(src, QUERY);
-		return q ? { kind: 'query', qtype: q[1] } : null;
+		let n = length(src);
+		if (n < 8 || substr(src, 0, 6) != 'query[' || substr(src, n - 1) != ']')
+			return null;
+		let qtype = substr(src, 6, n - 7);
+		return index(qtype, ']') < 0 ? { kind: 'query', qtype } : null;
 	}
 
 	if (ev.verb != 'is')
@@ -109,35 +124,35 @@ function classify(ev, ctx) {
 		if (type(locals) == 'function')
 			locals = locals();
 		if (is_local(ctx?.qname ?? ev.name, locals))
-			return { kind: 'decide', decision: 'other', source: 'local' };
+			return OTHER_LOCAL;
 		if (CONFIG_BLOCK[ans])
-			return { kind: 'decide', decision: 'blocked', source: 'config' };
-		return { kind: 'decide', decision: 'other', source: 'config' };
+			return BLOCKED_CONFIG;
+		return OTHER_CONFIG;
 	}
 
 	if (src == ADDNHOSTS)
-		return { kind: 'decide', decision: 'blocked', source: 'addnhosts' };
+		return BLOCKED_ADDNHOSTS;
 
 	if (substr(src, 0, 1) == '/')
-		return { kind: 'decide', decision: 'other', source: 'hosts' };
+		return OTHER_HOSTS;
 
 	switch (src) {
 	case 'DHCP':
-		return { kind: 'decide', decision: 'other', source: 'dhcp' };
+		return OTHER_DHCP;
 
 	case 'reply':
 		if (ans == 'duplicate')
 			return null;
 		if (REPLY_ERROR[ans] || match(ans, DIGITS))
-			return { kind: 'decide', decision: 'other', source: 'error' };
-		return { kind: 'decide', decision: 'allowed', source: 'upstream' };
+			return OTHER_ERROR;
+		return ALLOWED_UPSTREAM;
 
 	case 'cached':
 	case 'cached-stale':
-		return { kind: 'decide', decision: 'allowed', source: 'cache' };
+		return ALLOWED_CACHE;
 
 	case 'auth':
-		return { kind: 'decide', decision: 'other', source: 'auth' };
+		return OTHER_AUTH;
 	}
 
 	return null;

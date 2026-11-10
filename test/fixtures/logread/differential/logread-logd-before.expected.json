@@ -1,0 +1,4 @@
+{
+  "1:6:10.0.2.2/38162": { "domain": "ads.example.test", "decision": "blocked", "source": "addnhosts" },
+  "1:7:10.0.2.2/33074": { "domain": "www.up.example.test", "decision": "allowed", "source": "cache" }
+}

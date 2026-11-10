@@ -1,8 +1,8 @@
 # adblock-fast-monitor verification infrastructure
 
 This repository contains an OpenWrt package shell plus host-side CI and test
-infrastructure. Collector and RPC behavior are independently implemented; see
-[`INTEGRATION_CONTRACT.md`](INTEGRATION_CONTRACT.md) for the package boundary.
+infrastructure. All components are implemented against the frozen v1 interface
+contract in [`docs/CONTRACT.md`](docs/CONTRACT.md).
 
 ## Local host checks
 

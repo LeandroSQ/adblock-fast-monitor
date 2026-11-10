@@ -1,0 +1,55 @@
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 5 10.0.2.2/34637 query[A] ads.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 5 10.0.2.2/34637 /var/run/adblock-fast/dnsmasq.addnhosts ads.example.test is 127.0.0.1
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 6 10.0.2.2/33928 query[A] sub.ads.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 6 10.0.2.2/33928 config sub.ads.example.test is NXDOMAIN
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 7 10.0.2.2/37839 query[A] telemetry.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 7 10.0.2.2/37839 /var/run/adblock-fast/dnsmasq.addnhosts telemetry.example.test is 127.0.0.1
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 8 10.0.2.2/49228 query[A] metrics.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 8 10.0.2.2/49228 /var/run/adblock-fast/dnsmasq.addnhosts metrics.example.test is 127.0.0.1
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 9 10.0.2.2/38211 query[AAAA] ads.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 9 10.0.2.2/38211 config ads.example.test is NODATA-IPv6
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 10 10.0.2.2/35826 query[HTTPS] ads.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 10 10.0.2.2/35826 config ads.example.test is NODATA
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 11 10.0.2.2/39290 query[A] www.up.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 11 10.0.2.2/39290 forwarded www.up.example.test to 127.0.0.1#5300
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 11 10.0.2.2/39290 reply www.up.example.test is 192.0.2.10
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 12 10.0.2.2/39218 query[A] www.up.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 12 10.0.2.2/39218 cached www.up.example.test is 192.0.2.10
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 13 10.0.2.2/55756 query[AAAA] www.up.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 13 10.0.2.2/55756 forwarded www.up.example.test to 127.0.0.1#5300
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 13 10.0.2.2/55756 reply www.up.example.test is 2001:db8::10
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 14 10.0.2.2/58109 query[HTTPS] www.up.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 14 10.0.2.2/58109 forwarded www.up.example.test to 127.0.0.1#5300
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 14 10.0.2.2/58109 forwarded www.up.example.test to 127.0.0.1#5300
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 14 10.0.2.2/58109 reply error is REFUSED
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 15 10.0.2.2/33325 query[A] nx.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 15 10.0.2.2/33325 forwarded nx.example.test to 127.0.0.1#5300
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 15 10.0.2.2/33325 reply nx.example.test is NXDOMAIN
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 16 10.0.2.2/47806 query[A] err.example.test from 10.0.2.2
+Tue Nov 10 15:52:46 2026 daemon.info dnsmasq[1]: 16 10.0.2.2/47806 forwarded err.example.test to 127.0.0.1#5309
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 17 10.0.2.2/39509 query[A] localhost from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 17 10.0.2.2/39509 /etc/hosts localhost is 127.0.0.1
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 18 10.0.2.2/52123 query[A] openwrt.lan from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 18 10.0.2.2/52123 config openwrt.lan is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 19 10.0.2.2/53646 query[A] wpad from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 19 10.0.2.2/53646 config wpad is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 20 10.0.2.2/43421 query[A] printer.local from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 20 10.0.2.2/43421 config printer.local is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 21 10.0.2.2/35264 query[PTR] 1.0.0.10.in-addr.arpa from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 21 10.0.2.2/35264 config 10.0.0.1 is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 22 10.0.2.2/37659 query[PTR] 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.d.f.ip6.arpa from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 22 10.0.2.2/37659 config fd00::1 is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 23 10.0.2.2/32928 query[A] victim.example.com is 0.0.0.0.example.test from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 23 10.0.2.2/32928 config victim.example.com is 0.0.0.0.example.test is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 24 10.0.2.2/40130 query[A] <name unprintable> from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 24 10.0.2.2/40130 config <name unprintable> is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 25 10.0.2.2/33658 query[A] mixed.example.test from 10.0.2.2
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 25 10.0.2.2/33658 config mixed.example.test is NXDOMAIN
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 26 127.0.0.1/36441 query[A] ads.example.test from 127.0.0.1
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 26 127.0.0.1/36441 /var/run/adblock-fast/dnsmasq.addnhosts ads.example.test is 127.0.0.1
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 27 127.0.0.1/36441 query[AAAA] ads.example.test from 127.0.0.1
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 27 127.0.0.1/36441 config ads.example.test is NODATA-IPv6
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 28 ::1/49149 query[A] www.up.example.test from ::1
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 28 ::1/49149 cached www.up.example.test is 192.0.2.10
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 29 ::1/49149 query[AAAA] www.up.example.test from ::1
+Tue Nov 10 15:52:49 2026 daemon.info dnsmasq[1]: 29 ::1/49149 cached www.up.example.test is 2001:db8::10

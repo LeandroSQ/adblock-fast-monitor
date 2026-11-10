@@ -74,6 +74,7 @@ npm run verify:host                      # no guest; ~10 s (first run builds the
 npm run verify:guest -- path/to/pkg.apk  # boots a stock 25.12.6 guest, installs, runs test/guest
 npm run verify:guest -- --browser path/to/pkg.apk   # also Playwright against the guest's LuCI
 scripts/release/verify-luci-install.sh path/to/pkg.apk  # T22: install/remove through LuCI from a signed feed
+scripts/release/verify-upgrade.sh path/to/pkg.apk       # upgrade from an older build of the same source
 ```
 
 The APK path must be inside the worktree or `.local-validation/` (both are
@@ -90,6 +91,19 @@ restarting rpcd), removal through LuCI leaves no files, drop-ins or objects,
 and the package installs again from the feed via Configure apk. It runs on
 Linux x86_64 directly and on macOS through Docker (the key never leaves a
 throwaway container). In ordinary `verify:guest` runs this test is skipped.
+
+`verify-upgrade.sh` builds an older variant of the same source (PKG_VERSION
+0.0.9, from the APK's `source/` directory when it came from
+`build-package.sh`), signs it and the given APK as two consecutive feed
+releases with a throwaway key (outside the repo, deleted after signing), and
+on a fresh guest: installs the old one from the feed, enables monitoring,
+changes `recent_size`, applies one block rule, publishes the next release and
+runs `apk update && apk upgrade` (what LuCI's Update lists… / Upgrade… run).
+`test/guest/package-upgrade.host.sh` then checks that the modified conffile is
+kept, the daemon was restarted onto the new code with exactly one ucode and
+one logread and no orphans, the objects answer through `/ubus` without an
+rpcd restart, the drop-in is still there with at most one dnsmasq restart,
+the adblock-fast rule is intact, and LuCI's caches were cleared.
 
 ### Host suites (`verify:host`)
 

@@ -49,7 +49,7 @@ set_opt enabled 1
 reload_config
 t_ok "enable: exactly one daemon, one logread and the object" abfm_wait_until 30 running_one
 t_ok "enable: drop-in written" test -f "$DROPIN"
-t_eq "enable: drop-in content" "log-queries=extra" "$(cat "$DROPIN")"
+t_eq "enable: drop-in content" "log-queries=extra log-async=25" "$(cat "$DROPIN" | tr '\n' ' ' | sed 's/ $//')"
 t_eq "enable: drop-in mode" "644" "$(abfm_stat %a "$DROPIN")"
 abfm_wait_until 30 dns_ready
 t_eq "enable: dnsmasq restarted exactly once" 1 "$(dnsmasq_starts)"
@@ -140,6 +140,7 @@ t_eq "drop-in set changed: dnsmasq restarted once" 1 "$(dnsmasq_starts)"
 
 # --- dnsmasq_instance naming a non-existent instance -> no drop-in ----------
 mark
+uci -q delete adblock-fast-monitor.config.dnsmasq_instance
 uci add_list adblock-fast-monitor.config.dnsmasq_instance=nonexistent
 uci commit adblock-fast-monitor
 reload_config

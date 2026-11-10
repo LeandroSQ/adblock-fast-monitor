@@ -56,6 +56,7 @@ run_mode() { # mode expected-telemetry-source
 	eq "$mode: counters (T09)" \
 		'{"queries": 19, "blocked": 7, "allowed": 4, "other": 7, "expired": 1, "pending": 0, "rejected_lines": 4, "orphan_lines": 0}' \
 		"$(py "$st" '{k: d["counters"][k] for k in ("queries", "blocked", "allowed", "other", "expired", "pending", "rejected_lines", "orphan_lines")}')"
+	eq "$mode: no dropped lines at normal rates (log-async)" '{"input_overflow": 0, "pending_evicted": 0, "dnsmasq_reported": 0}' "$(py "$st" 'd["counters"]["dropped"]')"
 	eq "$mode: invariant" true "$(py "$st" 'd["counters"]["queries"] == sum(d["counters"][k] for k in ("blocked", "allowed", "other", "expired", "pending")) + d["counters"]["dropped"]["pending_evicted"]')"
 	eq "$mode: block_pct" 63.6 "$(py "$st" 'd["block_pct"]')"
 	eq "$mode: state running, dns mode reported" '["running", [], "'"$mode"'"]' "$(py "$st" '[d["state"], d["reasons"], d["adblock_fast"]["dns"]]')"

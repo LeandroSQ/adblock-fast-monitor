@@ -153,7 +153,7 @@ t.test('§5 enable: one drop-in per target, 0644, restart exactly once', () => {
 	t.eq([ h.res.changed, h.res.restarted, h.restarts, h.res.errors ], [ true, true, 1, [] ]);
 	t.eq(sort(h.res.dropins), [ GUEST, MAIN ]);
 	for (let p in [ MAIN, GUEST ]) {
-		t.eq(fs.readfile(p), 'log-queries=extra\n');
+		t.eq(fs.readfile(p), 'log-queries=extra\nlog-async=25\n');
 		t.eq(fs.lstat(p).mode & 0o777, 0o644);
 	}
 	t.eq(fs.lstat(`${confdir_root}/main.d`).mode & 0o777, 0o755, 'confdir created 0755');
@@ -169,7 +169,7 @@ t.test('§5 enable again: unchanged set, no restart', () => {
 t.test('§5 a damaged drop-in is rewritten without a restart', () => {
 	fs.writefile(MAIN, 'garbage\n');
 	let h = apply('enable');
-	t.eq([ h.res.changed, h.restarts, fs.readfile(MAIN) ], [ false, 0, 'log-queries=extra\n' ]);
+	t.eq([ h.res.changed, h.restarts, fs.readfile(MAIN) ], [ false, 0, sys.DROPIN_CONTENT ]);
 });
 
 t.test('§5 narrowing dnsmasq_instance removes the other drop-in (one restart)', () => {

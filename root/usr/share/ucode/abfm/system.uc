@@ -9,7 +9,10 @@
 const fs = require('fs');
 
 const DROPIN_NAME = 'adblock-fast-monitor.conf';
-const DROPIN_CONTENT = 'log-queries=extra\n';
+// log-async: dnsmasq queues up to 25 log lines instead of blocking the
+// query path on syslog writes; a full queue is reported by dnsmasq as
+// "overflow: N log entries lost" (counted in dropped.dnsmasq_reported).
+const DROPIN_CONTENT = 'log-queries=extra\nlog-async=25\n';
 const DNS_MODES_OBSERVABLE = [ 'dnsmasq.servers', 'dnsmasq.addnhosts', 'dnsmasq.conf' ];
 
 // ---------------------------------------------------------------------------

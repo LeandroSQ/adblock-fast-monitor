@@ -30,7 +30,7 @@ guest_exec 'i=0; until ubus list adblock-fast-monitor >/dev/null 2>&1 && pidof d
 	nok "monitor object and dnsmasq are up after boot"
 
 section=$(guest_exec "uci -q -X show dhcp | sed -n 's/^dhcp\\.\\([^.=]*\\)=dnsmasq\$/\\1/p' | head -n1")
-eq "drop-in present after boot" "log-queries=extra" "$(guest_exec "cat /tmp/dnsmasq.$section.d/adblock-fast-monitor.conf")"
+eq "drop-in present after boot" "log-queries=extra log-async=25" "$(guest_exec "cat /tmp/dnsmasq.$section.d/adblock-fast-monitor.conf" | tr '\n' ' ' | sed 's/ $//')"
 eq "one daemon and one logread after boot" "1 1" \
 	"$(guest_exec "echo \$(pgrep -f '^/usr/bin/ucode /usr/libexec/adblock-fast-monitor/monitord.uc' | wc -l) \$(pgrep -f '^/sbin/logread -f -e' | wc -l)")"
 eq "dnsmasq started exactly once since boot" 1 "$(guest_exec "logread | grep -c 'dnsmasq\\[[0-9]*\\]: started, version'")"

@@ -841,7 +841,7 @@ shown in local time, and durations are humanized.
   pending op (allow↔unallow, block↔unblock) removes it.
 - Domains are normalized as in §6.4 before they are stored.
 - **Apply.**
-  1. `apply{dry_run:true}`. If the mode is `rebuild` or `may_escalate`, show a
+  1. `apply{dry_run:true}`. If the mode is `rebuild` (or the reply is `confirm-required`), show a
      `ui.showModal` confirmation that names the cost.
   2. `apply` with `confirm_rebuild` set from that confirmation.
   3. When it returns `queued`, move the items to `inflight{job_id}`.

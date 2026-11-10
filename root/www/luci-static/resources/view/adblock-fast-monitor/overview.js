@@ -79,7 +79,7 @@ const JOB_STATE_TEXT = {
 	applied: _('Applied'), partial: _('Partially applied'), failed: _('Failed')
 };
 const JOB_MODE_TEXT = {
-	'fast-allow': _('fast allow'), 'rebuild': _('full rebuild'), 'persist-only': _('saved only (adblock-fast is disabled)')
+	'rebuild': _('full rebuild'), 'persist-only': _('saved only (adblock-fast is disabled)')
 };
 const RESULT_TEXT = {
 	pending: _('Pending'), ok: _('OK'), mismatch: _('Mismatch'), unverified: _('Unverified'), skipped: _('Skipped')
@@ -92,8 +92,8 @@ const ERROR_TEXT = {
 	'unsupported-dns-mode': _('adblock-fast DNS mode is not supported'),
 	'pending-uci-changes': _('adblock-fast has unsaved changes in LuCI; save or revert them first'),
 	'busy': _('Another change is being applied'), 'uci-error': _('Could not save the adblock-fast configuration'),
-	'spawn-failed': _('Could not start the apply job'), 'rebuild-required': _('A full rebuild is required'),
-	'allow-failed': _('adblock-fast could not allow the domain'), 'rebuild-failed': _('The block list rebuild failed'),
+	'spawn-failed': _('Could not start the apply job'),
+	'rebuild-failed': _('The block list rebuild failed'),
 	'interrupted': _('The job was interrupted'), 'start-timeout': _('The job did not start'),
 	'lock-failed': _('The job could not take its lock'), 'not-found': _('The job is no longer known (router restarted?)'),
 	'still-listed': _('Still on a downloaded list; use Allow'), 'parent-blocked': _('A parent domain is still blocked'),
@@ -749,7 +749,7 @@ return view.extend({
 
 		return E('div', { 'class': 'cbi-section', 'id': 'abfm-pending-section' }, [
 			E('h3', {}, T(_('Pending changes'))),
-			E('div', { 'class': 'cbi-section-descr' }, T(_('Changes are kept in this browser until you apply them. Blocking, unblocking and removing an allow rule rebuild the adblock-fast block lists.'))),
+			E('div', { 'class': 'cbi-section-descr' }, T(_('Changes are kept in this browser until you apply them. Apply sends all of them at once and rebuilds the adblock-fast block lists one time.'))),
 			this.pendingNode,
 			E('div', { 'class': 'cbi-value' }, [
 				E('label', { 'class': 'cbi-value-title', 'for': 'abfm-add-domain' }, T(_('Domain'))),
@@ -801,24 +801,20 @@ return view.extend({
 			errorText(e.code, e.message) + (e.domain ? ' (' + e.domain + ')' : '')))), 'danger');
 	},
 
-	confirmModal(plan, rebuildOnly) {
-		const lines = [];
-		if (plan.mode == 'rebuild' || rebuildOnly)
-			lines.push(_('This rebuilds the adblock-fast block lists: all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes.'));
-		else if (plan.mayEscalate)
-			lines.push(_('Allowed domains are removed from the active block list right away and DNS is restarted once. If that would also unblock other domains, a full rebuild runs instead: all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes.'));
+	confirmModal(plan) {
+		const lines = [ _('This rebuilds the adblock-fast block lists: all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes.') ];
 		const list = (plan.plan || []).filter(p => Array.isArray(p.change) && p.change.length).map(p =>
 			E('li', {}, T(p.effective_op && p.effective_op != p.op
 				? _('%s %s (applied as %s)').format(OP_LABEL[p.op] || p.op, p.domain, OP_LABEL[p.effective_op] || p.effective_op)
 				: _('%s %s').format(OP_LABEL[p.op] || p.op, p.domain))));
 		return new Promise(resolve => {
-			ui.showModal(rebuildOnly ? _('Rebuild block lists') : _('Apply changes'), [
+			ui.showModal(_('Apply changes'), [
 				E('div', { 'class': 'alert-message warning' }, lines.map(l => E('p', {}, T(l)))),
 				list.length ? E('ul', {}, list) : '',
 				E('div', { 'class': 'right' }, [
 					E('button', { 'class': 'cbi-button', 'click': () => { ui.hideModal(); resolve(false); } }, T(_('Cancel'))), ' ',
 					E('button', { 'class': 'cbi-button cbi-button-apply', 'id': 'abfm-confirm-apply',
-						'click': () => { ui.hideModal(); resolve(true); } }, T(rebuildOnly ? _('Rebuild') : _('Apply')))
+						'click': () => { ui.hideModal(); resolve(true); } }, T(_('Apply')))
 				])
 			]);
 		});
@@ -841,8 +837,8 @@ return view.extend({
 				ui.addNotification(null, E('p', {}, T(_('Nothing to change: the rules are already in place.'))), 'info');
 				return;
 			}
-			const go = plan.needsConfirm ? this.confirmModal(plan, false) : Promise.resolve(true);
-			return go.then(confirmed => confirmed ? this.submit(ops, plan.needsConfirm, false) : null);
+			const go = plan.needsConfirm ? this.confirmModal(plan) : Promise.resolve(true);
+			return go.then(confirmed => confirmed ? this.submit(ops, plan.needsConfirm) : null);
 		}).catch(e => {
 			ui.addNotification(null, E('p', {}, T(_('Changes were not applied: %s').format(e.message))), 'danger');
 		}).finally(() => {
@@ -851,30 +847,22 @@ return view.extend({
 		});
 	},
 
-	submit(ops, confirmRebuild, rebuild) {
-		return callApply(ops, confirmRebuild, rebuild, false).then(reply => {
+	submit(ops, confirmRebuild) {
+		return callApply(ops, confirmRebuild, false, false).then(reply => {
 			if (!reply || reply.ok === false) {
 				if (reply && reply.error && reply.error.code == 'confirm-required' && !confirmRebuild)
-					return this.confirmModal(model.applyPlan(reply), rebuild)
-						.then(ok => ok ? this.submit(ops, true, rebuild) : null);
+					return this.confirmModal(model.applyPlan(reply))
+						.then(ok => ok ? this.submit(ops, true) : null);
 				return this.applyError(reply);
 			}
 			if (reply.noop || !reply.job_id) {
 				this.setPending(model.settleNoop(this.pending));
 				return;
 			}
-			if (rebuild && this.pending.inflight)
-				this.setPending(Object.assign({}, this.pending, { inflight: Object.assign({}, this.pending.inflight, { job_id: reply.job_id }) }));
-			else
-				this.setPending(model.beginInflight(this.pending, reply.job_id));
+			this.setPending(model.beginInflight(this.pending, reply.job_id));
 			this.job = { id: reply.job_id, state: reply.state || 'queued', mode: reply.mode, items: [] };
 			this.watchJob(reply.job_id);
 		});
-	},
-
-	handleRunRebuild() {
-		return this.confirmModal({ mode: 'rebuild', plan: [] }, true).then(ok => ok ? this.submit([], true, true) : null)
-			.catch(e => ui.addNotification(null, E('p', {}, T(_('Rebuild was not started: %s').format(e.message))), 'danger'));
 	},
 
 	/* ---- job ------------------------------------------------------------------------------ */
@@ -928,8 +916,6 @@ return view.extend({
 		const inflight = this.pending.inflight;
 		if (!inflight || inflight.job_id != job.id)
 			return;
-		if (job.state == 'failed' && job.error && job.error.code == 'rebuild-required')
-			return; /* keep inflight: the panel offers "Run rebuild" */
 		const r = model.settleJob(this.pending, job);
 		this.setPending(r.state);
 		this.rules = {};
@@ -945,7 +931,7 @@ return view.extend({
 			dom.content(this.jobNode, []);
 			return;
 		}
-		const key = JSON.stringify([ job.id, job.state, job.phase, job.escalated, job.error,
+		const key = JSON.stringify([ job.id, job.state, job.phase, job.error,
 			(job.items || []).map(i => [ i.result, i.observed ]), !!this.pending.inflight ]);
 		if (key == this.jobKey)
 			return;
@@ -955,8 +941,6 @@ return view.extend({
 		const parts = [ JOB_STATE_TEXT[job.state] || job.state ];
 		if (job.mode)
 			parts.push(JOB_MODE_TEXT[job.mode] || job.mode);
-		if (job.escalated)
-			parts.push(_('escalated to a full rebuild'));
 		const children = [
 			E('h4', {}, T(_('Last apply'))),
 			E('p', { 'id': 'abfm-job-state', 'data-state': job.state, 'class': terminal ? '' : 'spinning' }, T(parts.join(' · ')))
@@ -977,17 +961,6 @@ return view.extend({
 					cell(_('Result'), T(RESULT_TEXT[i.result] || i.result || '')),
 					cell(_('Reason'), T(i.reason ? errorText(i.reason) : ''))
 				])), ''));
-		const inflightHere = this.pending.inflight && this.pending.inflight.job_id == job.id;
-		if (terminal && inflightHere && job.error && job.error.code == 'rebuild-required') {
-			children.push(E('p', {}, T(_('The rules are saved, but applying them quickly would also unblock other domains. Run a full rebuild to activate them.'))));
-			children.push(E('div', { 'class': 'right' }, [
-				E('button', { 'class': 'cbi-button', 'click': () => {
-					this.setPending(model.returnInflight(this.pending, 'rebuild-required'));
-				} }, T(_('Back to pending'))), ' ',
-				E('button', { 'class': 'cbi-button cbi-button-apply', 'id': 'abfm-run-rebuild',
-					'click': ui.createHandlerFn(this, 'handleRunRebuild') }, T(_('Run rebuild')))
-			]));
-		}
 		dom.content(this.jobNode, children);
 	}
 });

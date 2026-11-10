@@ -84,14 +84,14 @@ test('row actions stage changes that survive a reload; replace and cancel rules'
   await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
 });
 
-test('allow-only batch asks before a possible rebuild; cancel sends nothing', async ({ page }) => {
+test('allow-only batch also asks before the rebuild; cancel sends nothing', async ({ page }) => {
   await login(page, admin);
   const applies = trackApply(page);
   await stageManual(page, 'allow', 'telemetry.example.test');
   await page.getByRole('button', { name: 'Apply changes' }).click();
   const modal = page.locator('.modal');
-  await expect(modal).toContainText('removed from the active block list right away');
-  await expect(modal).toContainText('over the WAN');
+  await expect(modal).toContainText('all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes');
+  await expect(modal).toContainText('telemetry.example.test');
   await modal.getByRole('button', { name: 'Cancel' }).click();
   expect(applies.filter((a) => !a.dry_run)).toHaveLength(0);
   expect(applies.filter((a) => a.dry_run)).toHaveLength(1);

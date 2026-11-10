@@ -391,8 +391,7 @@ function applyPlan(reply) {
 		(plan.length > 0 && plan.every(p => Array.isArray(p.change) && p.change.length == 0)));
 	return {
 		mode: mode || null,
-		mayEscalate: isObject(reply) && reply.may_escalate === true,
-		needsConfirm: !noop && (mode == 'rebuild' || (isObject(reply) && reply.may_escalate === true)),
+		needsConfirm: !noop && mode == 'rebuild',
 		noop: noop,
 		plan: plan
 	};

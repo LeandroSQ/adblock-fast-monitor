@@ -195,9 +195,10 @@ test('§8.2 job settlement: ok/skipped leave, mismatch/unverified/failed return 
   assert.equal(marked.items[0].reason, 'protected-domain');
 });
 
-test('applyPlan: confirmation needed for rebuild or may_escalate, never for noop', () => {
-  assert.deepEqual(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['block:add'] }] }).needsConfirm, true);
-  assert.equal(m.applyPlan({ ok: true, mode: 'fast-allow', may_escalate: true, plan: [{ change: ['allow:add'] }] }).needsConfirm, true);
+test('applyPlan: confirmation needed for every rebuild, never for noop or persist-only', () => {
+  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['block:add'] }] }).needsConfirm, true);
+  // allow-only batches are rebuilds too (v1 never uses fast-allow)
+  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', may_escalate: false, plan: [{ change: ['allow:add'] }] }).needsConfirm, true);
   assert.equal(m.applyPlan({ ok: true, mode: 'persist-only', plan: [{ change: ['allow:add'] }] }).needsConfirm, false);
   const noop = m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: [] }] });
   assert.deepEqual([noop.noop, noop.needsConfirm], [true, false]);

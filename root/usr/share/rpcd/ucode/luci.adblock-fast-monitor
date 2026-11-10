@@ -235,15 +235,24 @@ function new_job_id(now) {
 let scan_cache = { sig: null, map: {}, order: [] };
 
 function cache_get(sig, d) {
-	return (scan_cache.sig == sig) ? scan_cache.map[d] : null;
+	if (scan_cache.sig != sig || !exists(scan_cache.map, d))
+		return null;
+	let i = index(scan_cache.order, d);
+	if (i >= 0) {
+		splice(scan_cache.order, i, 1);
+		push(scan_cache.order, d);
+	}
+	return scan_cache.map[d];
 }
 
 function cache_put(sig, results) {
 	if (scan_cache.sig != sig)
 		scan_cache = { sig, map: {}, order: [] };
 	for (let d, r in results) {
-		if (!exists(scan_cache.map, d))
-			push(scan_cache.order, d);
+		let i = index(scan_cache.order, d);
+		if (i >= 0)
+			splice(scan_cache.order, i, 1);
+		push(scan_cache.order, d);
 		scan_cache.map[d] = r;
 	}
 	while (length(scan_cache.order) > CACHE_MAX)

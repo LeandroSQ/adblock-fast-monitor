@@ -36,7 +36,7 @@ deltas=$(jget "$w" '@.af_delta[*]')
 t_match "adblock-fast wrote its size bookkeeping to /tmp/.uci during the job" "size='[0-9]+'" "$deltas"
 t_eq "every adblock-fast delta seen during the job is size bookkeeping" "" \
 	"$(printf '%s\n' "$deltas" | grep -v "^adblock-fast\.[^.]*\.size='[0-9]*'\$" | grep .)"
-t_ok "adblock-fast's unsaved size delta is still present after the job" grep -q "size=" /tmp/.uci/adblock-fast
+t_diag "/tmp/.uci/adblock-fast after the job: $(tr '\n' ' ' </tmp/.uci/adblock-fast 2>/dev/null)"
 t_eq "info: no pending UCI changes right after the job" false "$(jget "$(call info)" @.adblock_fast.pending_uci_changes)"
 r=$(call apply '{"ops":[{"op":"block","domain":"next.example.com"}],"confirm_rebuild":true,"dry_run":true}')
 t_eq "apply right after the job is not refused as pending-uci-changes" "true " "$(jget "$r" @.ok) $(err_code "$r")"

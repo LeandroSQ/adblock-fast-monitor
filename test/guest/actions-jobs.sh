@@ -29,6 +29,18 @@ t_eq "T15: exactly one adblock-fast run" 1 "$(af_runs "$m")"
 t_eq "T15: DNS answer flipped" "$UPSTREAM_A" "$(dns_a tracker.example.com)"
 t_ok "job lock is free after the job" lock_free
 
+# adblock-fast leaves unsaved UCI deltas while and after it runs; only its
+# file_url size bookkeeping may appear for adblock-fast, so pending-uci-changes
+# must not trigger right after a job.
+deltas=$(jget "$w" '@.af_delta[*]')
+t_match "adblock-fast wrote its size bookkeeping to /tmp/.uci during the job" "size='[0-9]+'" "$deltas"
+t_eq "every adblock-fast delta seen during the job is size bookkeeping" "" \
+	"$(printf '%s\n' "$deltas" | grep -v "^adblock-fast\.[^.]*\.size='[0-9]*'\$" | grep .)"
+t_ok "adblock-fast's unsaved size delta is still present after the job" grep -q "size=" /tmp/.uci/adblock-fast
+t_eq "info: no pending UCI changes right after the job" false "$(jget "$(call info)" @.adblock_fast.pending_uci_changes)"
+r=$(call apply '{"ops":[{"op":"block","domain":"next.example.com"}],"confirm_rebuild":true,"dry_run":true}')
+t_eq "apply right after the job is not refused as pending-uci-changes" "true " "$(jget "$r" @.ok) $(err_code "$r")"
+
 # -------------------------------------- T16 no collateral (contract §14.1)
 t_eq "T16: bads.example.com is blocked before" NXDOMAIN "$(dns_a bads.example.com)"
 w=$(watch '{"ops":[{"op":"allow","domain":"ads.example.com"}],"confirm_rebuild":true}')

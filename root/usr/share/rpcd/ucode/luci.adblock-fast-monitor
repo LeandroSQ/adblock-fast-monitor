@@ -8,6 +8,7 @@ const fs = require('fs');
 const uci = require('uci');
 const ubus = require('ubus');
 const dom = require('abfm.domain');
+const sys = require('abfm.system');
 
 const API = 1;
 const RUN_DIR = '/var/run/adblock-fast-monitor';
@@ -16,11 +17,6 @@ const UCI_SAVEDIR = RUN_DIR + '/uci';
 const LOCK_DIR = '/var/lock';
 const LOCK_FILE = LOCK_DIR + '/adblock-fast-monitor.lock';
 const JOB_BIN = '/usr/libexec/adblock-fast-monitor/job.uc';
-const AF_INIT = '/etc/init.d/adblock-fast';
-const AF_CONFIG = '/etc/config/adblock-fast';
-const AF_PENDING = '/tmp/.uci/adblock-fast';
-const AF_DEFAULT_HEARTBEAT = 'heartbeat.mossdef.org';
-const AF_DEFAULT_UPDATE_URL = 'https://cdn.jsdelivr.net/gh/openwrt/packages/net/adblock-fast/files/adblock-fast.config.update';
 const QUEUE_WINDOW = 30;
 const LIST_CAP = 2048;
 const RULES_MAX = 50;
@@ -51,104 +47,17 @@ function cursor() {
 	return uci.cursor(null, UCI_SAVEDIR);
 }
 
-function as_list(v) {
-	return (type(v) == 'array') ? v : (v != null && v != '') ? [ '' + v ] : [];
-}
-
-function clamp(v, lo, hi, def) {
-	let n = +v;
-	if (v == null || v === '' || n != n)
-		return def;
-	n = int(n);
-	return (n < lo) ? lo : (n > hi) ? hi : n;
-}
-
-function service(conn, name) {
-	return conn ? conn.call('service', 'list', { name })?.[name] : null;
-}
-
-function service_running(svc) {
-	for (let n, inst in svc?.instances ?? {})
-		if (inst?.running)
-			return { running: true, pid: inst.pid ?? null };
-	return { running: false, pid: null };
-}
-
-// --- adblock-fast discovery (WU2) ---
-// Private until abfm.system lands (WU1 owns that module); see the report.
-
-// Unsaved LuCI changes for adblock-fast. adblock-fast itself saves (without
-// committing) file_url sizes after each download when update_config_sizes=1;
-// those deltas are its own bookkeeping, not user changes.
-function pending_changes() {
-	for (let l in split(fs.readfile(AF_PENDING) ?? '', '\n'))
-		if (l != '' && !match(l, /^adblock-fast\.[^.]+\.size='[0-9]*'$/))
-			return true;
-	return false;
-}
-
+// adblock-fast state through abfm.system (committed UCI only).
 function af_state(c, conn) {
-	let installed = !!(fs.access(AF_INIT) && fs.access(AF_CONFIG));
 	c.load('adblock-fast');
-	let cfg = c.get_all('adblock-fast', 'config') ?? {};
-	let dns = cfg.dns || 'dnsmasq.servers';
-	let output_file = dom.DNSMASQ_MODES[dns] ?? null;
-	let svc = service(conn, 'adblock-fast');
-	return {
-		installed,
-		enabled: cfg.enabled == '1',
-		status: svc?.data?.status || null,
-		dns,
-		output_file,
-		output_exists: !!(output_file && fs.access(output_file)),
-		external_config: !!(cfg.dnsmasq_config_file_url ?? ''),
-		pending_uci_changes: pending_changes(),
-		allowed: as_list(cfg.allowed_domain),
-		blocked: as_list(cfg.blocked_domain),
-		heartbeat_domain: (cfg.heartbeat_domain && cfg.heartbeat_domain != '-') ? cfg.heartbeat_domain : AF_DEFAULT_HEARTBEAT,
-		config_update_url: cfg.config_update_url || AF_DEFAULT_UPDATE_URL,
-	};
+	return sys.adblock_fast_state(c, conn);
 }
 
 function protect_ctx(c, af) {
-	let names = [ af.heartbeat_domain ], hosts = [ dom.url_host(af.config_update_url) ];
 	c.load('dhcp');
-	c.foreach('dhcp', 'dnsmasq', (s) => {
-		for (let v in [ ...as_list(s.domain), ...as_list(s.local) ])
-			push(names, v);
-	});
 	c.load('system');
-	push(names, c.get_first('system', 'system', 'hostname'));
-	c.foreach('adblock-fast', 'file_url', (s) => {
-		if (s.enabled != '0')
-			push(hosts, dom.url_host(s.url));
-	});
-	return dom.protect_context(names, hosts);
-}
-
-function dnsmasq_instances(c) {
-	c.load('adblock-fast-monitor');
-	let targets = as_list(c.get('adblock-fast-monitor', 'config', 'dnsmasq_instance'));
-	let all = !length(targets) || index(targets, '*') >= 0;
-	let out = [];
-	c.load('dhcp');
-	c.foreach('dhcp', 'dnsmasq', (s) => {
-		if (s.disabled == '1')
-			return;
-		let name = s['.name'];
-		let confdir = split(s.confdir || `/tmp/dnsmasq.${name}.d`, ',')[0];
-		if (substr(confdir, 0, 1) != '/')
-			confdir = null;
-		push(out, {
-			section: name,
-			confdir,
-			dropin: !!(confdir && fs.access(confdir + '/adblock-fast-monitor.conf')),
-			uci_logqueries: s.logqueries == '1',
-			logfacility_file: index(s.logfacility ?? '', '/') >= 0,
-			targeted: all || index(targets, name) >= 0,
-		});
-	});
-	return out;
+	let p = sys.adblock_fast_protected(c, af);
+	return dom.protect_context(p.names, p.hosts);
 }
 
 // --- job.json and lock (§7.3) ---
@@ -316,16 +225,17 @@ function m_info() {
 	let conn = ubus.connect();
 	let af = af_state(c, conn);
 	c.load('adblock-fast-monitor');
-	let mon = c.get_all('adblock-fast-monitor', 'config') ?? {};
-	let msvc = service_running(service(conn, 'adblock-fast-monitor'));
+	c.load('dhcp');
+	c.load('system');
+	let mon = sys.monitor_config(c);
+	let msvc = sys.service_state(conn, 'adblock-fast-monitor');
+	let mpid = msvc.running ? sys.service_pid(conn, 'adblock-fast-monitor') : null;
 	let object = length(conn?.list('adblock-fast-monitor') ?? []) > 0;
-	let dnsmasq_running = service_running(service(conn, 'dnsmasq')).running;
+	let dnsmasq = sys.dnsmasq_info(c, conn);
 	conn?.disconnect();
 
-	let instances = dnsmasq_instances(c);
-	c.load('system');
 	let warnings = [];
-	for (let i in instances)
+	for (let i in dnsmasq.instances)
 		if (i.dropin || i.uci_logqueries) {
 			push(warnings, 'query-logging-active');
 			break;
@@ -338,10 +248,10 @@ function m_info() {
 	return {
 		api: API, ok: true,
 		monitor: {
-			enabled: mon.enabled == '1',
-			manage_logging: (mon.manage_logging ?? '1') == '1',
-			poll_interval: clamp(mon.poll_interval, 2, 60, 5),
-			service: msvc,
+			enabled: mon.enabled,
+			manage_logging: mon.manage_logging,
+			poll_interval: mon.poll_interval,
+			service: { running: msvc.running, pid: mpid },
 			object,
 		},
 		adblock_fast: {
@@ -349,7 +259,7 @@ function m_info() {
 			output_file: af.output_file, output_exists: af.output_exists,
 			external_config: af.external_config, pending_uci_changes: af.pending_uci_changes,
 		},
-		dnsmasq: { running: dnsmasq_running, instances },
+		dnsmasq,
 		warnings,
 	};
 }

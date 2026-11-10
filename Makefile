@@ -44,12 +44,16 @@ endef
 # removes the dnsmasq drop-ins), so no prerm is needed. On top of that,
 # install and removal both do what luci.mk's postinst does, so the rpcd
 # plugin, ACL and menu appear and disappear without a manual rpcd restart.
+# On upgrade default_postinst only runs "start", which procd ignores for an
+# unchanged instance, so the old daemon code would keep running: restart it
+# (restart keeps the drop-ins, so dnsmasq is not restarted).
 define Package/$(PKG_NAME)/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	/etc/init.d/rpcd reload 2>/dev/null
+	[ "$${PKG_UPGRADE}" != 1 ] || /etc/init.d/adblock-fast-monitor restart 2>/dev/null
 }
 exit 0
 endef

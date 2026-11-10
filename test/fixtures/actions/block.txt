@@ -1,0 +1,6 @@
+# Deterministic adblock-fast block list for the actions guest tests (domains format).
+ads.example.com
+bads.example.com
+tracker.example.com
+parent.example.com
+telemetry.example.com

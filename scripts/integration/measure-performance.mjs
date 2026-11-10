@@ -1,28 +1,39 @@
-import { access, mkdir, rm } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
-import { projectRoot, readManifest } from '../lib/manifest.mjs';
+#!/usr/bin/env node
+// T26 entrypoint: measures the P0 budgets (docs/CONTRACT.md §11) of an APK on
+// a fresh OpenWrt 25.12.6 guest and runs the gate on the result.
+//
+//   node scripts/integration/measure-performance.mjs PACKAGE.apk
+//   (PACKAGE_APK=... also works; ABFM_PERF_* tune scripts/perf/run.sh)
+//
+// Boots the guest with scripts/verify-guest.sh (in Docker on non-Linux hosts)
+// without installing the APK, runs scripts/perf/run.sh as the host command,
+// writes raw JSON to .local-validation/perf/<run>/ and exits with the verdict
+// of scripts/performance-gate.mjs.
+import { spawnSync } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 
-for (const name of ['OPENWRT_HOST', 'OPENWRT_SSH_PORT', 'OPENWRT_SSH_KEY']) {
-  if (!process.env[name]) throw new Error(`${name} is required for isolated QEMU performance measurement.`);
+const root = resolve(import.meta.dirname, '../..');
+const apkArg = process.argv[2] ?? process.env.PACKAGE_APK;
+if (!apkArg || !existsSync(apkArg)) {
+  console.error('usage: measure-performance.mjs PACKAGE.apk (inside the worktree or .local-validation/)');
+  process.exit(2);
 }
+// Paths must resolve inside the validation container: worktree-relative, or
+// under the shared cache, which is mounted at its real absolute path.
+const visible = path => {
+  const abs = realpathSync(resolve(path));
+  const rel = relative(realpathSync(root), abs);
+  return rel.startsWith('..') ? abs : rel;
+};
+const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+const runId = `${stamp}-${process.pid}`;
+const out = join('.local-validation', 'perf', runId);
 
-const adapter = resolve(projectRoot, 'scripts/integration/measure-monitor-resident.sh');
-const dnsProbe = resolve(projectRoot, 'scripts/integration/dns-probe.mjs');
-await access(adapter);
-await access(dnsProbe);
-const manifest = await readManifest();
-const output = resolve(projectRoot, manifest.requiredAdapters.performance);
-await mkdir(resolve(projectRoot, '.ci-work'), { recursive: true });
-await rm(output, { force: true });
-
-const child = spawn(adapter, [output, ...manifest.fixtureLists.map(path => resolve(projectRoot, path))], {
-  cwd: projectRoot,
-  env: { ...process.env, MONITOR_DNS_PROBE: dnsProbe },
-  stdio: 'inherit'
-});
-const code = await new Promise((resolveExit, reject) => {
-  child.once('error', reject);
-  child.once('exit', status => resolveExit(status ?? 1));
-});
-if (code !== 0) process.exit(code);
+const measure = spawnSync(join(root, 'scripts/verify-guest.sh'),
+  ['--no-install', '--no-tests', '--host-cmd', 'scripts/perf/run.sh', visible(apkArg)],
+  { cwd: root, stdio: 'inherit', env: { ...process.env, ABFM_PERF_OUT: out } });
+if (measure.status !== 0) console.error(`measure-performance: guest run exited ${measure.status}; evaluating what was recorded`);
+const gate = spawnSync(process.execPath, [join(root, 'scripts/performance-gate.mjs'), join(root, out)],
+  { cwd: root, stdio: 'inherit' });
+process.exit(gate.status ?? 1);

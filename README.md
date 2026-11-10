@@ -83,7 +83,7 @@ mounted into the container). Build one with
 | Command | Runs | Against |
 | --- | --- | --- |
 | `npm run check:static` | JSON, JS (LuCI views compiled as function bodies), `bash -n`, `ash -n` for every POSIX sh script including extensionless ones, `ucode -c` | real OpenWrt BusyBox/ucode |
-| `npm run test:unit`, `test:contract` | `node --test` on `test/unit`, `test/contract` | Node |
+| `npm run test:unit` | `node --test` on `test/unit` (real `model.js`) | Node |
 | `npm run test:ucode` | `test/ucode/**/*.uc` | ucode 85922056 + OpenWrt patches |
 | `npm run test:shell` | `test/shell/**/*.sh` under `ash` | BusyBox 1.37.0 with only OpenWrt's default applets |
 

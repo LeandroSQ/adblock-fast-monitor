@@ -13,7 +13,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
-import { projectRoot } from './lib/manifest.mjs';
+import { projectRoot } from './lib/root.mjs';
 
 const ignored = new Set(['node_modules', 'dist', '.git', '.ci-work', '.local-validation', 'playwright-report', 'test-results']);
 const files = [];

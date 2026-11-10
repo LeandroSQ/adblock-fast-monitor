@@ -5,20 +5,14 @@ import { admin, ensureHealthy, expectState, guest, guestWait, login, readonly, s
 
 test.describe.configure({ mode: 'serial' });
 
-// LuCI itself needs the stock `unauthenticated` (session access) and
-// `luci-base` (uci get luci, preload listing) read grants for any login;
-// without them the core shows "Session expired". The principal still has only
-// read access to this package.
-const RO = 'rpcd.monitor_readonly.read';
+// The harness login (scripts/guest/lib.sh) holds the stock `unauthenticated`
+// and `luci-base` read grants every LuCI login needs, plus only the read grant
+// of this package.
 test.beforeAll(() => {
   ensureHealthy();
-  guest(`for g in unauthenticated luci-base; do uci -q del_list ${RO}=$g; uci add_list ${RO}=$g; done; uci commit rpcd; /etc/init.d/rpcd reload`);
   guestWait('ubus list luci.adblock-fast-monitor >/dev/null 2>&1', 30);
 });
-test.afterAll(() => {
-  guest(`for g in unauthenticated luci-base; do uci -q del_list ${RO}=$g; done; uci commit rpcd; /etc/init.d/rpcd reload`);
-  ensureHealthy();
-});
+test.afterAll(() => ensureHealthy());
 
 test('read-only user: dashboard without write controls', async ({ page }) => {
   await login(page, readonly);

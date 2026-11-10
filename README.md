@@ -3,6 +3,8 @@
 This repository contains an OpenWrt package shell plus host-side CI and test
 infrastructure. All components are implemented against the frozen v1 interface
 contract in [`docs/CONTRACT.md`](docs/CONTRACT.md).
+Contributors and coding agents: start with [`AGENTS.md`](AGENTS.md) and
+[`CONTRIBUTING.md`](CONTRIBUTING.md); all docs: [`docs/README.md`](docs/README.md).
 
 ## Install
 

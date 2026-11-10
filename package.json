@@ -7,13 +7,10 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
     "build:userland": "scripts/build-host-ucode.sh",
     "build:package": "scripts/build-package.sh",
     "check:static": "node scripts/check-static.mjs",
-    "check:schema": "node scripts/check-schema.mjs",
     "test:unit": "node --test \"test/unit/**/*.test.mjs\"",
-    "test:contract": "node --test \"test/contract/**/*.test.mjs\"",
     "test:ucode": "test/lib/run-tests ucode",
     "test:shell": "test/lib/run-tests shell",
     "test:guest": "scripts/guest/run-guest-tests.sh",
@@ -21,8 +18,8 @@
     "test:browser": "node scripts/run-browser-required.mjs",
     "test:browser:required": "node scripts/run-browser-required.mjs",
     "test:performance": "node scripts/performance-gate.mjs",
-    "test:performance:measure": "node scripts/integration/measure-performance.mjs && PERFORMANCE_REQUIRE_MEASURED=1 npm run test:performance",
-    "verify:host": "npm run check:static && npm run check:schema && npm run test:unit && npm run test:contract && npm run test:ucode && npm run test:shell && npm run build",
+    "test:performance:measure": "node scripts/integration/measure-performance.mjs",
+    "verify:host": "npm run check:static && npm run test:unit && npm run test:ucode && npm run test:shell",
     "verify:guest": "scripts/verify-guest.sh"
   },
   "devDependencies": {

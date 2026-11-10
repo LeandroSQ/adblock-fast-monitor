@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { projectRoot } from './lib/manifest.mjs';
+import { projectRoot } from './lib/root.mjs';
 
 const baseURL = process.env.MONITOR_BASE_URL;
 if (!baseURL) {

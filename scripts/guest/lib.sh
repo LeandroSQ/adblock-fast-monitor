@@ -203,7 +203,7 @@ guest_start() {
 		mkdir -p /etc/dropbear && chmod 700 /etc/dropbear && printf '%s\n' '$(cat "$GUEST_SSH_KEY.pub")' >/etc/dropbear/authorized_keys && chmod 600 /etc/dropbear/authorized_keys
 		grep -q '^$GUEST_READONLY_USER:' /etc/passwd || { echo '$GUEST_READONLY_USER:x:1001:65534:monitor read-only:/var:/bin/false' >>/etc/passwd; echo '$GUEST_READONLY_USER:x:0:0:99999:7:::' >>/etc/shadow; }
 		sed -i 's|^$GUEST_READONLY_USER:[^:]*:|$GUEST_READONLY_USER:$readonly_hash:|' /etc/shadow
-		uci -q get rpcd.monitor_readonly >/dev/null || { uci set rpcd.monitor_readonly=login; uci set rpcd.monitor_readonly.username='$GUEST_READONLY_USER'; uci set rpcd.monitor_readonly.password='\$p\$$GUEST_READONLY_USER'; uci add_list rpcd.monitor_readonly.read='luci-app-adblock-fast-monitor'; uci commit rpcd; /etc/init.d/rpcd reload; }
+		uci -q get rpcd.monitor_readonly >/dev/null || { uci set rpcd.monitor_readonly=login; uci set rpcd.monitor_readonly.username='$GUEST_READONLY_USER'; uci set rpcd.monitor_readonly.password='\$p\$$GUEST_READONLY_USER'; uci add_list rpcd.monitor_readonly.read='luci-app-adblock-fast-monitor'; uci add_list rpcd.monitor_readonly.read='luci-base'; uci add_list rpcd.monitor_readonly.read='unauthenticated'; uci commit rpcd; /etc/init.d/rpcd reload; }
 		$feeds
 		[ "\$(uci -q get network.lan.proto)" = dhcp ] || { uci set network.lan.proto=dhcp; uci delete network.lan.ipaddr; uci delete network.lan.netmask; uci commit network; /etc/init.d/network reload; }
 		$GUEST_READY_CHECK

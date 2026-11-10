@@ -24,6 +24,10 @@ state=$(g "watch '{\"ops\":[{\"op\":\"block\",\"domain\":\"keep.example.com\"}],
 check_eq "block job applied before the reboot" applied "$state"
 check_eq "job is reported before the reboot" 1 "$(g 'call job | jsonfilter -e @.job.id | grep -c .')"
 
+# The fake upstream does not survive the reboot: without it adblock-fast's
+# boot-time heartbeat probe (and so the boot sequence) would stall for
+# minutes. UCI persistence is what is under test, so skip the boot start.
+g '$AF disable; cp "$BK/dhcp" /etc/config/dhcp'
 guest_reboot && result 0 "guest rebooted" || result 1 "guest rebooted"
 # /tmp is tmpfs: put the harness files back for the tests that follow.
 guest_exec 'mkdir -p /tmp/abfm-test/tests'

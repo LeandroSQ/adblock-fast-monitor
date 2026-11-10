@@ -332,6 +332,15 @@ before the handler runs, so the UI must send only declared fields. Value
 errors (bad `view`, `decision` or `q`, negative `offset`) use the shape
 above.
 
+Exception for the daemon's own object: ucode `ubus.c` `uc_ubus_object_call_args`
+(L1440-1500) rejects, before the handler runs, any argument that is not in the
+method's `args` policy or has another blobmsg type, with ubus status 2
+(`UBUS_STATUS_INVALID_ARGUMENT`). uhttpd adds `ubus_rpc_session` (string) to
+every call from LuCI. So every `adblock-fast-monitor` method declares
+`ubus_rpc_session` (string) in its policy, `offset`/`limit` are declared as
+integers, and other unknown or mistyped fields give ubus status 2 instead of a
+JSON error. rpcd-hosted plugins are not affected.
+
 #### `status` (read)
 
 Request `{}`. Response:
@@ -805,9 +814,11 @@ The first matching row wins:
 | `disabled` | UCI `enabled≠1` | "Monitoring is off", link to Settings; actions still available |
 | `starting` | enabled, `info.monitor.service.running`, status call gave `-32000`, less than 15 s since the first such observation | spinner |
 | `not-running` | enabled, status gave `-32000`, and (not `service.running` or 15 s elapsed) | error with hint (`logread -e adblock-fast-monitor`) |
-| `logging-unavailable(reason)` | object present and one of: `!info.dnsmasq.running` → `dnsmasq-not-running`; an instance with `logfacility_file` → `dnsmasq-logs-to-file`; no instance with `dropin` or `uci_logqueries` → `logging-not-active` | warning; stats shown greyed |
+| `logging-unavailable(reason)` | object present and one of: `!info.dnsmasq.running` → `dnsmasq-not-running`; an instance with `logfacility_file` → `dnsmasq-logs-to-file`; no instance with `dropin` or `uci_logqueries` → `confdir-invalid` if some instance has a null or relative `confdir`, else `logging-not-active` | warning; stats shown greyed |
 | `degraded(reasons)` | `status.state="degraded"` | warning listing `status.reasons` |
-| `healthy` | otherwise | normal |
+| `healthy` | status present, otherwise | normal |
+| `error` | status rejected with any other error and no earlier status | error with the message |
+| `loading` | nothing received yet | notice |
 | *overlay* `stale` | last successful `status` older than 3 × `poll_interval` | keep the last data, marked "stale since …" |
 
 `info.warnings` render as dismissible notes in any state. Every timestamp is
@@ -816,7 +827,8 @@ shown in local time, and durations are humanized.
 ### 8.2 Staging (client-side only)
 
 - `localStorage["adblock-fast-monitor.pending.v1"] = {"v":1,"items":[{"op":"allow","domain":"…","ts":1762747400}]}`,
-  at most 64 items.
+  at most 64 items. Items may carry `reason` (the last failure), and the
+  object may carry `inflight:{job_id,items}` so a reload resumes the job.
 - Adding an op for D replaces any pending op for D. Adding the inverse of a
   pending op (allow↔unallow, block↔unblock) removes it.
 - Domains are normalized as in §6.4 before they are stored.

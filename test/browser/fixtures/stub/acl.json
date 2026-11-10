@@ -1,0 +1,19 @@
+{
+	"luci-app-adblock-fast-monitor": {
+		"description": "Grant access to Adblock Fast Monitor",
+		"read": {
+			"ubus": {
+				"adblock-fast-monitor": [ "status", "domains" ],
+				"luci.adblock-fast-monitor": [ "info", "rules", "job" ]
+			},
+			"uci": [ "adblock-fast-monitor", "adblock-fast" ]
+		},
+		"write": {
+			"ubus": {
+				"adblock-fast-monitor": [ "purge" ],
+				"luci.adblock-fast-monitor": [ "apply" ]
+			},
+			"uci": [ "adblock-fast-monitor" ]
+		}
+	}
+}

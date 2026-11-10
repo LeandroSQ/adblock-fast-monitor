@@ -861,19 +861,29 @@ write grant.
 
 ---
 
-## 11. Performance budgets (placeholders — WU6 owns the numbers)
+## 11. Performance budgets
+
+Measured by T26 (`node scripts/integration/measure-performance.mjs PKG.apk`)
+and judged by `scripts/performance-gate.mjs` against
+`scripts/perf/budgets.json`. Method, justification and measured data:
+[`docs/performance.md`](performance.md). CPU is percent of one CPU of the
+2-vCPU measurement guest; the gate records the accelerator (TCG or KVM).
+The OpenWrt x86/64 kernel has no `smaps`/`smaps_rollup`, so PSS cannot be
+read: memory budgets use RSS (own processes) and RssAnon (deltas of other
+daemons). Load is real queries from a LAN address (not `127.0.0.1`),
+answered by local fixtures: 50 % forwarded, 30 % cached, 20 % blocked.
 
 | ID | Metric | Budget |
 |---|---|---|
-| P1 | processes and RSS with `enabled=0` | 0 extra processes (**hard**) |
-| P2 | daemon + logread PSS, idle and at the `recent_size=2000` cap | TBD MiB |
-| P3 | idle wakeups of the daemon with no DNS traffic, over 60 s | 0 timer wakeups (**hard**); TBD total |
-| P4 | daemon CPU at 50 and 200 qps of real queries | TBD % |
-| P5 | DNS p95 latency delta, on vs off, same load | within noise, TBD ms |
-| P6 | logd, dnsmasq and rpcd CPU/RSS deltas, on vs off | TBD |
-| P7 | `status` / `domains` handler time at full tables | TBD ms |
+| P1 | processes and RSS with `enabled=0`, after install and after a boot | 0 extra processes, also in a 250 ms `/proc` watch (**hard**); RssAnon growth of existing daemons (the rpcd plugin) ≤ 1 MiB |
+| P2 | daemon + logread RSS, idle and at the `recent_size=2000` cap (top 256, pending 512) | ≤ 4 MiB idle; ≤ 8 MiB at the cap |
+| P3 | idle wakeups of the daemon with no DNS traffic, over 60 s | 0 voluntary wakeups and no finite `epoll`/`poll` timeout in `/proc/<pid>/syscall` samples (**hard**); daemon + logread wakeups minus syslog lines ≤ 2 |
+| P4 | daemon + logread CPU at 50 and 200 qps of real queries | ≤ 8 % at 50 qps; ≤ 25 % at 200 qps |
+| P5 | DNS p95 latency delta, on vs off, same load | median(on p95) − median(off p95) ≤ max(2 ms, measured noise floor), ≥ 3 runs per state, loss ≤ 0.5 % |
+| P6 | logd, dnsmasq, rpcd, uhttpd, ubusd CPU/RSS deltas, on vs off | each ≤ 4 pp CPU at 50 qps, ≤ 12 pp at 200 qps; RssAnon ≤ 256 KiB |
+| P7 | `status` / `domains` handler time at full tables | p95 ≤ 50 ms / ≤ 100 ms (round trip through ubus) |
 | P8 | `apply` return time (rpcd blocking) | ≤ 200 ms (**hard**) |
-| P9 | `rules` time to the deferred reply on a 100k-line output file | TBD s; rpcd never blocked > 200 ms |
+| P9 | `rules` time to the deferred reply on a 100k-line output file | ≤ 5 s cold; rpcd never blocked > 200 ms (**hard**, 20 ms `session list` probe) |
 | P10 | dnsmasq restarts caused by the monitor (boot, enable, settings save) | 0 / 1 / 0 (**hard**) |
 
 ---
@@ -988,7 +998,7 @@ Environments:
 | T23 | §8.1 | each UI state is rendered from a real guest condition (disable, kill the daemon, stop dnsmasq, set logfacility, nftset mode, block the network → stale) | B | WU3 |
 | T24 | §8.2 | staging persists across reload; replace/cancel rules; one `apply` per batch; confirm modal for rebuild; job progress; failed items return to pending | B | WU3 |
 | T25 | §8.2 ACL | a read-only user sees no write controls; Settings loads and saves for an admin | B | WU3 |
-| T26 | §11 | P1–P10 measured on the guest with raw results recorded | G | WU6 |
+| T26 | §11 | P1–P10 measured on the guest with raw results recorded (`.local-validation/perf/<run>/`); gate verdict per metric | G | WU6 |
 
 ---
 

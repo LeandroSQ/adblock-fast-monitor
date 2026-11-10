@@ -251,8 +251,9 @@ const daemonDuringLoad = Object.entries(loads).some(([k, runs]) =>
     const runs = loads[`on-${q}`];
     const pcts = runs.map(x => (x.win && daemonProcs(x.win.t0.procs).length ? cpuPct(x.win, packageProcs) : null));
     const value = median(pcts);
+    const split = sel => median(runs.map(x => (x.win && daemonProcs(x.win.t0.procs).length ? cpuPct(x.win, sel) : null)));
     out[q] = { cpu_pct_median: round(value), cpu_pct_runs: pcts.map(v => round(v)),
-      dnsmasq_lines_per_window: runs.map(x => x.win?.log?.dnsmasq ?? null), budget: budgets.P4.cpu_pct[q] };
+      daemon_pct_median: round(split(daemonProcs)), logread_pct_median: round(split(childProcs)), budget: budgets.P4.cpu_pct[q] };
     if (value == null) measured = false;
     else if (value > budgets.P4.cpu_pct[q]) pass = false;
   }

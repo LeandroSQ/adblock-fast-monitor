@@ -60,7 +60,9 @@ Push a tag `vX.Y.Z-rN` equal to `PKG_VERSION-rPKG_RELEASE`.
 mandatory `apk verify` against `keys/`), attests build provenance, creates the
 GitHub release, deploys the feed to Pages and smoke-tests it from a stock
 25.12.6 rootfs. `scripts/release/selftest.sh WORKDIR PKG.apk` exercises the
-signing pipeline with throwaway keys (run in CI on every build).
+signing pipeline with throwaway keys (run in CI on every build);
+`scripts/release/verify-luci-install.sh PKG.apk` checks the LuCI install
+path end to end (Testing).
 
 ## Testing
 
@@ -71,12 +73,23 @@ npm ci
 npm run verify:host                      # no guest; ~10 s (first run builds the userland image, ~30 s)
 npm run verify:guest -- path/to/pkg.apk  # boots a stock 25.12.6 guest, installs, runs test/guest
 npm run verify:guest -- --browser path/to/pkg.apk   # also Playwright against the guest's LuCI
+scripts/release/verify-luci-install.sh path/to/pkg.apk  # T22: install/remove through LuCI from a signed feed
 ```
 
 The APK path must be inside the worktree or `.local-validation/` (both are
 mounted into the container). Build one with
 `scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh`
 (prints the path under `.local-validation/artifacts/`).
+
+`verify-luci-install.sh` is the end-user install check (T22). It signs a feed
+with a throwaway key using the release script, serves it like GitHub Pages,
+boots a guest **without** the package and drives LuCI with Playwright: an
+unsigned upload is refused, the key is added on Repository Public Keys, the
+signed package installs with Upload Package… (objects and ACL work without
+restarting rpcd), removal through LuCI leaves no files, drop-ins or objects,
+and the package installs again from the feed via Configure apk. It runs on
+Linux x86_64 directly and on macOS through Docker (the key never leaves a
+throwaway container). In ordinary `verify:guest` runs this test is skipped.
 
 ### Host suites (`verify:host`)
 
@@ -156,9 +169,7 @@ set to the guest's LuCI.
 permissions, no secrets, SHA-pinned actions and job timeouts: `host`
 (verify:host), `package` (SDK build, cached tarball, signing self-test,
 unsigned developer artifact), `guest` (KVM-backed run-guest-tests), `browser`
-(Playwright against a guest) and `install` (T22: throwaway-key feed, key and
-package installed and removed through LuCI:
-`ABFM_INSTALL_TEST=1 scripts/guest/run-guest-tests.sh --no-install PKG.apk test/guest/package-luci-install.host.sh`;
-on non-x86_64 hosts pass a feed prebuilt by `scripts/release/sign-feed.sh` as
-`ABFM_FEED_DIR`). `release.yml` is described under Install → Releasing. Lint it with
+(Playwright against a guest) and `install` (T22,
+`scripts/release/verify-luci-install.sh`, see Testing). `release.yml` is
+described under Install → Releasing. Lint the workflows with
 `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest`.

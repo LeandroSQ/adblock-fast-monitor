@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # T22 (§2 install): the end-user path through LuCI only, without
-# --allow-untrusted, on a guest that does NOT have the package yet:
+# --allow-untrusted, on a guest that does NOT have the package yet. Run it with
 #
-#   ABFM_INSTALL_TEST=1 scripts/guest/run-guest-tests.sh --no-install \
-#       PACKAGE.apk test/guest/package-luci-install.host.sh
+#   scripts/release/verify-luci-install.sh PACKAGE.apk
+#
+# (which sets ABFM_INSTALL_TEST=1 and boots a --no-install guest).
 #
 # 1. Builds a feed signed with a throwaway ECDSA key exactly like release.yml
 #    (scripts/release/sign-feed.sh; the private key is deleted right after
@@ -16,18 +17,18 @@
 #    install, objects/ACL without an rpcd restart, removal through LuCI and its
 #    cleanup, then install from the feed via "Configure apk".
 #
-# Without ABFM_INSTALL_TEST=1 it is skipped (it needs a --no-install guest).
-# ABFM_ALLOW_MISSING_BACKEND=1 is passed through (see package-files.host.sh).
+# In ordinary guest runs (package preinstalled with --allow-untrusted) it is
+# skipped: ABFM_INSTALL_TEST is unset there.
 set -u
 . test/lib/sh/testlib.sh
 pkg=luci-app-adblock-fast-monitor
 
 if [[ "${ABFM_INSTALL_TEST:-0}" != 1 ]]; then
-	t_skip 'T22 LuCI install from a signed feed' 'needs ABFM_INSTALL_TEST=1 and a --no-install guest'
+	t_skip 'T22 LuCI install from a signed feed' 'run scripts/release/verify-luci-install.sh PACKAGE.apk'
 	t_done
 fi
 if guest_exec "apk info -e $pkg" >/dev/null 2>&1; then
-	t__result 1 'the guest does not have the package yet' 'run with run-guest-tests.sh --no-install'
+	t__result 1 'the guest does not have the package yet' 'run scripts/release/verify-luci-install.sh PACKAGE.apk'
 	t_done
 fi
 
@@ -70,7 +71,7 @@ if MONITOR_BASE_URL="$GUEST_HTTP_URL" ABFM_INSTALL_TEST=1 \
 	ABFM_KEY_URL="http://127.0.0.1:$port/keys/$(basename "$key")" ABFM_KEY_FILE="$key" \
 	ABFM_FEED_URL="$guest_host:$port/apk/packages.adb" \
 	ABFM_SIGNED_APK="$signed" ABFM_UNSIGNED_APK="$PACKAGE_APK" \
-	npx playwright test --config test/browser/playwright.config.mjs --reporter=list install-luci; then
+	npx playwright test --config test/browser/install-luci.config.mjs; then
 	t__result 0 'LuCI install/remove/feed flow (test/browser/install-luci.spec.mjs)'
 else
 	t__result 1 'LuCI install/remove/feed flow (test/browser/install-luci.spec.mjs)' "feed server log: $work/serve-site.log"

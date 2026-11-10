@@ -201,9 +201,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - name: Throwaway-key feed, key added and package installed/removed through LuCI
-        run: scripts/guest/run-guest-tests.sh --no-install .ci-work/apk/package.apk test/guest/package-luci-install.host.sh
+        run: scripts/release/verify-luci-install.sh .ci-work/apk/package.apk
         env:
-          ABFM_INSTALL_TEST: "1"
           GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run
       - name: Upload Playwright report and guest logs
         if: always()

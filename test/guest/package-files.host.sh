@@ -2,14 +2,11 @@
 # §2 package inventory on the guest (package installed by run-guest-tests):
 # dependencies, file modes and owners, conffile defaults, sysupgrade keep list,
 # and that the v0 files are gone.
-#
-# ABFM_ALLOW_MISSING_BACKEND=1 turns "file from another work unit is missing"
-# and "v0 file still shipped" into SKIPs (only for branches that do not have
-# WU1/WU2/WU3 merged yet). Without it they fail.
+# The config defaults are read from the APK as shipped (earlier tests in a
+# shared guest may have changed the live /etc/config file).
 set -u
 . test/lib/sh/testlib.sh
 pkg=luci-app-adblock-fast-monitor
-allow_missing="${ABFM_ALLOW_MISSING_BACKEND:-0}"
 
 t_ok "$pkg is installed" guest_exec "apk info -e $pkg"
 
@@ -46,26 +43,19 @@ inventory=(
 	/www/luci-static/resources/adblock-fast-monitor/model.js:644:WU3
 )
 for entry in "${inventory[@]}"; do
-	IFS=: read -r path mode owner <<<"$entry"
-	actual="$(awk -v p="$path" '$3 == p { print $1 }' <<<"$modes")"
-	if [[ -z "$actual" && "$owner" != WU4 && "$allow_missing" == 1 ]]; then
-		t_skip "§2 $path is packaged with mode $mode" "not on this branch yet ($owner); ABFM_ALLOW_MISSING_BACKEND=1"
-	else
-		t_eq "§2 $path is packaged with mode $mode" "$mode" "$actual"
-	fi
+	IFS=: read -r path mode _ <<<"$entry"
+	t_eq "§2 $path is packaged with mode $mode" "$mode" "$(awk -v p="$path" '$3 == p { print $1 }' <<<"$modes")"
 done
 
 v0="$(grep -E '^/(test/|usr/lib/adblock-fast-monitor/|usr/libexec/rpcd/adblock-fast-monitor|usr/libexec/adblock-fast-monitor-)' <<<"$(awk '{print $3}' <<<"$modes")" | tr '\n' ' ')"
-if [[ -n "$v0" && "$allow_missing" == 1 ]]; then
-	t_skip 'no v0 files are shipped' "still present on this branch: $v0"
-else
-	t_eq 'no v0 files are shipped (sh plugins, collector, ring, root/test)' '' "$v0"
-fi
+t_eq 'no v0 files are shipped (sh plugins, collector, ring, root/test)' '' "$v0"
 
 t_ok 'the ACL file is valid JSON with the §9 grants' guest_exec "jsonfilter -i /usr/share/rpcd/acl.d/$pkg.json \
 	-e '@[\"$pkg\"].read.ubus[\"adblock-fast-monitor\"]' -e '@[\"$pkg\"].read.uci' -e '@[\"$pkg\"].write.ubus[\"luci.adblock-fast-monitor\"]' >/dev/null"
-cfg="$(guest_exec 'uci -q show adblock-fast-monitor')"
-t_eq 'the conffile has the §3 defaults' "adblock-fast-monitor.config=monitor
+shipped=/tmp/abfm-test/shipped
+guest_exec "rm -rf $shipped && mkdir -p $shipped && apk extract --allow-untrusted --destination $shipped /tmp/abfm-test/package.apk" >/dev/null
+cfg="$(guest_exec "uci -q -c $shipped/etc/config show adblock-fast-monitor")"
+t_eq 'the shipped /etc/config/adblock-fast-monitor has the §3 defaults' "adblock-fast-monitor.config=monitor
 adblock-fast-monitor.config.enabled='0'
 adblock-fast-monitor.config.manage_logging='1'
 adblock-fast-monitor.config.dnsmasq_instance='*'
@@ -76,8 +66,12 @@ adblock-fast-monitor.config.pending_ttl='10'
 adblock-fast-monitor.config.record_clients='0'
 adblock-fast-monitor.config.exclude_router='1'
 adblock-fast-monitor.config.poll_interval='5'" "$cfg"
-t_ok '/etc/config/adblock-fast-monitor is registered as a conffile' guest_exec \
-	"grep -qx '/etc/config/adblock-fast-monitor' /lib/apk/packages/$pkg.conffiles"
+t_ok 'the live /etc/config/adblock-fast-monitor is a registered conffile' guest_exec \
+	"test -f /etc/config/adblock-fast-monitor && grep -qx '/etc/config/adblock-fast-monitor' /lib/apk/packages/$pkg.conffiles"
+t_eq 'the registered conffile checksum is the shipped file' \
+	"$(guest_exec "sha256sum < $shipped/etc/config/adblock-fast-monitor" | cut -d' ' -f1)" \
+	"$(guest_exec "sed -n 's#^/etc/config/adblock-fast-monitor ##p' /lib/apk/packages/$pkg.conffiles_static")"
+guest_exec "rm -rf $shipped"
 
 # sysupgrade keeps the feed key (added through LuCI, not owned by any package)
 # and this package's config.

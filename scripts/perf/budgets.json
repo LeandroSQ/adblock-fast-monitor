@@ -1,0 +1,14 @@
+{
+  "$comment": "P0 budgets for docs/CONTRACT.md §11 (justification and measured data: docs/performance.md). Evaluated by scripts/performance-gate.mjs against a run of scripts/perf/run.sh. Memory is RSS/RssAnon because the OpenWrt x86/64 kernel has no smaps/smaps_rollup (PSS unavailable). CPU is percent of one guest CPU.",
+  "P1": { "extra_processes": 0, "rss_anon_delta_kib": 1024 },
+  "P2": { "idle_rss_kib": 4096, "full_rss_kib": 8192 },
+  "P3": { "daemon_timer_wakeups": 0, "excess_wakeups": 2 },
+  "P4": { "cpu_pct": { "50": 8, "200": 25 } },
+  "P5": { "p95_delta_floor_ms": 2, "max_loss_pct": 0.5, "min_runs": 3 },
+  "P6": { "cpu_delta_pp": { "50": 4, "200": 12 }, "rss_anon_delta_kib": 256,
+          "processes": ["logd", "dnsmasq", "rpcd", "uhttpd", "ubusd"] },
+  "P7": { "status_p95_ms": 50, "domains_p95_ms": 100 },
+  "P8": { "apply_max_ms": 200 },
+  "P9": { "rules_cold_s": 5, "rpcd_block_max_ms": 200 },
+  "P10": { "boot": 0, "enable": 1, "save": 0 }
+}

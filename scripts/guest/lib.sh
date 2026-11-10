@@ -140,6 +140,8 @@ guest_start() {
 			guest__log "baseline missing; preparing $baseline"
 			GUEST_BASELINE="$baseline" "$GUEST_LIB_ROOT/scripts/guest/prepare-baseline.sh" || return 1
 		fi
+		# The baseline's backing file (stock raw image) is not cached in CI; recreate it.
+		guest_base_image >/dev/null || return 1
 		disk="$GUEST_RUN_DIR/disk.qcow2"
 		qemu-img create -q -f qcow2 -F qcow2 -b "$(cd "$(dirname "$baseline")" && pwd)/$(basename "$baseline")" "$disk"
 	fi

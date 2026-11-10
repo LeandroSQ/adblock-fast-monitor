@@ -26,9 +26,10 @@ feed/key mechanism, and test installation without `--allow-untrusted`.
 
 ## What the real-system gate proves
 
-`scripts/integration/run-openwrt-qemu.sh` is intentionally strict. It downloads
-the pinned image, verifies its checksum, injects disposable credentials, and
-boots it with KVM or TCG. It validates:
+`scripts/guest/run-guest-tests.sh` (see README "Testing") downloads the pinned
+image, verifies its checksum, boots a per-run copy-on-write overlay of the
+baseline with KVM or TCG, injects disposable credentials, installs the APK and
+runs `test/guest`. The guest tests are expected to validate:
 
 1. APK control metadata declares `arch: all`.
 2. `apk` accepts the architecture and resolves/install package dependencies.

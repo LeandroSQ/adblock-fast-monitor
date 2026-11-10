@@ -262,6 +262,93 @@ function logging_apply(mode, opts) {
 	return { changed, restarted, errors, dropins: after };
 }
 
+// --- adblock-fast discovery (WU2) ---
+// adblock-fast state for the rpcd plugin (docs/CONTRACT.md §6.1, §6.5, §10).
+// Reads go through the caller's cursor, which must use the plugin's private
+// savedir so LuCI's unsaved changes never leak into the result.
+
+const AF_INIT = '/etc/init.d/adblock-fast';
+const AF_CONFIG = '/etc/config/adblock-fast';
+const AF_PENDING = '/tmp/.uci/adblock-fast';
+const AF_DEFAULT_HEARTBEAT = 'heartbeat.mossdef.org';
+const AF_DEFAULT_UPDATE_URL = 'https://cdn.jsdelivr.net/gh/openwrt/packages/net/adblock-fast/files/adblock-fast.config.update';
+
+// Unsaved LuCI changes for adblock-fast in a uci delta file. adblock-fast
+// itself saves (without committing) file_url sizes after each download when
+// update_config_sizes=1; that bookkeeping is not a user change.
+function adblock_fast_pending(path) {
+	for (let l in split(fs.readfile(path ?? AF_PENDING) ?? '', '\n'))
+		if (l != '' && !match(l, /^adblock-fast\.[^.]+\.size='[0-9]*'$/))
+			return true;
+	return false;
+}
+
+function adblock_fast_state(cursor, conn) {
+	const dom = require('abfm.domain');
+	let cfg = cursor.get_all('adblock-fast', 'config') ?? {};
+	let dns = adblock_fast_dns(cursor) ?? 'dnsmasq.servers';
+	let output_file = dom.DNSMASQ_MODES[dns] ?? null;
+	let data = conn?.call('service', 'list', { name: 'adblock-fast' })?.['adblock-fast']?.data;
+	let hb = cfg.heartbeat_domain;
+	return {
+		installed: !!(fs.access(AF_INIT) && fs.access(AF_CONFIG)),
+		enabled: parse_bool(cfg.enabled, false),
+		status: data?.status || null,
+		dns,
+		output_file,
+		output_exists: !!(output_file && fs.access(output_file)),
+		external_config: !!(cfg.dnsmasq_config_file_url ?? ''),
+		pending_uci_changes: adblock_fast_pending(),
+		allowed: filter(as_list(cfg.allowed_domain), (d) => d != ''),
+		blocked: filter(as_list(cfg.blocked_domain), (d) => d != ''),
+		// adblock-fast maps '-' (and unset) to its default heartbeat (§10).
+		heartbeat_domain: (hb && hb != '-') ? hb : AF_DEFAULT_HEARTBEAT,
+		config_update_url: cfg.config_update_url || AF_DEFAULT_UPDATE_URL,
+	};
+}
+
+// §6.5 inputs: names protected equal-or-under, and list hosts protected exactly.
+function adblock_fast_protected(cursor, af) {
+	const dom = require('abfm.domain');
+	let names = [ af.heartbeat_domain, ...local_domains(cursor),
+		cursor.get_first('system', 'system', 'hostname') ];
+	let hosts = [ dom.url_host(af.config_update_url) ];
+	cursor.foreach('adblock-fast', 'file_url', (s) => {
+		if (parse_bool(s.enabled, true))
+			push(hosts, dom.url_host(s.url));
+	});
+	return { names, hosts };
+}
+
+// pid of the first running instance of a procd service, or null.
+function service_pid(conn, name) {
+	for (let k, v in conn?.call('service', 'list', { name })?.[name]?.instances ?? {})
+		if (v?.running)
+			return v.pid ?? null;
+	return null;
+}
+
+// §6.1 `dnsmasq`: logging_status() for every enabled section, plus whether
+// it logs to a file and whether dnsmasq_instance targets it.
+function dnsmasq_info(cursor, conn) {
+	let secs = {};
+	for (let s in dnsmasq_sections(cursor))
+		secs[s.section] = s;
+	let targeted = map(logging_targets(cursor), (s) => s.section);
+	let instances = [], running = false;
+	for (let e in logging_status(cursor, conn).instances) {
+		if (e.running)
+			running = true;
+		let s = secs[e.section];
+		if (s.disabled)
+			continue;
+		e.logfacility_file = index(s.logfacility ?? '', '/') >= 0;
+		e.targeted = index(targeted, e.section) >= 0;
+		push(instances, e);
+	}
+	return { running, instances };
+}
+
 return {
 	DROPIN_NAME,
 	DROPIN_CONTENT,
@@ -277,5 +364,10 @@ return {
 	adblock_fast_dns,
 	service_state,
 	logging_status,
-	logging_apply
+	logging_apply,
+	adblock_fast_pending,
+	adblock_fast_state,
+	adblock_fast_protected,
+	service_pid,
+	dnsmasq_info
 };

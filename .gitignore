@@ -8,3 +8,4 @@ sdk.tar.zst
 *.img.gz
 playwright-report/
 test-results/
+CLAUDE.local.md

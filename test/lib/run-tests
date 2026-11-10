@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Host entry for the containerised suites.
+#
+#   test/lib/run-tests ucode [FILES...]   # default: test/ucode/**/*.uc
+#   test/lib/run-tests shell [FILES...]   # default: test/shell/**/*.sh
+#
+# Files under fixtures/, lib/ or helpers/ directories are not tests. Each test
+# file runs in its own interpreter process inside one fresh container, with a
+# per-file timeout of ABFM_TEST_TIMEOUT seconds (default 120). Exit status is
+# non-zero if any file fails (non-zero exit or a "not ok" TAP line).
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+kind="${1:?usage: test/lib/run-tests ucode|shell [FILES...]}"
+shift
+case "$kind" in
+	ucode) dir=test/ucode; pattern='*.uc' ;;
+	shell) dir=test/shell; pattern='*.sh' ;;
+	*) echo "unknown suite: $kind" >&2; exit 2 ;;
+esac
+
+cd "$root"
+files=("$@")
+if ((${#files[@]} == 0)); then
+	[[ -d "$dir" ]] || { echo "no $dir directory; nothing to run" >&2; exit 0; }
+	while IFS= read -r file; do files+=("$file"); done < <(
+		find "$dir" \( -name fixtures -o -name lib -o -name helpers \) -prune -o \
+			-type f -name "$pattern" -print | LC_ALL=C sort)
+fi
+((${#files[@]})) || { echo "no $kind tests found under $dir" >&2; exit 0; }
+
+exec "$root/test/lib/userland" -e "ABFM_TEST_TIMEOUT=${ABFM_TEST_TIMEOUT:-120}" -- \
+	/bin/ash /src/test/lib/sh/run-suite.sh "$kind" "${files[@]}"

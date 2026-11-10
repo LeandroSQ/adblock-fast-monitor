@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Runs a shell script under OpenWrt 25.12.6's BusyBox ash, with only the
+# applets OpenWrt enables by default (no stat, timeout, realpath, ...).
+#
+#   test/lib/busybox-runner SCRIPT [ARGS...]
+#   test/lib/busybox-runner -c 'command -v stat'
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$here/userland" -- /bin/ash "$@"

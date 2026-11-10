@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Runs the real ucode interpreter pinned by OpenWrt 25.12.6 (commit 85922056
+# plus OpenWrt's patches) inside the host userland container.
+#
+#   test/lib/ucode-runner [UCODE ARGS...]
+#   test/lib/ucode-runner test/ucode/example.test.uc
+#
+# The shared test module is on the search path: `let t = require("testlib");`.
+# Modules available: fs io math struct uloop ubus uci log debug resolv socket
+# zlib digest (no nl80211/rtnl). ubus calls need a ubusd you start yourself.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$here/userland" -- /usr/bin/ucode -L '/src/test/lib/ucode/*.uc' "$@"

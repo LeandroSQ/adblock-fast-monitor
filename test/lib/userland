@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Runs a command inside the OpenWrt 25.12.6 host userland container (real
+# BusyBox ash with OpenWrt's default applets, ucode, uci, ubus, jshn,
+# jsonfilter; nothing else). The repository is mounted read-only at /src and
+# is the working directory; /tmp is a private tmpfs.
+#
+#   test/lib/userland [-e NAME=VALUE]... [--] COMMAND [ARGS...]
+#
+# Environment inside the container: ABFM_SRC=/src, ABFM_TESTLIB=/src/test/lib.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+envs=()
+while (($#)); do
+	case "$1" in
+		-e) envs+=(--env "$2"); shift 2 ;;
+		--) shift; break ;;
+		*) break ;;
+	esac
+done
+(($#)) || { echo 'usage: test/lib/userland [-e NAME=VALUE]... [--] COMMAND [ARGS...]' >&2; exit 2; }
+
+image="${ABFM_USERLAND_IMAGE:-$("$root/scripts/build-host-ucode.sh")}"
+tty=()
+[[ -t 0 && -t 1 ]] && tty=(--interactive --tty)
+exec docker run --rm "${tty[@]}" --network none \
+	--mount "type=bind,src=$root,dst=/src,readonly" --workdir /src \
+	--tmpfs /tmp:exec,mode=1777 \
+	--env ABFM_SRC=/src --env ABFM_TESTLIB=/src/test/lib "${envs[@]}" \
+	"$image" "$@"

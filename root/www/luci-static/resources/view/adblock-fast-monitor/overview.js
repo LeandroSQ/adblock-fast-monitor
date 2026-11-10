@@ -134,6 +134,10 @@ function storageSet(key, value) {
 }
 
 return view.extend({
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null,
+
 	load() {
 		return Promise.all([
 			L.resolveDefault(uci.load('adblock-fast-monitor'), null),
@@ -738,7 +742,7 @@ return view.extend({
 		const input = E('input', { 'id': 'abfm-add-domain', 'class': 'cbi-input-text', 'type': 'text',
 			'maxlength': 253, 'placeholder': 'ads.example.com', 'autocomplete': 'off', 'spellcheck': 'false' });
 		const op = E('select', { 'id': 'abfm-add-op', 'class': 'cbi-input-select' },
-			model.OPS.map(o => E('option', { 'value': o }, T(OP_LABEL[o]))));
+			model.OPS.map(o => E('option', { 'value': o, 'selected': (o == 'block') ? '' : null }, T(OP_LABEL[o]))));
 		const add = E('button', { 'class': 'cbi-button cbi-button-add', 'id': 'abfm-add',
 			'click': () => { if (this.stageOp(op.value, input.value)) input.value = ''; } }, T(_('Add to pending')));
 		input.addEventListener('keydown', ev => { if (ev.key == 'Enter') add.click(); });
@@ -827,9 +831,11 @@ return view.extend({
 		this.updatePending();
 		const ops = model.toOps(this.pending);
 		return callApply(ops, false, false, true).then(reply => {
-			if (!reply || reply.ok === false)
+			/* a rebuild batch is refused with confirm-required before the dry run */
+			const confirmRequired = reply && reply.ok === false && reply.error && reply.error.code == 'confirm-required';
+			if ((!reply || reply.ok === false) && !confirmRequired)
 				return this.applyError(reply);
-			const plan = model.applyPlan(reply);
+			const plan = model.applyPlan(confirmRequired ? Object.assign({}, reply, { mode: reply.mode || 'rebuild' }) : reply);
 			if (plan.noop) {
 				this.setPending(model.settleNoop(this.pending));
 				ui.addNotification(null, E('p', {}, T(_('Nothing to change: the rules are already in place.'))), 'info');

@@ -8,8 +8,10 @@
 import * as uloop from 'uloop';
 import * as io from 'io';
 import { connect } from 'ubus';
-import { popen } from 'fs';
 import { cursor } from 'uci';
+import { readlink } from 'fs';
+
+const PID = +readlink('/proc/self');
 
 function clamp(v, d, lo, hi) {
 	if (v == null || !match(v, /^[0-9]+$/)) return d;
@@ -41,16 +43,15 @@ const SINK = { 'NXDOMAIN': 1, 'NODATA': 1, 'NODATA-IPv4': 1, 'NODATA-IPv6': 1, '
 
 function bump(map, d) {
 	if (map[d]) { map[d].count++; return; }
-	let keys = keys_(map);
-	if (length(keys) >= TOP) {
+	let ks = keys(map);
+	if (length(ks) >= TOP) {
 		let min = null;
-		for (let k in keys) if (min == null || map[k].count < map[min].count) min = k;
+		for (let k in ks) if (min == null || map[k].count < map[min].count) min = k;
 		let m = map[min]; delete map[min];
 		map[d] = { count: m.count + 1, error: m.count };
 	}
 	else map[d] = { count: 1, error: 0 };
 }
-function keys_(o) { return keys(o); }
 
 function decide(p, decision, source) {
 	delete pending[p.key];
@@ -118,8 +119,15 @@ function sweep() {
 
 uloop.init();
 const conn = connect();
-const proc = popen("exec /sbin/logread -f -e '^dnsmasq\\['", 'r');
-const rd = io.new(proc.fileno());
+// stdout of logread goes to a pipe: dup2 the writer onto fd 1 around the spawn
+const pipe = io.pipe();
+const rd = pipe[0], wr = pipe[1];
+const saved = io.new(1).dup();
+wr.dup2(1);
+const child = uloop.process('/sbin/logread', [ '-f', '-e', '^dnsmasq\\[' ], {}, () => uloop.end());
+saved.dup2(1);
+saved.close();
+wr.close();
 rd.fcntl(io.F_SETFL, rd.fcntl(io.F_GETFL) | io.O_NONBLOCK);
 let buf = '';
 uloop.handle(rd, () => {
@@ -141,21 +149,21 @@ function dnsmode() {
 
 function err(code, msg) { return { api: 1, ok: false, error: { code, message: msg } }; }
 
-conn.publish('adblock-fast-monitor', {
-	status: { args: {}, call: function() {
+const obj = conn.publish('adblock-fast-monitor', {
+	status: { args: { ubus_rpc_session: '' }, call: function() {
 		try {
 			let dns = dnsmode(), reasons = [];
 			if (!(dns in [ 'dnsmasq.servers', 'dnsmasq.addnhosts', 'dnsmasq.conf' ])) push(reasons, 'dns-mode-unsupported');
 			C.pending = length(keys(pending));
 			let den = C.blocked + C.allowed;
 			return { api: 1, ok: true, state: length(reasons) ? 'degraded' : 'running', reasons,
-				daemon: { pid: getpid(), started_at: started, now: time(), stats_since: since, purged_at: purged },
-				counters: C, block_pct: den ? round(1000 * C.blocked / den) / 10 : null, last_event_at: last_event,
+				daemon: { pid: PID, started_at: started, now: time(), stats_since: since, purged_at: purged },
+				counters: C, block_pct: den ? int(1000 * C.blocked / den + 0.5) / 10 : null, last_event_at: last_event,
 				limits: { recent_size: RECENT, top_size: TOP, pending_size: PSIZE, pending_ttl: TTL },
 				adblock_fast: { dns } };
 		} catch (e) { return err('internal', '' + e); }
 	} },
-	domains: { args: { view: 'recent', decision: '', q: '', offset: 0, limit: 50 }, call: function(req) {
+	domains: { args: { ubus_rpc_session: '', view: 'recent', decision: '', q: '', offset: 0, limit: 50 }, call: function(req) {
 		try {
 			let a = req.args, view = a.view ?? 'recent', q = a.q != null ? lc(a.q) : null;
 			if (!(view in [ 'recent', 'top_blocked', 'top_allowed' ])) return err('invalid-argument', 'view');
@@ -177,11 +185,17 @@ conn.publish('adblock-fast-monitor', {
 				items: slice(items, off, off + lim) };
 		} catch (e) { return err('internal', '' + e); }
 	} },
-	purge: { args: {}, call: function() {
+	purge: { args: { ubus_rpc_session: '' }, call: function() {
 		reset(); since = purged = time();
 		return { api: 1, ok: true, stats_since: since };
 	} }
 });
 
+if (!obj) {
+	warn('publish failed: ', conn.error(), '\n');
+	system('kill ' + child.pid() + ' 2>/dev/null');
+	exit(1);
+}
 uloop.run();
+system('kill ' + child.pid() + ' 2>/dev/null');
 exit(1);

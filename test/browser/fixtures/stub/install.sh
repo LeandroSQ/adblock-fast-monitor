@@ -9,6 +9,8 @@ mkdir -p "$lib" /usr/share/rpcd/ucode
 cp "$src/monitord.uc" "$lib/stub-monitord.uc"
 cp "$src/job.uc" "$lib/stub-job.uc"
 chmod 0755 "$lib/stub-monitord.uc" "$lib/stub-job.uc"
+# v0 exec plugins publish the same object names; the contract removes them
+rm -f /usr/libexec/rpcd/adblock-fast-monitor /usr/libexec/rpcd/adblock-fast-monitor-actions
 cp "$src/plugin.uc" /usr/share/rpcd/ucode/luci.adblock-fast-monitor
 chmod 0644 /usr/share/rpcd/ucode/luci.adblock-fast-monitor
 cp "$src/acl.json" /usr/share/rpcd/acl.d/luci-app-adblock-fast-monitor.json

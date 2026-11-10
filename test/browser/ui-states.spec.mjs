@@ -109,12 +109,13 @@ test('stale overlay: the router stops answering, last data stays visible', async
   await login(page, admin);
   await seeDomain(page, 'telemetry.example.test');
   await expectState(page, 'healthy');
-  await expect(page.locator('tr[data-domain="telemetry.example.test"]')).toBeVisible({ timeout: 30_000 });
+  const row = page.getByRole('table', { name: 'Last domains' }).locator('tr[data-domain="telemetry.example.test"]');
+  await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(banner(page)).toHaveAttribute('data-stale', 'false');
   await page.route(isUbus, (route) => route.abort('connectionrefused'));
   await expect(banner(page)).toHaveAttribute('data-stale', 'true', { timeout: POLL * 3 * 1000 + 30_000 });
   await expect(banner(page)).toContainText('stale since');
-  await expect(page.locator('tr[data-domain="telemetry.example.test"]')).toBeVisible();
+  await expect(row).toBeVisible();
   await page.unroute(isUbus);
   await expect(banner(page)).toHaveAttribute('data-stale', 'false', { timeout: 30_000 });
 });

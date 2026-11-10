@@ -133,6 +133,11 @@ function plan(a, op, d) {
 	return { op, domain: d, effective_op: eff, change: ch };
 }
 
+function math_rand() {
+	let s = readfile('/dev/urandom', 2);
+	return ord(s, 0) * 256 + ord(s, 1);
+}
+
 const PROTECTED = [ 'localhost', 'arpa', 'local', 'internal', 'home.arpa', 'lan' ];
 
 const methods = {
@@ -244,10 +249,5 @@ const methods = {
 		return resp;
 	} }
 };
-
-function math_rand() {
-	let s = readfile('/dev/urandom', 2);
-	return ord(s, 0) * 256 + ord(s, 1);
-}
 
 return { 'luci.adblock-fast-monitor': methods };

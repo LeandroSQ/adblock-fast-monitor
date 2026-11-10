@@ -2,7 +2,7 @@
 // cancel rules; one `apply` per batch; confirmation for rebuilds; job progress;
 // failed items return to pending. Runs against the real guest backends.
 import { expect, test } from '@playwright/test';
-import { admin, ensureHealthy, expectState, guest, isUbus, login, seeDomain, waitAdblockFast } from './lib/guest.mjs';
+import { admin, ensureHealthy, expectState, guest, guestWait, isUbus, login, seeDomain, waitAdblockFast } from './lib/guest.mjs';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -35,7 +35,7 @@ test.beforeAll(() => {
 });
 
 test.afterAll(() => {
-  guest(`sed -i 's#/lists/missing-list.txt#/lists/primary.txt#' /etc/config/adblock-fast; uci -q delete adblock-fast.config.allowed_domain; uci -q delete adblock-fast.config.blocked_domain; uci commit adblock-fast; /etc/init.d/adblock-fast restart >/dev/null 2>&1 || :`);
+  guest(`rm -f /tmp/dnsmasq.*.d/zz-abfm-broken.conf; uci -q delete adblock-fast.config.allowed_domain; uci -q delete adblock-fast.config.blocked_domain; uci commit adblock-fast; /etc/init.d/adblock-fast restart >/dev/null 2>&1 || :`);
   waitAdblockFast();
 });
 
@@ -145,13 +145,17 @@ test('one apply per batch, rebuild confirmation, job progress to applied', async
 });
 
 test('a failed job returns its items to pending with the reason', async ({ page }) => {
-  // the list server becomes unreachable: the rebuild cannot download anything
-  guest(`sed -i 's#/lists/primary.txt#/lists/missing-list.txt#' /etc/config/adblock-fast`);
+  // a broken dnsmasq option makes the resolver restart of the rebuild fail
+  waitAdblockFast();
+  guestWait('[ ! -s /tmp/.uci/adblock-fast ]', 120);
+  guest(`for d in /tmp/dnsmasq.*.d; do echo abfm-no-such-option > "$d/zz-abfm-broken.conf"; done`);
   await login(page, admin);
   await stageManual(page, 'block', 'fail.example.test');
   await page.getByRole('button', { name: 'Apply changes' }).click();
   await page.locator('.modal').getByRole('button', { name: 'Apply' }).click();
-  await expect(page.locator('#abfm-job-state')).toHaveAttribute('data-state', /^(failed|partial)$/, { timeout: 480_000 });
+  await expect(page.locator('#abfm-job-state')).toHaveAttribute('data-state', 'failed', { timeout: 480_000 });
+  await expect(page.locator('#abfm-job [data-error]')).toBeVisible();
+  guest('rm -f /tmp/dnsmasq.*.d/zz-abfm-broken.conf; /etc/init.d/dnsmasq restart');
   const row = pendingRow(page, 'fail.example.test');
   await expect(row).toHaveAttribute('data-op', 'block');
   await expect(row).toContainText('Last attempt:');

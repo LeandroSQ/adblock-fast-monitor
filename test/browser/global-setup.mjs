@@ -25,7 +25,7 @@ export default async function globalSetup() {
   if (!fixtures) throw new Error('Browser test prerequisite blocked: GUEST_FIXTURE_URL is unset');
   guest([
     'set -e',
-    'for s in $(uci show adblock-fast | sed -n "s/^adblock-fast\\.\\([^.=]*\\)=file_url$/\\1/p"); do uci delete adblock-fast.$s; done',
+    'while uci -q delete adblock-fast.@file_url[0]; do :; done',
     's=$(uci add adblock-fast file_url)',
     `uci set adblock-fast.$s.url='${fixtures}/lists/primary.txt'`,
     'uci set adblock-fast.$s.name=fixture',

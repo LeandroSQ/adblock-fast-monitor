@@ -73,16 +73,16 @@ export async function login(page, user, path = OVERVIEW) {
   }
   await page.goto(path);
   const field = page.locator('input[name="luci_username"]');
-  if (await field.isVisible().catch(() => false)) {
+  // The login form is a JavaScript modal; a logged-in page renders a .cbi-map.
+  await page.locator('input[name="luci_username"]:visible, #view .cbi-map').first().waitFor({ timeout: 60_000 });
+  if (await field.isVisible()) {
     await field.fill(user.username);
     await page.locator('input[name="luci_password"]').fill(user.password);
-    await Promise.all([
-      page.waitForURL((url) => !url.toString().includes('luci_username'), { waitUntil: 'load' }),
-      page.locator('button[type="submit"], input[type="submit"]').first().click()
-    ]);
+    await page.getByRole('button', { name: 'Log in' }).click();
+    await page.locator('#view .cbi-map').first().waitFor({ timeout: 60_000 });
   }
   if (!new URL(page.url()).pathname.endsWith(path)) await page.goto(path);
-  await expect(page.locator('#view .spinning').first()).toHaveCount(0, { timeout: 60_000 }).catch(() => {});
+  await page.locator('#view .cbi-map').first().waitFor({ timeout: 60_000 });
 }
 
 /** Route/request predicate for LuCI's ubus JSON-RPC endpoint. */

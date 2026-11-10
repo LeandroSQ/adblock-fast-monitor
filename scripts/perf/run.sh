@@ -88,7 +88,7 @@ push_tools
 gsh 'uci show adblock-fast-monitor; /etc/init.d/adblock-fast-monitor enabled && echo init-enabled || echo init-disabled' \
 	>"$raw/p1-config.txt" 2>&1
 gsh ". $G/lib.sh; perf_set 0" >"$raw/p1-ensure-off.json" 2>>"$raw/p1-config.txt" || err 'cannot ensure enabled=0'
-sleep 10
+probe p1-installed-watch watch 15
 for i in 1 2 3; do probe "p1-installed-$i" snapshot; sleep 5; done
 gsh ". $G/lib.sh; perf_state" >"$raw/p1-state.json" 2>&1
 
@@ -158,24 +158,43 @@ gsh ". $G/lib.sh; perf_wait_job 60" >"$raw/p8-job.json" 2>&1 || true
 gsh ". $G/lib.sh; perf_rules_fixture teardown" >"$raw/p9-fixture-teardown.json" 2>&1 || err 'rules fixture teardown failed'
 
 # --- P10 boot with the monitor on and off; P1 after a disabled boot ---------
+# Each boot is a power cycle: poweroff, then a fresh QEMU on the same overlay.
+# (A second warm `reboot` of one TCG QEMU process can stall for >10 min after
+# GRUB on arm64 hosts; cold starts are what every guest run already does.)
+cold_boot() { # n
+	guest_exec 'sync; poweroff' >/dev/null 2>&1 || true
+	local i
+	for ((i = 0; i < 180; i++)); do kill -0 "$GUEST_QEMU_PID" 2>/dev/null || break; sleep 1; done
+	kill "$GUEST_QEMU_PID" 2>/dev/null || true
+	((own_guest)) && kill "$GUEST_PROXY_PID" 2>/dev/null || true
+	cp "$GUEST_RUN_DIR/serial.log" "$raw/serial-before-boot-$1.log" 2>/dev/null || true
+	rm -f "$GUEST_RUN_DIR/serial.sock"
+	GUEST_DISK="$GUEST_RUN_DIR/disk.qcow2" guest_start >"$raw/boot-$1.log" 2>&1 && own_guest=1
+}
+own_guest=0
 if [[ "${ABFM_PERF_SKIP_BOOT:-0}" != 1 ]]; then
 	# shellcheck source=scripts/guest/lib.sh
 	source "$root/scripts/guest/lib.sh"
+	n=0
 	for state in on off; do
 		value=$([[ $state == on ]] && echo 1 || echo 0)
+		n=$((n + 1))
 		log "P10: boot with the monitor $state"
 		push_tools
 		gsh ". $G/lib.sh; perf_set $value" >"$raw/p10-preboot-$state.json" 2>&1 || err "pre-boot toggle $state failed"
-		if guest_reboot; then
+		if cold_boot "$n"; then
 			push_tools
-			gsh ". $G/lib.sh; sleep 10; perf_boot_report" >"$raw/p10-boot-$state.json" 2>&1 || err "boot report $state failed"
+			[[ $state == off ]] && probe p1-after-boot-watch watch 20
+			gsh ". $G/lib.sh; sleep 5; perf_boot_report" >"$raw/p10-boot-$state.json" 2>&1 || err "boot report $state failed"
 			if [[ $state == off ]]; then
 				for i in 1 2 3; do probe "p1-after-boot-$i" snapshot; sleep 5; done
 			fi
 		else
-			err "reboot ($state) failed"
+			err "boot ($state) failed: $(tail -c 300 "$raw/boot-$n.log")"
+			break
 		fi
 	done
+	((own_guest)) && guest_stop
 fi
 
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

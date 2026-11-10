@@ -8,6 +8,8 @@
 //                                        samples the package processes'
 //                                        /proc/<pid>/syscall once a second and
 //                                        counts syslog lines after the marker
+//   probe.uc watch SECONDS               package processes seen in /proc every
+//                                        250 ms (catches procd respawn loops)
 //   probe.uc rpc OBJECT METHOD JSON N    N timed ubus calls (ms)
 //   probe.uc rpcprobe SECONDS INTERVAL_MS  repeated `session list` latencies (rpcd)
 //   probe.uc parsebench N                cost of the contract §4.3 regexes per line
@@ -139,6 +141,29 @@ function window(seconds, tag) {
 		t0: t0, t1: t1, syscall_samples: samples, log: log_lines_after(marker) };
 }
 
+function watch(seconds) {
+	let seen = {}, scans = 0, end = now_ms() + seconds * 1000;
+	let self = +fs.readlink('/proc/self');
+	while (now_ms() < end) {
+		for (let pid in fs.lsdir('/proc') ?? []) {
+			if (!match(pid, /^[0-9]+$/) || +pid == self)
+				continue;
+			let c = fs.readfile(`/proc/${pid}/cmdline`);
+			if (c == null || index(c, PKG) < 0)
+				continue;
+			c = rtrim(replace(c, /\x00/g, ' '));
+			if (index(c, 'probe.uc') >= 0)
+				continue;
+			seen[c] ??= { samples: 0, pids: [] };
+			seen[c].samples++;
+			if (index(seen[c].pids, +pid) < 0) push(seen[c].pids, +pid);
+		}
+		scans++;
+		sleep(250);
+	}
+	return { seconds: seconds, scans: scans, seen: seen };
+}
+
 function percentile(sorted, q) {
 	let n = length(sorted);
 	if (!n) return null;
@@ -247,6 +272,7 @@ let cmd = ARGV[0];
 let out;
 if (cmd == 'snapshot') out = snapshot();
 else if (cmd == 'window') out = window(+ARGV[1], ARGV[2]);
+else if (cmd == 'watch') out = watch(+ARGV[1]);
 else if (cmd == 'rpc') out = rpc(ARGV[1], ARGV[2], ARGV[3], +(ARGV[4] ?? 1));
 else if (cmd == 'rpcprobe') out = rpcprobe(+ARGV[1], +(ARGV[2] ?? 20));
 else if (cmd == 'parsebench') out = parsebench(+(ARGV[1] ?? 2000));

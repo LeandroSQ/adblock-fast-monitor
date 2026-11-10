@@ -154,6 +154,9 @@ const repeats = meta.repeats ?? 3;
     for (const s of inst) for (const p of userland(s.procs)) if (!stockSigs.has(p.cmdline)) extra.add(p.cmdline);
     for (const s of inst) for (const p of packageProcs(s.procs)) extra.add(p.cmdline);
     for (const s of afterBoot) for (const p of packageProcs(s.procs)) extra.add(`after a disabled boot: ${p.cmdline}`);
+    for (const [name, file] of [['after install', 'p1-installed-watch'], ['after a disabled boot', 'p1-after-boot-watch']]) {
+      for (const cmdline of Object.keys(load(file)?.seen ?? {})) extra.add(`${name} (250 ms watch): ${cmdline}`);
+    }
     for (const line of (bootOff?.package_procs ?? '').split('\n').filter(Boolean)) {
       extra.add(`after a disabled boot: ${line.replace(/^\d+\s+\S+\s+\d+\s+\S+\s+/, '')}`);
     }
@@ -169,8 +172,10 @@ const repeats = meta.repeats ?? 3;
     judge('P1', extra.size <= budgets.P1.extra_processes && rssDelta <= budgets.P1.rss_anon_delta_kib, {
       extra_processes: extra.size, extra: [...extra], rss_anon_delta_kib: rssDelta,
       rss_anon_delta_by_process_kib: deltas, mem_available_delta_kib: memAvail,
-      after_disabled_boot_checked: afterBoot.length > 0 || bootOff != null, budget: budgets.P1,
-      raw: ['p1-stock-*.json', 'p1-installed-*.json', 'p1-after-boot-*.json', 'p10-boot-off.json', 'p1-state.json', 'install.json']
+      after_disabled_boot_checked: afterBoot.length > 0 || bootOff != null,
+      watches: { after_install: load('p1-installed-watch'), after_disabled_boot: load('p1-after-boot-watch') },
+      budget: budgets.P1,
+      raw: ['p1-stock-*.json', 'p1-installed-*.json', 'p1-*-watch.json', 'p1-after-boot-*.json', 'p10-boot-off.json', 'p1-state.json', 'install.json']
     });
   }
 }

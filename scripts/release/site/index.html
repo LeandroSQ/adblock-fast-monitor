@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>luci-app-adblock-fast-monitor — OpenWrt package feed</title>
+<style>
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; color: #1f2328; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+pre { background: #f6f8fa; padding: .75rem; overflow-x: auto; border-radius: 6px; }
+li { margin: .25rem 0; }
+small { color: #59636e; }
+</style>
+</head>
+<body>
+<h1>luci-app-adblock-fast-monitor</h1>
+<p>LuCI dashboard for <a href="https://github.com/openwrt/packages/tree/openwrt-25.12/net/adblock-fast">adblock-fast</a> on
+OpenWrt 25.12. Latest version: <strong>@VERSION@</strong>.
+Source: <a href="https://github.com/LeandroSQ/adblock-fast-monitor">github.com/LeandroSQ/adblock-fast-monitor</a>.</p>
+
+<h2>Install from LuCI (once)</h2>
+<ol>
+<li><strong>System → Administration → Repository Public Keys</strong>: paste
+<code>@BASE_URL@/keys/@KEY_NAME@</code> into the box and click <strong>Add key</strong>.
+LuCI saves it as <code>/etc/apk/keys/@KEY_NAME@</code>.</li>
+<li><strong>System → Software → Configure apk</strong>: add this line to
+<code>/etc/apk/repositories.d/customfeeds.list</code> and click <strong>Save</strong>:
+<pre>@BASE_URL@/apk/packages.adb</pre></li>
+<li>Click <strong>Update lists…</strong>, type <code>luci-app-adblock-fast-monitor</code> in
+<strong>Filter</strong> and click <strong>Install…</strong>. Dependencies (adblock-fast, ucode
+modules) come from the official OpenWrt feeds.</li>
+</ol>
+<p>The app is then under <strong>Services → Adblock Fast Monitor</strong>. Updates show up in
+<strong>System → Software → Updates</strong> after <strong>Update lists…</strong>.</p>
+
+<h2>Or over SSH</h2>
+<pre>uclient-fetch -O /etc/apk/keys/@KEY_NAME@ @BASE_URL@/keys/@KEY_NAME@
+echo @BASE_URL@/apk/packages.adb &gt;&gt; /etc/apk/repositories.d/customfeeds.list
+apk update &amp;&amp; apk add luci-app-adblock-fast-monitor</pre>
+
+<h2>Or without the feed</h2>
+<p>Add the key (step 1), download a package below and install it with <strong>System → Software →
+Upload Package…</strong>. Every package is signed, so no <code>--allow-untrusted</code> is
+needed; you will not get update notifications this way.</p>
+
+<h2>Signing key</h2>
+<ul>@FINGERPRINTS@</ul>
+<p>Check it with <code>openssl pkey -pubin -in @KEY_NAME@ -outform DER | sha256sum</code>.
+If <code>apk update</code> reports <code>UNTRUSTED signature</code> for this feed, the key was
+rotated: add the new key from the project README, then remove the old one.
+Keep the key across firmware upgrades: the package lists it for sysupgrade, or add
+<code>/etc/apk/keys/@KEY_NAME@</code> under System → Backup / Flash Firmware → Configuration.</p>
+
+<h2>Packages</h2>
+<ul>@PACKAGES@</ul>
+<p><a href="apk/SHA256SUMS">SHA256SUMS</a> · <a href="apk/packages.adb">packages.adb</a></p>
+</body>
+</html>

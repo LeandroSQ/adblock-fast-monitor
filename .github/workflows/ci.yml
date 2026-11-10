@@ -2,8 +2,13 @@ name: CI
 
 on:
   pull_request:
+    branches: [main]
+    paths-ignore: &docs-only
+      - "docs/**"
+      - "**.md"
   push:
     branches: [main]
+    paths-ignore: *docs-only
   workflow_dispatch:
 
 permissions:
@@ -59,14 +64,29 @@ jobs:
         run: |
           set -euo pipefail
           apk="$(scripts/build-package.sh)"
-          mkdir -p .ci-work/apk
+          mkdir -p .ci-work/apk .ci-work/dev
           cp "$apk" "$(dirname "$apk")/package.sha256" .ci-work/apk/
+          # Developer build: unsigned, installable only with apk add --allow-untrusted over SSH.
+          sdk_apk="$(scripts/release/apk-tool.sh)"
+          name="$("$sdk_apk" adbdump "$apk" | sed -n 's/^  name: //p' | head -n1)"
+          version="$("$sdk_apk" adbdump "$apk" | sed -n 's/^  version: //p' | head -n1)"
+          cp "$apk" ".ci-work/dev/$name-$version.apk"
+          (cd .ci-work/dev && sha256sum ./*.apk | sed 's#  \./#  #' >SHA256SUMS)
+      - name: Signing pipeline self-test (throwaway keys, deleted afterwards)
+        run: scripts/release/selftest.sh "$RUNNER_TEMP/release-selftest" .ci-work/apk/package.apk
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: apk
           path: .ci-work/apk/
           if-no-files-found: error
           retention-days: 14
+      - name: Upload the unsigned developer build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: luci-app-adblock-fast-monitor-unsigned-dev
+          path: .ci-work/dev/
+          if-no-files-found: error
+          retention-days: 7
 
   guest:
     name: Guest (QEMU, stock 25.12.6)
@@ -153,5 +173,47 @@ jobs:
             playwright-report/
             test-results/
             .ci-work/guest-run/serial.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  install:
+    name: Install through LuCI from a signed feed (T22)
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - *enable-kvm
+      - *install-qemu
+      - *guest-cache
+      - *download-apk
+      - name: Restore SDK tarball cache (host apk for signing)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .local-validation/openwrt-sdk-25.12.6-1864152619092e78.tar.zst
+          key: openwrt-sdk-25.12.6-x86-64-1864152619092e78
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Throwaway-key feed, key added and package installed/removed through LuCI
+        run: scripts/guest/run-guest-tests.sh --no-install .ci-work/apk/package.apk test/guest/package-luci-install.host.sh
+        env:
+          ABFM_INSTALL_TEST: "1"
+          GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run
+      - name: Upload Playwright report and guest logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-logs
+          path: |
+            test-results/
+            .ci-work/guest-run/results/
+            .ci-work/guest-run/serial.log
+            .ci-work/guest-run/feed/serve-site.log
           if-no-files-found: ignore
           retention-days: 7

@@ -1,6 +1,6 @@
 // rpcd ucode plugin `luci.adblock-fast-monitor` (docs/CONTRACT.md §6, §7.1,
 // §7.3). It runs inside rpcd's single-threaded uloop, so every method returns
-// within milliseconds: file scans run in a forked uloop.task (rules) and all
+// within milliseconds: file scans run in a child process (rules) and all
 // adblock-fast work runs in the detached job (job.uc).
 'use strict';
 
@@ -25,7 +25,7 @@ const QUEUE_WINDOW = 30;
 const LIST_CAP = 2048;
 const RULES_MAX = 50;
 const SCAN_TIMEOUT_MS = 10000;
-const SCAN_LINE_CAP = 100000;
+const SCAN_BYTES_CAP = 1048576;
 const CACHE_MAX = 512;
 const TERMINAL = { applied: true, partial: true, failed: true };
 const LISTED_MODES = { 'dnsmasq.servers': true, 'dnsmasq.conf': true, 'dnsmasq.addnhosts': true };
@@ -77,13 +77,22 @@ function service_running(svc) {
 // --- adblock-fast discovery (WU2) ---
 // Private until abfm.system lands (WU1 owns that module); see the report.
 
+// Unsaved LuCI changes for adblock-fast. adblock-fast itself saves (without
+// committing) file_url sizes after each download when update_config_sizes=1;
+// those deltas are its own bookkeeping, not user changes.
+function pending_changes() {
+	for (let l in split(fs.readfile(AF_PENDING) ?? '', '\n'))
+		if (l != '' && !match(l, /^adblock-fast\.[^.]+\.size='[0-9]*'$/))
+			return true;
+	return false;
+}
+
 function af_state(c, conn) {
 	let installed = !!(fs.access(AF_INIT) && fs.access(AF_CONFIG));
 	c.load('adblock-fast');
 	let cfg = c.get_all('adblock-fast', 'config') ?? {};
 	let dns = cfg.dns || 'dnsmasq.servers';
 	let output_file = dom.DNSMASQ_MODES[dns] ?? null;
-	let pending = fs.stat(AF_PENDING);
 	let svc = service(conn, 'adblock-fast');
 	return {
 		installed,
@@ -93,7 +102,7 @@ function af_state(c, conn) {
 		output_file,
 		output_exists: !!(output_file && fs.access(output_file)),
 		external_config: !!(cfg.dnsmasq_config_file_url ?? ''),
-		pending_uci_changes: !!(pending && pending.size > 0),
+		pending_uci_changes: pending_changes(),
 		allowed: as_list(cfg.allowed_domain),
 		blocked: as_list(cfg.blocked_domain),
 		heartbeat_domain: (cfg.heartbeat_domain && cfg.heartbeat_domain != '-') ? cfg.heartbeat_domain : AF_DEFAULT_HEARTBEAT,
@@ -241,14 +250,54 @@ function cache_put(sig, results) {
 		delete scan_cache.map[shift(scan_cache.order)];
 }
 
-// Runs in a forked child (uloop.task): one grep over the output file.
-function scan_output(file, domains, dns) {
-	let p = fs.popen(dom.grep_command(file, domains, dns), 'r');
-	let lines = [], line;
-	while (p && length(lines) < SCAN_LINE_CAP && (line = p.read('line')) != null && line != '')
-		push(lines, rtrim(line, '\n'));
-	p?.close();
-	return dom.listed(domains, lines, dns);
+// One grep over the output file in a fork+exec'd child, read through a
+// non-blocking pipe. (A uloop.task would keep rpcd's pages shared with a
+// long-running child and make every write in rpcd a copy-on-write fault.)
+// done(results|null) runs once; null on failure or timeout.
+function start_scan(file, domains, dns, done) {
+	let io = require('io'), uloop = require('uloop');
+	let fds = io.pipe();
+	if (!fds)
+		return false;
+	let r = fds[0], w = fds[1];
+	let proc = uloop.process('/bin/sh', [ '-c', `exec >&${w.fileno()}; ${dom.grep_command(file, domains, dns)}` ],
+		{ PATH: '/usr/sbin:/usr/bin:/sbin:/bin' }, () => {});
+	w.close();
+	if (!proc) {
+		r.close();
+		return false;
+	}
+	let buf = '', handle = null, timer = null, finished = false;
+	// Exceptions inside uloop callbacks would end rpcd's main loop.
+	let end = (ok) => {
+		try {
+			if (finished)
+				return;
+			finished = true;
+			timer?.cancel();
+			handle?.delete();
+			r.close();
+			if (!ok)
+				system([ '/bin/kill', '-9', '' + proc.pid() ]);
+			done(ok ? dom.listed(domains, split(buf, '\n'), dns) : null);
+		}
+		catch (e) {}
+	};
+	handle = uloop.handle(r, () => {
+		try {
+			for (let chunk = r.read(65536); chunk != null; chunk = r.read(65536)) {
+				if (chunk == '')
+					return end(true);
+				if (length(buf) < SCAN_BYTES_CAP)
+					buf += chunk;
+			}
+		}
+		catch (e) {
+			end(false);
+		}
+	}, uloop.ULOOP_READ);
+	timer = uloop.timer(SCAN_TIMEOUT_MS, () => end(false));
+	return true;
 }
 
 // --- methods ---
@@ -343,35 +392,21 @@ function m_rules(req) {
 	if (!length(need))
 		return finish(results);
 
-	// Exceptions inside uloop callbacks would end rpcd's main loop, so the
-	// callbacks below never throw.
-	let uloop = require('uloop');
-	let done = false, timer = null, task = null;
-	let respond = (scanned) => {
+	let started = start_scan(af.output_file, need, af.dns, (scanned) => {
 		try {
-			if (done)
-				return;
-			done = true;
-			timer?.cancel();
-			if (type(scanned) == 'object') {
+			if (scanned)
 				cache_put(sig, scanned);
-				for (let d, r in scanned) results[d] = r;
-			}
-			else
-				task?.kill();
 			for (let d in need)
-				if (!results[d])
-					results[d] = { listed: null };
+				results[d] = scanned?.[d] ?? { listed: null };
 			req.reply(finish(results));
 		}
 		catch (e) {}
-	};
-	task = uloop.task(() => scan_output(af.output_file, need, af.dns), (out) => respond(out));
-	if (!task) {
-		for (let d in need) results[d] = { listed: null };
+	});
+	if (!started) {
+		for (let d in need)
+			results[d] = { listed: null };
 		return finish(results);
 	}
-	timer = uloop.timer(SCAN_TIMEOUT_MS, () => respond(null));
 	return req.defer();
 }
 
@@ -476,7 +511,7 @@ function m_apply(req) {
 
 function m_job(req) {
 	let want = req.args?.job_id;
-	if (want != null && (type(want) != 'string' || !match(want, /^j[0-9]{10}-[0-9a-f]{4}$/)))
+	if (want != null && !dom.valid_job_id(want))
 		return fail('not-found', 'no such job');
 	let job = read_job();
 	if (job && !TERMINAL[job.state]) {

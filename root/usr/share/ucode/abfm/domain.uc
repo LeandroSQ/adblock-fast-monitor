@@ -59,10 +59,18 @@ function valid(d) {
 	let n = length(labels);
 	if (n < 2 || n > 127)
 		return false;
+	// No bounded repetition: musl's regex engine expands {m,n} into a large
+	// automaton that takes milliseconds per match.
 	for (let l in labels)
-		if (!match(l, /^[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?$/))
+		if (length(l) > 63 || !match(l, /^[a-z0-9_]$|^[a-z0-9_][a-z0-9_-]*[a-z0-9_]$/))
 			return false;
 	return !match(labels[n - 1], /^[0-9]+$/);
+}
+
+// §7.1 job ids: ^j[0-9]{10}-[0-9a-f]{4}$
+function valid_job_id(id) {
+	return type(id) == 'string' && length(id) == 16 && substr(id, 11, 1) == '-' &&
+		!!match(id, /^j[0-9]+-[0-9a-f]+$/);
 }
 
 function under(d, parent) {
@@ -373,7 +381,7 @@ function verdict(item, observed, ans, lst, dns) {
 
 return {
 	MAX_OPS, DNSMASQ_MODES, PRIVATE_SUFFIXES,
-	normalize, valid, under, suffixes, public_suffix, url_host,
+	normalize, valid, valid_job_id, under, suffixes, public_suffix, url_host,
 	protect_context, protected_domain, check_domain,
 	validate_batch, plan, plan_view,
 	grep_patterns, grep_command, shell_quote, parse_line, listed, rule_info,

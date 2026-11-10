@@ -37,6 +37,12 @@ t.test('grammar rejects invalid names', () => {
 		t.ok(!d.valid(n), `${n}`);
 });
 
+t.test('job id format', () => {
+	t.ok(d.valid_job_id('j1762747400-3f2a'));
+	for (let id in [ 'j1762747400-3f2', 'j176274740-03f2a', 'j1762747400_3f2a', 'j1762747400-3F2A', 'x1762747400-3f2a', 1, null ])
+		t.ok(!d.valid_job_id(id), `${id}`);
+});
+
 t.test('public-suffix guard (b): generic second-level labels', () => {
 	for (let n in [ 'co.uk', 'com.au', 'ac.jp', 'gov.br', 'org.nz', 'ne.jp', 'gouv.fr', 'mod.uk' ])
 		t.ok(d.public_suffix(n), n);

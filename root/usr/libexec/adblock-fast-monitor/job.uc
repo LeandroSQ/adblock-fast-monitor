@@ -179,7 +179,7 @@ function rebuild(job) {
 }
 
 function main(id) {
-	if (type(id) != 'string' || !match(id, /^j[0-9]{10}-[0-9a-f]{4}$/))
+	if (!dom.valid_job_id(id))
 		return 2;
 	close_inherited_fds();
 

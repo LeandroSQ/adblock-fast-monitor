@@ -91,6 +91,13 @@ const named = (procs, comm) => procs.filter(p => p.comm === comm && !isResponder
 const sum = (procs, key) => procs.reduce((total, p) => total + (p[key] ?? 0), 0);
 const userland = procs => procs.filter(p => !TRANSIENT.some(re => re.test(p.cmdline)));
 const key = p => `${p.pid}:${p.starttime}`;
+// probe.uc keeps replies up to 4 KiB as JSON and truncates longer ones to a
+// string prefix; newer probes also record reply_ok.
+const replyOk = c => {
+  if (typeof c?.reply_ok === 'boolean') return c.reply_ok;
+  if (typeof c?.reply === 'string') return /^\{\s*"api":\s*\d+,\s*"ok":\s*true\b/.test(c.reply);
+  return c?.reply?.ok === true;
+};
 
 // CPU % of one CPU used by the selected processes between two snapshots.
 function cpuPct(win, select) {
@@ -331,7 +338,7 @@ const daemonDuringLoad = Object.entries(loads).some(([k, runs]) =>
   for (const [name, c] of Object.entries(calls)) {
     out[name] = c ? { p50_ms: round(c.stats?.p50), p95_ms: round(c.stats?.p95), max_ms: round(c.stats?.max),
       n: c.stats?.n ?? 0, error: c.error ?? null, reply_bytes: c.reply_bytes ?? 0 } : null;
-    if (!c || c.error || !c.stats?.n || c.reply?.ok !== true) { measured = false; continue; }
+    if (!c || c.error || !c.stats?.n || !replyOk(c)) { measured = false; continue; }
     if (c.stats.p95 > (name === 'status' ? budgets.P7.status_p95_ms : budgets.P7.domains_p95_ms)) pass = false;
   }
   const floor = { system_board_p95_ms: round(load('calib-rpc-system-board')?.stats?.p95),
@@ -343,7 +350,7 @@ const daemonDuringLoad = Object.entries(loads).some(([k, runs]) =>
 
 // ---------------------------------------------------------------- P8, P9
 {
-  const ok = c => c && !c.error && c.stats?.n > 0 && c.reply?.ok === true;
+  const ok = c => c && !c.error && c.stats?.n > 0 && replyOk(c);
   const dry = load('p8-apply-dry'), real = load('p8-apply'), probe = load('p9-rpcd-probe');
   const info = {
     dry_run: dry ? { p95_ms: round(dry.stats?.p95), max_ms: round(dry.stats?.max), error: dry.error ?? null, reply: dry.reply } : null,
@@ -394,14 +401,47 @@ const summary = {
 // A self-test run measures the harness's stand-in daemon, never the package.
 const verdict = { verdict: meta.selftest ? 'SELF-TEST' : failed.length ? 'FAIL' : 'PASS', selftest: !!meta.selftest, failed, run: summary.run, accel: meta.accel ?? null,
   per_metric: Object.fromEntries(order.map(id => [id, metrics[id]?.verdict ?? 'NOT_MEASURED'])) };
+// Run-to-run spread (max - min over the repeats) of P4 CPU and P5 p95: the
+// harness's own measurement noise in this environment.
+const spreadOf = v => { const f = (v ?? []).filter(Number.isFinite); return f.length >= 2 ? round(Math.max(...f) - Math.min(...f), 3) : null; };
+verdict.noise = Object.fromEntries(rates.map(q => [q, {
+  p4_cpu_pct_runs: metrics.P4?.rates?.[q]?.cpu_pct_runs ?? null,
+  p4_cpu_spread_pp: spreadOf(metrics.P4?.rates?.[q]?.cpu_pct_runs),
+  p5_p95_off_ms: metrics.P5?.rates?.[q]?.p95_off_ms ?? null, p5_p95_on_ms: metrics.P5?.rates?.[q]?.p95_on_ms ?? null,
+  p5_spread_off_ms: metrics.P5?.rates?.[q]?.spread_off_ms ?? null, p5_spread_on_ms: metrics.P5?.rates?.[q]?.spread_on_ms ?? null,
+  p5_delta_ms: metrics.P5?.rates?.[q]?.delta_ms ?? null }]));
+summary.noise = verdict.noise;
 writeFileSync(join(runDir, 'summary.json'), `${JSON.stringify(summary, null, 1)}\n`);
 writeFileSync(join(runDir, 'verdict.json'), `${JSON.stringify(verdict, null, 1)}\n`);
 
+// One line of the numbers behind a verdict, for the console table.
+function brief(id, m) {
+  const b = budgets[id];
+  try {
+    switch (id) {
+      case 'P1': return `extra processes ${m.extra_processes}, RssAnon +${m.rss_anon_delta_kib} KiB (≤ ${b.rss_anon_delta_kib})`;
+      case 'P2': return `RSS idle ${m.idle.rss_kib} KiB (≤ ${b.idle_rss_kib}), full ${m.full.rss_kib} KiB (≤ ${b.full_rss_kib})`;
+      case 'P3': return `daemon wakeups ${m.daemon_wakeups.total}, timer ${m.daemon_timer_wakeups}, excess ${m.excess_wakeups} (≤ ${b.excess_wakeups}), quiet ${m.quiet_window}`;
+      case 'P4': return rates.map(q => `@${q}: ${m.rates[q].cpu_pct_median} % (≤ ${b.cpu_pct[q]})`).join(', ');
+      case 'P5': return rates.map(q => `@${q}: Δp95 ${m.rates[q].delta_ms} ms (≤ ${m.rates[q].allowed_delta_ms})`).join(', ');
+      case 'P6': return rates.map(q => `@${q}: max Δ ${Math.max(...b.processes.map(c => m.rates[q][c].cpu_delta_pp ?? 0))} pp (≤ ${b.cpu_delta_pp[q]})`).join(', ');
+      case 'P7': return Object.entries(m.calls).map(([k, v]) => `${k} p95 ${v?.p95_ms} ms`).join(', ') + ` (≤ ${b.status_p95_ms}/${b.domains_p95_ms})`;
+      case 'P8': return `dry max ${m.dry_run.max_ms} ms, real ${m.real.max_ms} ms (≤ ${b.apply_max_ms}), rpcd probe max ${m.rpcd_probe?.max} ms`;
+      case 'P9': return `rules ${JSON.stringify(m.rules.times_ms)} ms (cold ≤ ${b.rules_cold_s * 1000}), rpcd probe max ${m.rpcd_probe?.max} ms (≤ ${b.rpcd_block_max_ms})`;
+      case 'P10': return `boot ${m.boot_monitor_restarts}, enable ${JSON.stringify(m.enable.map(e => e.restarts))}, save ${m.save.restarts}`;
+      default: return '';
+    }
+  } catch { return ''; }
+}
 console.log(`P0 performance gate: ${summary.run} (accel ${meta.accel ?? '?'})` +
   (meta.selftest ? ' SELF-TEST: numbers describe the harness stand-in daemon, not the package' : ''));
 for (const id of order) {
   const m = metrics[id] ?? { verdict: 'NOT_MEASURED' };
-  console.log(`  ${id.padEnd(4)} ${m.verdict.padEnd(12)} ${m.reason ?? ''}`);
+  console.log(`  ${id.padEnd(4)} ${m.verdict.padEnd(12)} ${m.reason ?? brief(id, m)}`);
+}
+for (const [q, n] of Object.entries(verdict.noise)) {
+  console.log(`  noise @${q} qps (${meta.accel ?? '?'}, ${repeats} repeats): P4 CPU runs ${JSON.stringify(n.p4_cpu_pct_runs)} spread ${n.p4_cpu_spread_pp} pp;` +
+    ` P5 p95 off ${JSON.stringify(n.p5_p95_off_ms)} on ${JSON.stringify(n.p5_p95_on_ms)} ms, spread off ${n.p5_spread_off_ms} / on ${n.p5_spread_on_ms} ms, delta ${n.p5_delta_ms} ms`);
 }
 if (summary.harness_errors.length) console.log(`  harness errors: ${summary.harness_errors.join('; ')}`);
 console.log(`${verdict.verdict}: ${failed.length ? `${failed.join(', ')} not within budget or not measured` : 'all P0 budgets met'}` +

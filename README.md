@@ -4,6 +4,64 @@ This repository contains an OpenWrt package shell plus host-side CI and test
 infrastructure. All components are implemented against the frozen v1 interface
 contract in [`docs/CONTRACT.md`](docs/CONTRACT.md).
 
+## Install
+
+Requires OpenWrt 25.12 (apk). The package depends on `luci-base`,
+`adblock-fast` and the `ucode-mod-io`, `-resolv` and `-uloop` modules, which
+come from the official feeds.
+
+### On a router (signed feed, LuCI only)
+
+Releases are signed and published as an apk feed on GitHub Pages:
+<https://leandrosq.github.io/adblock-fast-monitor/> (instructions, key
+fingerprint, packages). Once per router:
+
+1. **System → Administration → Repository Public Keys**: paste
+   `https://leandrosq.github.io/adblock-fast-monitor/keys/adblock-fast-monitor.pem`
+   and click **Add key** (saved as `/etc/apk/keys/adblock-fast-monitor.pem`).
+2. **System → Software → Configure apk**: add
+   `https://leandrosq.github.io/adblock-fast-monitor/apk/packages.adb` to
+   `customfeeds.list` and **Save**.
+3. **Update lists…**, filter for `luci-app-adblock-fast-monitor`,
+   **Install…**. The app is under **Services → Adblock Fast Monitor**.
+
+Updates appear under **System → Software → Updates**. Without the feed: add the
+key (step 1), download the signed `.apk` from a GitHub release and use
+**Upload Package…**. LuCI never passes `--allow-untrusted`, so an unsigned
+package is always refused there. The package lists the key file for
+sysupgrade (`/lib/upgrade/keep.d/`); `customfeeds.list` is kept by apk. Key
+custody, rotation and fingerprint: [`keys/README.md`](keys/README.md).
+
+### Developer builds (unsigned)
+
+Build locally (`scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh`)
+or download the `luci-app-adblock-fast-monitor-unsigned-dev` artifact of a CI
+run, then install over SSH:
+
+```sh
+scp -O luci-app-adblock-fast-monitor-*.apk root@router:/tmp/
+ssh root@router apk add --allow-untrusted /tmp/luci-app-adblock-fast-monitor-*.apk
+```
+
+### Packaging
+
+`Makefile` uses `luci.mk` out of tree (`include $(TOPDIR)/feeds/luci/luci.mk`):
+everything under `root/` is installed, `po/<lang>/` becomes
+`luci-i18n-adblock-fast-monitor-<lang>`, file modes are normalised (0755 for
+`/etc/init.d` and `/usr/libexec`, 0644 otherwise), and install and removal
+clear LuCI's caches and reload rpcd, so no restart is needed.
+
+### Releasing
+
+Push a tag `vX.Y.Z-rN` equal to `PKG_VERSION-rPKG_RELEASE`.
+`.github/workflows/release.yml` builds and tests without secrets, then the
+`sign` job (environment `release`, secret `APK_SIGNING_KEY`) runs
+`scripts/release/sign-feed.sh` (`apk adbsign`, `apk mkndx --sign-key`,
+mandatory `apk verify` against `keys/`), attests build provenance, creates the
+GitHub release, deploys the feed to Pages and smoke-tests it from a stock
+25.12.6 rootfs. `scripts/release/selftest.sh WORKDIR PKG.apk` exercises the
+signing pipeline with throwaway keys (run in CI on every build).
+
 ## Testing
 
 Everything runs locally with Node.js 22+ and Docker; nothing needs secrets.
@@ -93,9 +151,14 @@ set to the guest's LuCI.
 
 ### CI
 
-`.github/workflows/ci.yml` runs on pull requests, pushes to `main` and manual
-dispatch with read-only permissions, no secrets, SHA-pinned actions and job
-timeouts: `host` (verify:host), `package` (SDK build, cached tarball),
-`guest` (KVM-backed run-guest-tests) and `browser` (Playwright against a
-guest). Lint it with
+`.github/workflows/ci.yml` runs on pull requests to `main`, pushes to `main`
+(both skipped for docs-only changes) and manual dispatch with read-only
+permissions, no secrets, SHA-pinned actions and job timeouts: `host`
+(verify:host), `package` (SDK build, cached tarball, signing self-test,
+unsigned developer artifact), `guest` (KVM-backed run-guest-tests), `browser`
+(Playwright against a guest) and `install` (T22: throwaway-key feed, key and
+package installed and removed through LuCI:
+`ABFM_INSTALL_TEST=1 scripts/guest/run-guest-tests.sh --no-install PKG.apk test/guest/package-luci-install.host.sh`;
+on non-x86_64 hosts pass a feed prebuilt by `scripts/release/sign-feed.sh` as
+`ABFM_FEED_DIR`). `release.yml` is described under Install → Releasing. Lint it with
 `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest`.

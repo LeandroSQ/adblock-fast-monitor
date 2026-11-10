@@ -47,6 +47,7 @@ running, adds one `ucode job.uc` process plus adblock-fast's own children.
 | `/usr/share/ucode/abfm/system.uc` | 0644 | WU1+WU2 | discovery of UCI, dnsmasq instances/confdirs and adblock-fast state |
 | `/usr/share/rpcd/ucode/luci.adblock-fast-monitor` | 0644, **not** world-writable | WU2 | rpcd ucode plugin (§6) |
 | `/usr/share/rpcd/acl.d/luci-app-adblock-fast-monitor.json` | 0644 | WU4 | §9 |
+| `/lib/upgrade/keep.d/luci-app-adblock-fast-monitor` | 0644 | WU4 | lists `/etc/apk/keys/adblock-fast-monitor.pem` (the feed key added in LuCI, owned by no package) so sysupgrade keeps it |
 | `/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json` | 0644 | WU3 | menu (same as today; depends on ACL `luci-app-adblock-fast-monitor`) |
 | `/www/luci-static/resources/view/adblock-fast-monitor/overview.js` | 0644 | WU3 | dashboard + staging + apply |
 | `/www/luci-static/resources/view/adblock-fast-monitor/settings.js` | 0644 | WU3 | `form.Map('adblock-fast-monitor')` |
@@ -84,7 +85,9 @@ state directory and the
 `PKGARCH:=all`. Postinst and postrm must do what `luci.mk` does:
 `rm -f /tmp/luci-indexcache.*; rm -rf /tmp/luci-modulecache/; /etc/init.d/rpcd reload`
 (SIGHUP makes rpcd re-exec, which loads the new plugin and ACL). Prerm runs
-`/etc/init.d/adblock-fast-monitor stop`, which removes the drop-ins. Install
+`/etc/init.d/adblock-fast-monitor stop` (the SDK's `default_prerm` does this
+for every packaged init script), which removes the drop-ins. File modes are
+set by the Makefile, not taken from git. Install
 through LuCI → System → Software must work **without** `--allow-untrusted`,
 using a key added on the "Repository Public Keys" page. WU4 owns key custody.
 

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# §2 package inventory on the guest (package installed by run-guest-tests):
+# dependencies, file modes and owners, conffile defaults, sysupgrade keep list,
+# and that the v0 files are gone.
+#
+# ABFM_ALLOW_MISSING_BACKEND=1 turns "file from another work unit is missing"
+# and "v0 file still shipped" into SKIPs (only for branches that do not have
+# WU1/WU2/WU3 merged yet). Without it they fail.
+set -u
+. test/lib/sh/testlib.sh
+pkg=luci-app-adblock-fast-monitor
+allow_missing="${ABFM_ALLOW_MISSING_BACKEND:-0}"
+
+t_ok "$pkg is installed" guest_exec "apk info -e $pkg"
+
+deps="$(guest_exec "apk info -R $pkg" | sed -n 's/^\([a-z][a-z0-9.+-]*\)$/\1/p' | grep -v "^$pkg" | LC_ALL=C sort | tr '\n' ' ')"
+t_eq 'depends exactly on luci-base, adblock-fast, ucode-mod-{io,resolv,uloop} (and libc)' \
+	'adblock-fast libc luci-base ucode-mod-io ucode-mod-resolv ucode-mod-uloop ' "$deps"
+t_ok 'luci-base provides rpcd, rpcd-mod-ucode and the ucode fs/uci/ubus modules' guest_exec \
+	'for p in rpcd rpcd-mod-ucode ucode ucode-mod-fs ucode-mod-uci ucode-mod-ubus; do apk info -e $p >/dev/null || { echo missing $p; exit 1; }; done'
+
+# Mode/owner of every packaged file: 0755 under /etc/init.d and /usr/libexec,
+# 0644 elsewhere, all root:root (rpcd skips world-writable ucode plugins).
+modes="$(guest_exec "apk info -qL $pkg" | grep -v ' contains:$' | sed '/^$/d' | guest_exec \
+	'. /tmp/abfm-test/lib/sh/testlib.sh; while read -r f; do printf "%s /%s\n" "$(abfm_stat "%a %u:%g" "/$f")" "$f"; done')"
+bad="$(awk '{ want = ($3 ~ "^/etc/init.d/" || $3 ~ "^/usr/libexec/") ? "755" : "644";
+	if ($1 != want || $2 != "0:0") print $0 " (want " want " 0:0)" }' <<<"$modes")"
+t_eq "all $(wc -l <<<"$modes" | tr -d ' ') packaged files have the §2 mode and root ownership" '' "$bad"
+
+inventory=(
+	/etc/config/adblock-fast-monitor:644:WU4
+	/usr/share/rpcd/acl.d/luci-app-adblock-fast-monitor.json:644:WU4
+	/lib/upgrade/keep.d/luci-app-adblock-fast-monitor:644:WU4
+	/etc/init.d/adblock-fast-monitor:755:WU1
+	/usr/libexec/adblock-fast-monitor/monitord.uc:755:WU1
+	/usr/libexec/adblock-fast-monitor/logging.uc:755:WU1
+	/usr/share/ucode/abfm/logparse.uc:644:WU1
+	/usr/share/ucode/abfm/stats.uc:644:WU1
+	/usr/share/ucode/abfm/system.uc:644:WU1
+	/usr/libexec/adblock-fast-monitor/job.uc:755:WU2
+	/usr/share/ucode/abfm/domain.uc:644:WU2
+	/usr/share/rpcd/ucode/luci.adblock-fast-monitor:644:WU2
+	/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json:644:WU3
+	/www/luci-static/resources/view/adblock-fast-monitor/overview.js:644:WU3
+	/www/luci-static/resources/view/adblock-fast-monitor/settings.js:644:WU3
+	/www/luci-static/resources/adblock-fast-monitor/model.js:644:WU3
+)
+for entry in "${inventory[@]}"; do
+	IFS=: read -r path mode owner <<<"$entry"
+	actual="$(awk -v p="$path" '$3 == p { print $1 }' <<<"$modes")"
+	if [[ -z "$actual" && "$owner" != WU4 && "$allow_missing" == 1 ]]; then
+		t_skip "§2 $path is packaged with mode $mode" "not on this branch yet ($owner); ABFM_ALLOW_MISSING_BACKEND=1"
+	else
+		t_eq "§2 $path is packaged with mode $mode" "$mode" "$actual"
+	fi
+done
+
+v0="$(grep -E '^/(test/|usr/lib/adblock-fast-monitor/|usr/libexec/rpcd/adblock-fast-monitor|usr/libexec/adblock-fast-monitor-)' <<<"$(awk '{print $3}' <<<"$modes")" | tr '\n' ' ')"
+if [[ -n "$v0" && "$allow_missing" == 1 ]]; then
+	t_skip 'no v0 files are shipped' "still present on this branch: $v0"
+else
+	t_eq 'no v0 files are shipped (sh plugins, collector, ring, root/test)' '' "$v0"
+fi
+
+t_ok 'the ACL file is valid JSON with the §9 grants' guest_exec "jsonfilter -i /usr/share/rpcd/acl.d/$pkg.json \
+	-e '@[\"$pkg\"].read.ubus[\"adblock-fast-monitor\"]' -e '@[\"$pkg\"].read.uci' -e '@[\"$pkg\"].write.ubus[\"luci.adblock-fast-monitor\"]' >/dev/null"
+cfg="$(guest_exec 'uci -q show adblock-fast-monitor')"
+t_eq 'the conffile has the §3 defaults' "adblock-fast-monitor.config=monitor
+adblock-fast-monitor.config.enabled='0'
+adblock-fast-monitor.config.manage_logging='1'
+adblock-fast-monitor.config.dnsmasq_instance='*'
+adblock-fast-monitor.config.recent_size='500'
+adblock-fast-monitor.config.top_size='256'
+adblock-fast-monitor.config.pending_size='512'
+adblock-fast-monitor.config.pending_ttl='10'
+adblock-fast-monitor.config.record_clients='0'
+adblock-fast-monitor.config.exclude_router='1'
+adblock-fast-monitor.config.poll_interval='5'" "$cfg"
+t_ok '/etc/config/adblock-fast-monitor is registered as a conffile' guest_exec \
+	"grep -qx '/etc/config/adblock-fast-monitor' /lib/apk/packages/$pkg.conffiles"
+
+# sysupgrade keeps the feed key (added through LuCI, not owned by any package)
+# and this package's config.
+t_ok 'sysupgrade -l keeps /etc/apk/keys/adblock-fast-monitor.pem when it exists' guest_exec \
+	'k=/etc/apk/keys/adblock-fast-monitor.pem; had=0; [ -e $k ] && had=1 || echo probe >$k;
+	 sysupgrade -l | grep -qx $k; rc=$?; [ $had = 1 ] || rm -f $k; exit $rc'
+t_ok 'sysupgrade -l keeps /etc/config/adblock-fast-monitor' guest_exec 'sysupgrade -l | grep -qx /etc/config/adblock-fast-monitor'
+t_done

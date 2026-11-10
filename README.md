@@ -10,7 +10,7 @@ Everything runs locally with Node.js 22+ and Docker; nothing needs secrets.
 
 ```sh
 npm ci
-npm run verify:host                      # fast, no guest (~1 min warm)
+npm run verify:host                      # no guest; ~10 s (first run builds the userland image, ~30 s)
 npm run verify:guest -- path/to/pkg.apk  # boots a stock 25.12.6 guest, installs, runs test/guest
 npm run verify:guest -- --browser path/to/pkg.apk   # also Playwright against the guest's LuCI
 ```

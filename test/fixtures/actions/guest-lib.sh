@@ -31,8 +31,22 @@ dns_a() {
 	esac
 }
 
-dnsmasq_starts() { logread | grep -c 'dnsmasq\[[0-9]*\]: started, version'; }
-af_runs() { logread | grep -o '\[INIT\] \(Starting\|Force-reloading\) adblock-fast' | wc -l; }
+# log_mark -> marker id; log_since MARK -> syslog lines after the marker
+# (fails if the ring buffer already dropped the marker).
+log_mark() {
+	_m="abfm-mark-$$-$(date +%s)-$RANDOM"
+	logger -t abfm-test "$_m"
+	echo "$_m"
+}
+log_since() {
+	logread | grep -qF "abfm-test: $1" || { echo 'MARK-LOST'; return 1; }
+	logread | sed -n "/abfm-test: $1\$/,\$p"
+}
+dnsmasq_starts() { log_since "$1" | grep -c 'dnsmasq\[[0-9]*\]: started, version'; }
+af_runs() { log_since "$1" | grep -o '\[INIT\] \(Starting\|Force-reloading\) adblock-fast' | wc -l; }
+
+# hold_lock SECONDS & : holds the job lock in one process (no forked child).
+hold_lock() { exec ucode -e 'let f = require("fs").open(ARGV[0], "a"); f.lock("x"); sleep(+ARGV[1] * 1000);' "$LOCK_FILE" "$1"; }
 af_status() { ubus call service list '{"name":"adblock-fast"}' | jsonfilter -e '@["adblock-fast"].data.status'; }
 uci_has() { uci -q get "adblock-fast.config.$1" | tr ' ' '\n' | grep -qxF "$2"; }
 

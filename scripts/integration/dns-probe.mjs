@@ -6,7 +6,7 @@ if (!host || !port) throw new Error('Usage: dns-probe.mjs HOST SSH_PORT [fixture
 const samples = [];
 for (let index = 0; index < 20; index += 1) {
   const started = performance.now();
-  const answer = execFileSync('dig', ['+tries=1', '+time=2', '+short', '@127.0.0.1', '-p', '5353', 'ads.example.test'], { encoding: 'utf8' }).trim();
+  const answer = execFileSync('dig', ['+tries=1', '+time=2', '+short', '@127.0.0.1', '-p', process.env.OPENWRT_DNS_PORT ?? '5353', 'ads.example.test'], { encoding: 'utf8' }).trim();
   if (answer !== '0.0.0.0') throw new Error(`expected deterministic dnsmasq answer, received "${answer}"`);
   samples.push(performance.now() - started);
 }

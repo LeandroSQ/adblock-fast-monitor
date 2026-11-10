@@ -8,9 +8,14 @@ set -euo pipefail
 
 ssh_opts=(-i "$OPENWRT_SSH_KEY" -p "$OPENWRT_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 remote() { ssh "${ssh_opts[@]}" "root@$OPENWRT_HOST" "$@"; }
+dns_port="${OPENWRT_DNS_PORT:-5353}"
+# Stock BusyBox has no stat applet: ownership checks use the shared ucode helper.
+remote 'mkdir -p /root/adblock-fast-monitor-test && cat > /root/adblock-fast-monitor-test/testlib.sh' \
+	<"$(dirname "${BASH_SOURCE[0]}")/../../test/lib/sh/testlib.sh"
 
 remote "
 	set -eu
+	. /root/adblock-fast-monitor-test/testlib.sh
 	wget -qO /root/adblock-fast-monitor-test/lists/primary.txt '$FIXTURE_LIST_URL/primary.txt'
 	grep -qx '0.0.0.0 ads.example.test' /root/adblock-fast-monitor-test/lists/primary.txt
 	uci -q add_list dhcp.@dnsmasq[0].addnhosts=/root/adblock-fast-monitor-test/lists/primary.txt
@@ -25,7 +30,7 @@ remote "
 	/etc/init.d/adblock-fast-monitor start
 	abfm_wait_dns_a_fixture ads.example.test 0.0.0.0
 	test -f /var/run/adblock-fast-monitor/dnsmasq-logqueries.owner
-	test \"\$(stat -c '%u:%a' /var/run/adblock-fast-monitor/dnsmasq-logqueries.owner)\" = '0:600'
+	test \"\$(abfm_stat '%u:%a' /var/run/adblock-fast-monitor/dnsmasq-logqueries.owner)\" = '0:600'
 	test \"\$(uci -q get dhcp.@dnsmasq[0].logqueries)\" = 1
 	uci set adblock-fast-monitor.config.own_logqueries=0
 	uci commit adblock-fast-monitor
@@ -41,7 +46,7 @@ remote "
 "
 
 for _ in $(seq 1 30); do
-	if dig +short @127.0.0.1 -p 5353 ads.example.test | grep -qx '0.0.0.0'; then
+	if dig +short @127.0.0.1 -p "$dns_port" ads.example.test | grep -qx '0.0.0.0'; then
 		scripts/integration/runtime-domain-actions.sh
 		exit 0
 	fi

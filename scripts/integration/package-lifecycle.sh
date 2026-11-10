@@ -18,12 +18,12 @@ fail() {
 : "${OPENWRT_HOST:?Set OPENWRT_HOST to the SSH-reachable OpenWrt guest.}"
 : "${PACKAGE_IPK:?Set PACKAGE_IPK to the built luci-app-adblock-fast-monitor APK.}"
 : "${OPENWRT_SSH_KEY:?Set OPENWRT_SSH_KEY to the guest private-key path.}"
-: "${OPENWRT_RUNTIME_TEST:?Set OPENWRT_RUNTIME_TEST to the in-repository runtime adapter.}"
+: "${OPENWRT_RUNTIME_TEST:=$PWD/scripts/integration/runtime-dns-lifecycle.sh}"
 : "${OPENWRT_LUCI_BASE_URL:?Set OPENWRT_LUCI_BASE_URL to the QEMU LuCI URL.}"
 : "${OPENWRT_PACKAGE_MIRROR_URL:?Set OPENWRT_PACKAGE_MIRROR_URL to the private guest-visible mirror.}"
 : "${PACKAGE_SHA256:?Set PACKAGE_SHA256 to the immutable artifact SHA-256.}"
 OPENWRT_SSH_PORT="${OPENWRT_SSH_PORT:-22}"
-stage_artifacts="${OPENWRT_STAGE_ARTIFACTS:?Set OPENWRT_STAGE_ARTIFACTS to retain stage artifacts.}"
+stage_artifacts="${OPENWRT_STAGE_ARTIFACTS:-${GUEST_RUN_DIR:?Set OPENWRT_STAGE_ARTIFACTS or run under scripts/guest/run-guest-tests.sh}/stages}"
 mkdir -p "$stage_artifacts"
 stage_probe=0
 

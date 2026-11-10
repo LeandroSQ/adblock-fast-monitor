@@ -7,7 +7,6 @@ import { expect } from '@playwright/test';
 
 export const OVERVIEW = '/cgi-bin/luci/admin/services/adblock-fast-monitor/overview';
 export const SETTINGS = '/cgi-bin/luci/admin/services/adblock-fast-monitor/settings';
-export const POLL = 2;
 
 export const admin = {
   username: process.env.MONITOR_WRITE_LUCI_USERNAME || 'root',
@@ -90,48 +89,112 @@ export function isUbus(url) {
   return url.pathname.startsWith('/ubus');
 }
 
-export function banner(page) {
-  return page.locator('#abfm-health');
+/** The ubus calls ([object, method, args]) in one JSON-RPC request. */
+export function ubusCalls(request) {
+  if (!isUbus(new URL(request.url()))) return [];
+  let body = null;
+  try { body = request.postDataJSON(); } catch { return []; }
+  return (Array.isArray(body) ? body : [body])
+    .filter((c) => c?.method === 'call' && Array.isArray(c.params))
+    .map((c) => [c.params[1], c.params[2], c.params[3] ?? {}]);
 }
 
-export async function expectState(page, state, { timeout = 60_000 } = {}) {
-  await expect(banner(page)).toHaveAttribute('data-state', state, { timeout });
+/** Records every `log read` request the page sends: [{at, args}]. */
+export function trackLogReads(page) {
+  const reads = [];
+  page.on('request', (r) => {
+    for (const [object, method, args] of ubusCalls(r)) {
+      if (object === 'log' && method === 'read') reads.push({ at: Date.now(), args });
+    }
+  });
+  return reads;
+}
+
+/** Records every `log read` reply body ({log:[...]}) the page receives. */
+export function trackLogReplies(page) {
+  const replies = [];
+  page.on('response', async (r) => {
+    if (!ubusCalls(r.request()).some(([o, m]) => o === 'log' && m === 'read')) return;
+    try {
+      const body = await r.json();
+      for (const reply of Array.isArray(body) ? body : [body]) {
+        const log = reply?.result?.[1]?.log;
+        if (Array.isArray(log)) replies.push(log.map((e) => e.id));
+      }
+    } catch { /* navigation aborted the body */ }
+  });
+  return replies;
+}
+
+export const queries = (page) => page.getByRole('table', { name: 'Last queries' });
+export const queryRow = (page, domain) => queries(page).locator(`tr[data-domain="${domain}"]`).first();
+export const pending = (page) => page.getByRole('table', { name: 'Pending changes' });
+export const pendingRow = (page, domain) => pending(page).locator(`tr[data-domain="${domain}"]`);
+
+/** Overrides document.visibilityState and fires visibilitychange, as a tab switch does. */
+export async function setVisibility(page, state) {
+  await page.evaluate((s) => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => s });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => s !== 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, state);
 }
 
 /* ---- guest conditions -------------------------------------------------------- */
+
+const UPSTREAM_CONF = 'abfm-browser-upstream.conf';
 
 export function waitAdblockFast(seconds = 300) {
   guestWait(`ubus call service list '{"name":"adblock-fast"}' | grep -q '"status": "statusSuccess"'`, seconds);
 }
 
-/** Enabled monitor, logging active, adblock-fast healthy in dnsmasq.servers mode. */
+/*
+ * Query logging on (the package's own drop-in), adblock-fast healthy in
+ * dnsmasq.servers mode, and a fake upstream for *.up.example.test
+ * (A 192.0.2.10) so "allowed" answers are deterministic.
+ */
 export function ensureHealthy() {
   guest([
     'set -e',
     '[ -x /etc/init.d/adblock-fast ] || mv /root/abfm-adblock-fast.init /etc/init.d/adblock-fast',
     '[ -f /etc/config/adblock-fast ] || mv /root/abfm-adblock-fast.config /etc/config/adblock-fast',
-    'uci set adblock-fast-monitor.config.enabled=1',
-    `uci set adblock-fast-monitor.config.poll_interval=${POLL}`,
-    'uci set adblock-fast-monitor.config.manage_logging=1',
+    'uci set adblock-fast-monitor.config.query_logging=1',
     'uci commit adblock-fast-monitor',
     'changed=0',
     '[ "$(uci -q get adblock-fast.config.dns)" = dnsmasq.servers ] || { uci set adblock-fast.config.dns=dnsmasq.servers; uci commit adblock-fast; changed=1; }',
     'if [ -n "$(uci -q get dhcp.@dnsmasq[0].logfacility)" ]; then uci delete dhcp.@dnsmasq[0].logfacility; uci commit dhcp; /etc/init.d/dnsmasq restart; fi',
     'pidof dnsmasq >/dev/null || /etc/init.d/dnsmasq start',
     '[ $changed = 0 ] || /etc/init.d/adblock-fast restart >/dev/null 2>&1',
-    '/etc/init.d/adblock-fast-monitor start'
+    '/etc/init.d/adblock-fast-monitor restart',
+    // fake upstream: a second dnsmasq on 127.0.0.1:5300 (test-only drop-in)
+    'if ! [ -s /tmp/abfm-browser-upstream.pid ] || ! kill -0 "$(cat /tmp/abfm-browser-upstream.pid)" 2>/dev/null; then',
+    '  dnsmasq --conf-file=/dev/null --keep-in-foreground --port=5300 --listen-address=127.0.0.1 --bind-interfaces --no-resolv --no-hosts --local-ttl=300 --user=root --pid-file= --address=/up.example.test/192.0.2.10 >/dev/null 2>&1 &',
+    '  echo $! >/tmp/abfm-browser-upstream.pid',
+    'fi',
+    'restart=0',
+    `for d in /tmp/dnsmasq.*.d; do [ -s "$d/${UPSTREAM_CONF}" ] && continue; printf '%s\\n' 'server=/up.example.test/127.0.0.1#5300' 'rebind-domain-ok=/example.test/' >"$d/${UPSTREAM_CONF}"; restart=1; done`,
+    '[ $restart = 0 ] || /etc/init.d/dnsmasq restart'
   ].join('\n'));
-  guestWait('ubus list adblock-fast-monitor >/dev/null 2>&1 && pidof dnsmasq >/dev/null', 60);
+  guestWait('pidof dnsmasq >/dev/null && grep -qs "^log-queries" /tmp/dnsmasq.*.d/* && nslookup a.up.example.test 127.0.0.1 >/dev/null 2>&1', 60);
   waitAdblockFast();
 }
 
-/** Sends queries until the monitor has recorded `name` (the real logread path). */
-export async function seeDomain(page, name, tries = 20) {
+/** Writes lines to the system log as dnsmasq would (`dnsmasq[1]: …`). */
+export function fakeDnsmasq(lines) {
+  guest(`logger -t 'dnsmasq[1]'`, { input: lines.map((l) => `${l}\n`).join('') });
+}
+
+/** Sends A queries for `name` from the host (10.0.2.2) until its row shows up. */
+export async function seeQuery(page, name, { decision, tries = 15 } = {}) {
+  const row = decision
+    ? queries(page).locator(`tr[data-domain="${name}"][data-decision="${decision}"]`).first()
+    : queryRow(page, name);
   for (let i = 0; i < tries; i++) {
     await dnsQuery(name);
-    const out = guest(`ubus call adblock-fast-monitor domains '{"q":"${name}"}' 2>/dev/null || :`, { allowFail: true });
-    if (out.includes(`"${name}"`)) return;
-    await page.waitForTimeout(1000);
+    try {
+      await expect(row).toBeVisible({ timeout: 10_000 });
+      return row;
+    } catch { /* not in the log yet: query again */ }
   }
-  throw new Error(`monitor never recorded ${name}`);
+  throw new Error(`the dashboard never showed a query for ${name}${decision ? ` (${decision})` : ''}`);
 }

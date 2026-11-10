@@ -1,22 +1,22 @@
-// T24 (docs/CONTRACT.md §8.2): staging persists across reloads; replace and
-// cancel rules; one `apply` per batch; confirmation for rebuilds; job progress;
-// failed items return to pending. Runs against the real guest backends.
+// T24 (docs/CONTRACT.md §8.2): Allow/Block row buttons stage changes that
+// persist across reloads; one `apply` per batch after a dry run and a
+// confirmation; job progress to per-domain results; the DNS answer really
+// flips; failed items return to pending. Runs against the real guest backends.
 import { expect, test } from '@playwright/test';
-import { admin, ensureHealthy, expectState, guest, guestWait, isUbus, login, seeDomain, waitAdblockFast } from './lib/guest.mjs';
+import {
+  admin, dnsQuery, ensureHealthy, guest, guestWait, login, pending, pendingRow, queries, queryRow, seeQuery,
+  ubusCalls, waitAdblockFast
+} from './lib/guest.mjs';
 
 test.describe.configure({ mode: 'serial' });
 
-const pending = (page) => page.getByRole('table', { name: 'Pending changes' });
-const pendingRow = (page, domain) => pending(page).locator(`tr[data-domain="${domain}"]`);
+const STORAGE = 'adblock-fast-monitor.pending.v1';
 
 function trackApply(page) {
   const calls = [];
   page.on('request', (r) => {
-    if (!isUbus(new URL(r.url()))) return;
-    let body = null;
-    try { body = r.postDataJSON(); } catch { return; }
-    for (const c of Array.isArray(body) ? body : [body]) {
-      if (c?.params?.[1] === 'luci.adblock-fast-monitor' && c?.params?.[2] === 'apply') calls.push(c.params[3]);
+    for (const [object, method, args] of ubusCalls(r)) {
+      if (object === 'luci.adblock-fast-monitor' && method === 'apply') calls.push(args);
     }
   });
   return calls;
@@ -28,89 +28,12 @@ async function stageManual(page, op, domain) {
   await page.getByRole('button', { name: 'Add to pending' }).click();
 }
 
-test.beforeAll(() => {
-  ensureHealthy();
-  guest('uci -q delete adblock-fast.config.allowed_domain; uci -q delete adblock-fast.config.blocked_domain; uci commit adblock-fast; /etc/init.d/adblock-fast restart >/dev/null 2>&1 || :');
-  waitAdblockFast();
-});
-
-test.afterAll(() => {
-  guest(`rm -f /tmp/dnsmasq.*.d/zz-abfm-broken.conf; uci -q delete adblock-fast.config.allowed_domain; uci -q delete adblock-fast.config.blocked_domain; uci commit adblock-fast; /etc/init.d/adblock-fast restart >/dev/null 2>&1 || :`);
-  waitAdblockFast();
-});
-
-test('row actions stage changes that survive a reload; replace and cancel rules', async ({ page }) => {
-  await login(page, admin);
-  await page.evaluate(() => localStorage.removeItem('adblock-fast-monitor.pending.v1'));
-  await seeDomain(page, 'ads.example.test');
-  await page.reload();
-  await expectState(page, 'healthy');
-
-  const row = page.getByRole('table', { name: 'Last domains' }).locator('tr[data-domain="ads.example.test"]');
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  // listed by the fixture list: rules offers Allow, not Block
-  await expect(row.getByRole('button', { name: 'Allow ads.example.test' })).toBeVisible({ timeout: 30_000 });
-  await expect(row.getByRole('button', { name: 'Block ads.example.test' })).toHaveCount(0);
-  await row.getByRole('button', { name: 'Allow ads.example.test' }).click();
-  await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'allow');
-  await expect(row).toContainText('Pending: Allow');
-
-  await page.reload();
-  await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'allow');
-
-  // replace: a different op for the same domain replaces the pending one
-  await stageManual(page, 'block', 'ADS.example.test.');
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(1);
-  await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'block');
-  // cancel: the inverse removes it
-  await stageManual(page, 'unblock', 'ads.example.test');
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
-  await expect(pending(page)).toContainText('No pending changes.');
-
-  // invalid input is refused before it is stored
-  await stageManual(page, 'block', 'not a domain');
-  await expect(page.locator('.alert-message').filter({ hasText: 'Invalid domain name' })).toBeVisible();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
-
-  // per-row cancel and discard all
-  await stageManual(page, 'allow', 'ads.example.test');
-  await row.getByRole('button', { name: 'Cancel pending change for ads.example.test' }).click();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
-  await stageManual(page, 'allow', 'ads.example.test');
-  await stageManual(page, 'block', 'tracker2.example.test');
-  await page.getByRole('button', { name: 'Discard all' }).click();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
-  await page.reload();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
-});
-
-test('allow-only batch also asks before the rebuild; cancel sends nothing', async ({ page }) => {
-  await login(page, admin);
-  const applies = trackApply(page);
-  await stageManual(page, 'allow', 'telemetry.example.test');
+/* Apply the pending batch, confirm the rebuild and wait for a terminal job. */
+async function applyAndWait(page) {
   await page.getByRole('button', { name: 'Apply changes' }).click();
   const modal = page.locator('.modal');
   await expect(modal).toContainText('all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes');
-  await expect(modal).toContainText('telemetry.example.test');
-  await modal.getByRole('button', { name: 'Cancel' }).click();
-  expect(applies.filter((a) => !a.dry_run)).toHaveLength(0);
-  expect(applies.filter((a) => a.dry_run)).toHaveLength(1);
-  await expect(pendingRow(page, 'telemetry.example.test')).toHaveAttribute('data-op', 'allow');
-  await page.getByRole('button', { name: 'Discard all' }).click();
-});
-
-test('one apply per batch, rebuild confirmation, job progress to applied', async ({ page }) => {
-  await login(page, admin);
-  await expectState(page, 'healthy');
-  const applies = trackApply(page);
-  await stageManual(page, 'allow', 'ads.example.test');
-  await stageManual(page, 'block', 'tracker2.example.test');
-  await page.getByRole('button', { name: 'Apply changes' }).click();
-  const modal = page.locator('.modal');
-  await expect(modal).toContainText('all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes');
-  await expect(modal).toContainText('tracker2.example.test');
   await modal.getByRole('button', { name: 'Apply' }).click();
-
   const state = page.locator('#abfm-job-state');
   await expect(state).toBeVisible();
   const seen = new Set();
@@ -121,27 +44,125 @@ test('one apply per batch, rebuild confirmation, job progress to applied', async
     if (['applied', 'partial', 'failed'].includes(s)) break;
     await page.waitForTimeout(500);
   }
-  expect([...seen]).toContain('applied');
-  expect(seen.has('applying') || seen.has('verifying') || seen.has('queued')).toBeTruthy();
+  return seen;
+}
 
-  const real = applies.filter((a) => !a.dry_run);
-  expect(real).toHaveLength(1);
-  expect(real[0].ops).toEqual([{ op: 'allow', domain: 'ads.example.test' }, { op: 'block', domain: 'tracker2.example.test' }]);
-  expect(real[0].confirm_rebuild).toBe(true);
+const resetRules = () => {
+  guest('uci -q delete adblock-fast.config.allowed_domain; uci -q delete adblock-fast.config.blocked_domain; uci commit adblock-fast; /etc/init.d/adblock-fast restart >/dev/null 2>&1 || :');
+  waitAdblockFast();
+};
 
-  const results = page.getByRole('table', { name: 'Apply results' });
-  await expect(results.locator('tr[data-domain="tracker2.example.test"]')).toHaveAttribute('data-result', 'ok');
-  await expect(results.locator('tr[data-domain="ads.example.test"]')).toHaveAttribute('data-result', 'ok');
+test.beforeAll(() => {
+  ensureHealthy();
+  resetRules();
+});
+
+test.afterAll(() => {
+  guest('rm -f /tmp/dnsmasq.*.d/zz-abfm-broken.conf; uci -q revert adblock-fast || :');
+  resetRules();
+});
+
+test('row buttons stage changes that survive a reload; manual add, replace and discard', async ({ page }) => {
+  await login(page, admin);
+  await page.evaluate((k) => localStorage.removeItem(k), STORAGE);
+  await page.reload();
+
+  const blocked = await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
+  await expect(blocked.getByRole('button', { name: 'Allow ads.example.test' })).toBeVisible();
+  await expect(blocked.getByRole('button', { name: 'Block ads.example.test' })).toHaveCount(0);
+  const allowed = await seeQuery(page, 'www.up.example.test', { decision: 'allowed' });
+  await expect(allowed.getByRole('button', { name: 'Block www.up.example.test' })).toBeVisible();
+  await expect(allowed.getByRole('button', { name: 'Allow www.up.example.test' })).toHaveCount(0);
+
+  await blocked.getByRole('button', { name: 'Allow ads.example.test' }).click();
+  await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'allow');
+  await expect(queryRow(page, 'ads.example.test')).toContainText('Pending: Allow');
+
+  await page.reload();
+  await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'allow');
+  await expect(queryRow(page, 'ads.example.test')).toContainText('Pending: Allow', { timeout: 30_000 });
+
+  // only allow and block can be staged; a different op for the same domain replaces
+  await expect(page.getByLabel('Change', { exact: true }).locator('option')).toHaveText(['Allow', 'Block']);
+  await stageManual(page, 'block', 'ADS.example.test.');
+  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(1);
+  await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'block');
+
+  // invalid input is refused before it is stored
+  await stageManual(page, 'block', 'not a domain');
+  await expect(page.locator('.alert-message').filter({ hasText: 'Invalid domain name' })).toBeVisible();
+  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(1);
+
+  // per-row cancel, remove, and discard all
+  await queryRow(page, 'ads.example.test').getByRole('button', { name: 'Cancel pending change for ads.example.test' }).click();
   await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+  await stageManual(page, 'allow', 'ads.example.test');
+  await stageManual(page, 'block', 'tracker2.example.test');
+  await pending(page).getByRole('button', { name: 'Remove pending change for tracker2.example.test' }).click();
+  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Discard all' }).click();
+  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+  await page.reload();
+  await expect(pending(page)).toContainText('No pending changes.');
+});
 
-  // the router really changed
-  expect(guest('uci -q get adblock-fast.config.allowed_domain')).toContain('ads.example.test');
-  expect(guest('uci -q get adblock-fast.config.blocked_domain')).toContain('tracker2.example.test');
-  // rules were refreshed: the allowed row now offers Block/Unallow
-  await seeDomain(page, 'ads.example.test');
-  const row = page.getByRole('table', { name: 'Last domains' }).locator('tr[data-domain="ads.example.test"]');
-  await expect(row.getByRole('button', { name: 'Unallow ads.example.test' })).toBeVisible({ timeout: 30_000 });
-  await expect(row).toContainText('Manual allow');
+test('cancelling the confirmation sends only the dry run; uncommitted CLI changes are explained', async ({ page }) => {
+  await login(page, admin);
+  const applies = trackApply(page);
+  await stageManual(page, 'allow', 'telemetry.example.test');
+  await page.getByRole('button', { name: 'Apply changes' }).click();
+  const modal = page.locator('.modal');
+  await expect(modal).toContainText('rebuilds the adblock-fast block lists');
+  await expect(modal).toContainText('telemetry.example.test');
+  await modal.getByRole('button', { name: 'Cancel' }).click();
+  expect(applies.filter((a) => !a.dry_run)).toHaveLength(0);
+  expect(applies.filter((a) => a.dry_run)).toHaveLength(1);
+  await expect(pendingRow(page, 'telemetry.example.test')).toHaveAttribute('data-op', 'allow');
+
+  // §5.10: the guard sees uncommitted `uci` command-line changes, not LuCI's staged ones
+  guest('uci set adblock-fast.config.abfm_browser_probe=1');
+  try {
+    await page.getByRole('button', { name: 'Apply changes' }).click();
+    const note = page.locator('[data-error="pending-uci-changes"]');
+    await expect(note).toContainText('uncommitted changes made on the command line (uci) or by adblock-fast itself');
+  } finally {
+    guest('uci -q revert adblock-fast.config.abfm_browser_probe || uci -q revert adblock-fast');
+  }
+  expect(applies.filter((a) => !a.dry_run)).toHaveLength(0);
+  await page.getByRole('button', { name: 'Discard all' }).click();
+});
+
+test('Block then Allow from the list: one apply per batch, job applied, DNS answer flips', async ({ page }) => {
+  const name = 'flip.up.example.test';
+  expect(await dnsQuery(name)).toEqual({ rcode: 0, answers: 1 });
+  await login(page, admin);
+  const applies = trackApply(page);
+
+  const allowed = await seeQuery(page, name, { decision: 'allowed' });
+  await allowed.getByRole('button', { name: `Block ${name}` }).click();
+  let seen = await applyAndWait(page);
+  expect([...seen]).toContain('applied');
+  let real = applies.filter((a) => !a.dry_run);
+  expect(real).toHaveLength(1);
+  expect(real[0].ops).toEqual([{ op: 'block', domain: name }]);
+  expect(real[0].confirm_rebuild).toBe(true);
+  const results = page.getByRole('table', { name: 'Apply results' });
+  await expect(results.locator(`tr[data-domain="${name}"]`)).toHaveAttribute('data-result', 'ok');
+  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+  expect(await dnsQuery(name)).toMatchObject({ answers: 0 });
+  expect(guest('uci -q get adblock-fast.config.blocked_domain')).toContain(name);
+
+  const blocked = await seeQuery(page, name, { decision: 'blocked' });
+  await blocked.getByRole('button', { name: `Allow ${name}` }).click();
+  seen = await applyAndWait(page);
+  expect([...seen]).toContain('applied');
+  real = applies.filter((a) => !a.dry_run);
+  expect(real).toHaveLength(2);
+  expect(real[1].ops).toEqual([{ op: 'allow', domain: name }]);
+  await expect(results.locator(`tr[data-domain="${name}"]`)).toHaveAttribute('data-result', 'ok');
+  expect(await dnsQuery(name)).toEqual({ rcode: 0, answers: 1 });
+  expect(guest('uci -q get adblock-fast.config.blocked_domain || :')).not.toContain(name);
+  await seeQuery(page, name, { decision: 'allowed' });
 });
 
 test('a failed job returns its items to pending with the reason', async ({ page }) => {
@@ -151,15 +172,13 @@ test('a failed job returns its items to pending with the reason', async ({ page 
   guest(`for d in /tmp/dnsmasq.*.d; do echo abfm-no-such-option > "$d/zz-abfm-broken.conf"; done`);
   await login(page, admin);
   await stageManual(page, 'block', 'fail.example.test');
-  await page.getByRole('button', { name: 'Apply changes' }).click();
-  await page.locator('.modal').getByRole('button', { name: 'Apply' }).click();
-  await expect(page.locator('#abfm-job-state')).toHaveAttribute('data-state', 'failed', { timeout: 480_000 });
-  await expect(page.locator('#abfm-job [data-error]')).toBeVisible();
+  const seen = await applyAndWait(page);
   guest('rm -f /tmp/dnsmasq.*.d/zz-abfm-broken.conf; /etc/init.d/dnsmasq restart');
+  expect([...seen]).toContain('failed');
+  await expect(page.locator('#abfm-job [data-error]')).toBeVisible();
   const row = pendingRow(page, 'fail.example.test');
   await expect(row).toHaveAttribute('data-op', 'block');
   await expect(row).toContainText('Last attempt:');
-  // still there after a reload, and Apply is available again
   await page.reload();
   await expect(pendingRow(page, 'fail.example.test')).toContainText('Last attempt:');
   await expect(page.getByRole('button', { name: 'Apply changes' })).toBeEnabled();

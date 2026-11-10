@@ -17,15 +17,17 @@ const m = new Cls();
 
 const ok = (data) => m.settle(data);
 const err = (code) => m.failure(new Error(`RPC call to x/y failed with error ${code}: msg`));
+const inst = (o = {}) => ({ section: 'cfg01411c', confdir: '/tmp/dnsmasq.cfg01411c.d', dropin: false,
+  uci_logqueries: false, logfacility_file: false, ...o });
 const info = (over = {}) => ({
-  api: 1, ok: true,
-  monitor: { enabled: true, manage_logging: true, poll_interval: 5, service: { running: true, pid: 1 }, object: true },
+  api: 2, ok: true,
+  monitor: { query_logging: true },
   adblock_fast: { installed: true, enabled: true, status: 'statusSuccess', dns: 'dnsmasq.servers' },
-  dnsmasq: { running: true, instances: [{ section: 'cfg01411c', confdir: '/tmp/dnsmasq.cfg01411c.d', dropin: true, uci_logqueries: false, logfacility_file: false }] },
+  dnsmasq: { running: true, instances: [inst({ dropin: true })] },
+  local_domains: ['lan'],
   warnings: [],
   ...over
 });
-const status = (over = {}) => ({ api: 1, ok: true, state: 'running', reasons: [], ...over });
 
 test('rpcError extracts JSON-RPC and ubus codes from LuCI RPCError messages', () => {
   assert.equal(m.rpcError(new Error('RPC call to a/b failed with error -32000: Object not found')).rpc, -32000);
@@ -36,63 +38,50 @@ test('rpcError extracts JSON-RPC and ubus codes from LuCI RPCError messages', ()
   assert.equal(m.rpcError('boom').message, 'boom');
 });
 
-test('§8.1 deriveState: first matching row wins', () => {
-  const now = 1000;
-  assert.equal(m.deriveState(true, err(-32002), err(-32000), now, null).state, 'access-denied');
-  assert.equal(m.deriveState(false, ok(info({ adblock_fast: { installed: false } })), ok(status()), now, null).state,
-    'adblock-fast-missing');
-  assert.equal(m.deriveState(false, ok(info()), err(-32000), now, now).state, 'disabled');
-  // object missing while procd says running: starting for < 15 s, then not-running
-  assert.equal(m.deriveState(true, ok(info()), err(-32000), now, now - 14).state, 'starting');
-  assert.equal(m.deriveState(true, ok(info()), err(-32000), now, now - 15).state, 'not-running');
-  const stopped = info({ monitor: { enabled: true, service: { running: false } } });
-  assert.equal(m.deriveState(true, ok(stopped), err(-32000), now, now).state, 'not-running');
-  // info itself unavailable: cannot claim starting
-  assert.equal(m.deriveState(true, err(-32000), err(-32000), now, now).state, 'not-running');
+test('loggingState: query logging from info, in precedence order', () => {
+  const st = (r) => { const s = m.loggingState(r); return [s.state, s.reason, s.configured]; };
+  assert.deepEqual(st(err(-32002)), ['access-denied', null, null]);
+  assert.deepEqual(st(err(-32000)), ['unknown', null, null]);
+  assert.deepEqual(st(null), ['unknown', null, null]);
+  assert.deepEqual(st(ok(info({ adblock_fast: { installed: false } }))), ['adblock-fast-missing', null, true]);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: false, instances: [inst({ dropin: true })] } }))),
+    ['unavailable', 'dnsmasq-not-running', true]);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true }), inst({ logfacility_file: true })] } }))),
+    ['unavailable', 'dnsmasq-logs-to-file', true]);
+  assert.deepEqual(st(ok(info())), ['active', null, true]);
+  // turned on outside this app (luci-app-adblock-fast / dnsmasq logqueries)
+  assert.deepEqual(st(ok(info({ monitor: { query_logging: false }, dnsmasq: { running: true, instances: [inst({ uci_logqueries: true })] } }))),
+    ['active', null, false]);
+  assert.deepEqual(st(ok(info({ monitor: { query_logging: false }, dnsmasq: { running: true, instances: [inst()] } }))),
+    ['off', null, false]);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ confdir: null })] } }))),
+    ['unavailable', 'confdir-invalid', true]);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ confdir: 'relative' })] } }))),
+    ['unavailable', 'confdir-invalid', true]);
+  assert.deepEqual(st(ok(info({ monitor: {}, dnsmasq: null }))), ['off', null, null]);
 });
 
-test('§8.1 logging-unavailable reasons in table order', () => {
-  const s = ok(status({ state: 'degraded', reasons: ['input-overflow'] }));
-  const inst = (o) => ({ section: 's', confdir: '/tmp/x', dropin: false, uci_logqueries: false, logfacility_file: false, ...o });
-  const withDns = (dnsmasq) => ok(info({ dnsmasq }));
-  let r = m.deriveState(true, withDns({ running: false, instances: [inst({ logfacility_file: true })] }), s, 0, null);
-  assert.deepEqual([r.state, r.reasons], ['logging-unavailable', ['dnsmasq-not-running']]);
-  r = m.deriveState(true, withDns({ running: true, instances: [inst({ dropin: true }), inst({ logfacility_file: true })] }), s, 0, null);
-  assert.deepEqual(r.reasons, ['dnsmasq-logs-to-file']);
-  r = m.deriveState(true, withDns({ running: true, instances: [inst()] }), s, 0, null);
-  assert.deepEqual(r.reasons, ['logging-not-active']);
-  r = m.deriveState(true, withDns({ running: true, instances: [inst({ confdir: null })] }), s, 0, null);
-  assert.deepEqual(r.reasons, ['confdir-invalid']);
-  r = m.deriveState(true, withDns({ running: true, instances: [inst({ uci_logqueries: true })] }), s, 0, null);
-  assert.deepEqual([r.state, r.reasons], ['degraded', ['input-overflow']]);
-  assert.equal(m.deriveState(true, ok(info()), ok(status()), 0, null).state, 'healthy');
-  // other failures without data
-  const e = m.deriveState(true, ok(info()), m.failure(new Error('XHR timeout')), 0, null);
-  assert.deepEqual([e.state, e.message], ['error', 'XHR timeout']);
-  assert.equal(m.deriveState(true, null, null, 0, null).state, 'loading');
+test('localDomains takes only non-empty strings from info.local_domains', () => {
+  assert.deepEqual(m.localDomains(ok(info({ local_domains: ['lan', '', 7, null, 'home.example'] }))), ['lan', 'home.example']);
+  assert.deepEqual(m.localDomains(ok(info({ local_domains: 'lan' }))), []);
+  assert.deepEqual(m.localDomains(err(-32002)), []);
+  assert.deepEqual(m.localDomains(null), []);
 });
 
-test('missingSince remembers the first -32000 and resets when the object returns', () => {
-  assert.equal(m.missingSince(null, err(-32000), 10), 10);
-  assert.equal(m.missingSince(10, err(-32000), 20), 10);
-  assert.equal(m.missingSince(10, ok(status()), 30), null);
-  assert.equal(m.missingSince(null, err(-32002), 30), null);
+test('rowOp: Allow on blocked rows, Block on allowed rows, nothing otherwise', () => {
+  assert.equal(m.rowOp('blocked'), 'allow');
+  assert.equal(m.rowOp('allowed'), 'block');
+  for (const d of ['other', 'no-answer', undefined, '__proto__', 'constructor']) assert.equal(m.rowOp(d), null, String(d));
+  assert.deepEqual(m.OPS, ['allow', 'block']);
 });
 
-test('stale overlay after 3 × poll_interval, with clamped interval', () => {
-  assert.equal(m.isStale(100, 115, 5), false);
-  assert.equal(m.isStale(100, 116, 5), true);
-  assert.equal(m.isStale(100, 106, 0), false);   // clamps to 2 → 6 s
-  assert.equal(m.isStale(100, 107, 0), true);
-  assert.equal(m.isStale(null, 1e9, 5), false);
-});
-
-test('§3 option clamping for poll_interval', () => {
-  assert.equal(m.pollInterval('1'), 2);
-  assert.equal(m.pollInterval('61'), 60);
-  assert.equal(m.pollInterval('abc'), 5);
-  assert.equal(m.pollInterval(undefined), 5);
-  assert.equal(m.pollInterval('10'), 10);
+test('filterRows: case-insensitive substring on the domain; blank keeps all', () => {
+  const rows = [{ domain: 'ads.example.test' }, { domain: 'www.example.org' }, { domain: null }, null];
+  assert.equal(m.filterRows(rows, ''), rows);
+  assert.equal(m.filterRows(rows, '  '), rows);
+  assert.deepEqual(m.filterRows(rows, ' EXAMPLE.'), [rows[0], rows[1]]);
+  assert.deepEqual(m.filterRows(rows, 'ads'), [rows[0]]);
+  assert.deepEqual(m.filterRows(rows, '<img'), []);
 });
 
 test('§6.4 normalization in the UI matches the grammar', () => {
@@ -103,19 +92,9 @@ test('§6.4 normalization in the UI matches the grammar', () => {
     'bücher.de', 'a.com..', `${'a'.repeat(64)}.com`, `${'a.'.repeat(127)}com`, '', null, 7]) {
     assert.equal(m.normalizeDomain(bad), null, String(bad));
   }
-  assert.equal(m.searchQuery(' Exa '), 'exa');
-  assert.equal(m.searchQuery(''), '');
-  assert.equal(m.searchQuery('a b'), null);
-  assert.equal(m.searchQuery('x'.repeat(65)), null);
 });
 
-test('§6.2 row actions keep contract order and ignore unknown entries', () => {
-  assert.deepEqual(m.rowActions({ actions: ['unallow', 'block', 'evil', 'allow'] }), ['allow', 'block', 'unallow']);
-  assert.deepEqual(m.rowActions(null), []);
-  assert.deepEqual(m.rowActions({ actions: 'block' }), []);
-});
-
-test('§8.2 staging: replace, inverse cancels, normalization, 64-item cap', () => {
+test('§8.2 staging: allow and block only, replace, normalization, 64-item cap', () => {
   let s = m.emptyPending();
   let r = m.stage(s, 'block', 'Ads.Example.com.', 1);
   assert.equal(r.change, 'added');
@@ -124,13 +103,8 @@ test('§8.2 staging: replace, inverse cancels, normalization, 64-item cap', () =
   r = m.stage(s, 'allow', 'ads.example.com', 2);
   assert.equal(r.change, 'replaced');
   assert.deepEqual(r.state.items, [{ op: 'allow', domain: 'ads.example.com', ts: 2 }]);
-  r = m.stage(r.state, 'unallow', 'ads.example.com', 3);
-  assert.equal(r.change, 'cancelled');
-  assert.deepEqual(r.state.items, []);
-  r = m.stage(m.stage(s, 'unblock', 'ads.example.com', 4).state, 'block', 'ads.example.com', 5);
-  assert.equal(r.change, 'added');   // block → unblock cancelled → block again
   assert.equal(m.stage(s, 'block', 'ads.example.com', 9).change, 'unchanged');
-  assert.equal(m.stage(s, 'nuke', 'x.com', 1).error, 'invalid-op');
+  for (const op of ['unblock', 'unallow', 'nuke']) assert.equal(m.stage(s, op, 'x.example.com', 1).error, 'invalid-op', op);
   assert.equal(m.stage(s, 'block', 'not a domain', 1).error, 'invalid-domain');
   s = m.emptyPending();
   for (let i = 0; i < 64; i++) s = m.stage(s, 'block', `d${i}.example.com`, i).state;
@@ -152,7 +126,7 @@ test('§8.2 storage round-trip and hostile input', () => {
   assert.deepEqual(m.parsePending('{"v":2,"items":[]}'), m.emptyPending());
   const hostile = m.parsePending(JSON.stringify({ v: 1,
     items: [{ op: 'block', domain: '<img src=x>' }, { op: 'eval', domain: 'x.com' }, { op: 'block', domain: 'OK.com' },
-      { op: 'allow', domain: 'ok.com' }, ...Array.from({ length: 100 }, (_, i) => ({ op: 'block', domain: `n${i}.com` }))],
+      { op: 'allow', domain: 'ok.com' }, { op: 'unblock', domain: 'old.example.com' }, ...Array.from({ length: 100 }, (_, i) => ({ op: 'block', domain: `n${i}.com` }))],
     inflight: { job_id: '../../etc', items: [] } }));
   assert.equal(hostile.items[0].domain, 'ok.com');
   assert.equal(hostile.items[0].op, 'block');
@@ -162,8 +136,8 @@ test('§8.2 storage round-trip and hostile input', () => {
 
 test('§8.2 job settlement: ok/skipped leave, mismatch/unverified/failed return with reason', () => {
   let s = m.emptyPending();
-  for (const [op, d] of [['allow', 'a.example.com'], ['block', 'b.example.com'], ['unblock', 'c.example.com'],
-    ['unallow', 'd.example.com'], ['block', 'e.example.com']]) s = m.stage(s, op, d, 1).state;
+  for (const [op, d] of [['allow', 'a.example.com'], ['block', 'b.example.com'], ['allow', 'c.example.com'],
+    ['allow', 'd.example.com'], ['block', 'e.example.com']]) s = m.stage(s, op, d, 1).state;
   s = m.beginInflight(s, 'j1762747400-3f2a');
   assert.deepEqual(s.items, []);
   // user stages a newer op for e.example.com while the job runs
@@ -183,7 +157,7 @@ test('§8.2 job settlement: ok/skipped leave, mismatch/unverified/failed return 
   assert.deepEqual(r.state.items.map((i) => [i.op, i.domain, i.reason]), [
     ['allow', 'e.example.com', undefined],
     ['block', 'b.example.com', 'not-blocked'],
-    ['unblock', 'c.example.com', 'dns-error']]);
+    ['allow', 'c.example.com', 'dns-error']]);
   const failed = m.settleJob(m.beginInflight(m.stage(m.emptyPending(), 'block', 'x.example.com', 1).state, 'j1762747400-3f2a'),
     { id: 'j1762747400-3f2a', state: 'failed', error: { code: 'rebuild-failed' }, items: [{ domain: 'x.example.com', result: 'pending' }] });
   assert.deepEqual(failed.state.items, [{ op: 'block', domain: 'x.example.com', ts: 1, reason: 'rebuild-failed' }]);
@@ -205,7 +179,7 @@ test('applyPlan: confirmation needed for every rebuild, never for noop or persis
   assert.equal(m.applyPlan({ ok: true, noop: true, job_id: null, plan: [] }).noop, true);
 });
 
-test('formatting: counts, percentages, durations, local times, drops, paging', () => {
+test('formatting: counts, percentages, durations, local times', () => {
   assert.equal(m.formatCount(1234567), '1,234,567');
   assert.equal(m.formatPct(15.4), '15.4 %');
   assert.equal(m.formatPct(null), '—');
@@ -215,8 +189,4 @@ test('formatting: counts, percentages, durations, local times, drops, paging', (
   const d = new Date(t * 1000);
   assert.equal(m.formatTime(t), `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`);
   assert.equal(m.formatTime(null), '—');
-  assert.equal(m.sumDrops({ dropped: { input_overflow: 1, pending_evicted: 2, dnsmasq_reported: 3 } }), 6);
-  assert.deepEqual(m.pageInfo(137, 25, 25), { first: 26, last: 50, total: 137, hasPrev: true, hasNext: true, prevOffset: 0, nextOffset: 50 });
-  assert.deepEqual(m.pageInfo(0, 0, 25).first, 0);
-  assert.equal(m.pageInfo(50, 25, 25).hasNext, false);
 });

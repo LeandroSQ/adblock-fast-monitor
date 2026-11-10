@@ -108,9 +108,8 @@ jobs:
       - name: Guest tests and Playwright against the installed APK
         run: scripts/guest/run-guest-tests.sh --host-cmd scripts/guest/browser-tests.sh .ci-work/apk/package.apk
       - name: LuCI install from a throwaway-key feed (T22)
-        run: scripts/guest/run-guest-tests.sh --no-install .ci-work/apk/package.apk test/guest/package-luci-install.host.sh
+        run: scripts/release/verify-luci-install.sh .ci-work/apk/package.apk
         env:
-          ABFM_INSTALL_TEST: "1"
           GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run-install
       - name: Upload test logs
         if: always()

@@ -5,8 +5,7 @@
 // Env: MONITOR_BASE_URL, MONITOR_WRITE_LUCI_USERNAME/PASSWORD (root),
 // GUEST_READONLY_USER/PASSWORD, GUEST_SSH_KEY/PORT, GUEST_RUN_DIR,
 // ABFM_KEY_URL (browser-reachable), ABFM_KEY_FILE, ABFM_FEED_URL
-// (guest-reachable), ABFM_SIGNED_APK, ABFM_UNSIGNED_APK,
-// ABFM_ALLOW_MISSING_BACKEND=1 to skip checks that need WU1/WU2 objects.
+// (guest-reachable), ABFM_SIGNED_APK, ABFM_UNSIGNED_APK.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -15,7 +14,6 @@ import { test, expect } from '@playwright/test';
 const env = process.env;
 const PKG = 'luci-app-adblock-fast-monitor';
 const KEY_PATH = '/etc/apk/keys/adblock-fast-monitor.pem';
-const allowMissing = env.ABFM_ALLOW_MISSING_BACKEND === '1';
 
 test.skip(env.ABFM_INSTALL_TEST !== '1', 'run by test/guest/package-luci-install.host.sh (ABFM_INSTALL_TEST=1)');
 test.describe.configure({ mode: 'serial' });
@@ -130,34 +128,24 @@ test('LuCI: unsigned upload refused, key by URL, signed upload, remove, feed ins
   await test.step('menu entry and ACL work for the logged-in admin and a read-only principal', async () => {
     await page.goto('/cgi-bin/luci/admin/status/overview');
     await expect(page.locator('a[href$="/admin/services/adblock-fast-monitor"]').first()).toBeAttached();
-    if (!/luci-base/.test(guest('uci -q get rpcd.monitor_readonly.read', { check: false }) ?? ''))
-      guest('uci add_list rpcd.monitor_readonly.read=luci-base && uci commit rpcd');
     const sid = await login(env.GUEST_READONLY_USER, env.GUEST_READONLY_PASSWORD);
     expect(sid).toMatch(/^[0-9a-f]{32}$/);
     expect((await rpc(sid, 'uci', 'get', { config: 'adblock-fast-monitor' })).result?.[0]).toBe(0);
-    if (guestOk('ubus list luci.adblock-fast-monitor')) {
-      const info = await rpc(sid, 'luci.adblock-fast-monitor', 'info');
-      expect(info.result?.[0]).toBe(0);
-      expect(info.result?.[1]?.ok).toBe(true);
-      expect((await rpc(sid, 'luci.adblock-fast-monitor', 'apply', { ops: [] })).error?.code).toBe(-32002);
-    } else {
-      expect(allowMissing, 'luci.adblock-fast-monitor is not registered after install').toBe(true);
-      expect(guestOk('test -e /usr/share/rpcd/ucode/luci.adblock-fast-monitor'), 'plugin file present but object missing').toBe(false);
-    }
+    expect(guestOk('ubus list luci.adblock-fast-monitor'), 'rpcd plugin registered without a manual restart').toBe(true);
+    const info = await rpc(sid, 'luci.adblock-fast-monitor', 'info');
+    expect(info.result?.[0]).toBe(0);
+    expect(info.result?.[1]?.ok).toBe(true);
+    expect((await rpc(sid, 'luci.adblock-fast-monitor', 'apply', { ops: [] })).error?.code).toBe(-32002);
   });
 
-  let files, dhcp, monitoring = false;
+  let files, dhcp;
   await test.step('monitoring on before removal (drop-ins exist)', async () => {
     files = packageFiles();
     dhcp = guest('sha256sum /etc/config/dhcp');
-    if (guestOk('test -e /usr/libexec/adblock-fast-monitor/monitord.uc')) {
-      guest('uci set adblock-fast-monitor.config.enabled=1 && uci commit adblock-fast-monitor && /etc/init.d/adblock-fast-monitor restart');
-      guest('i=0; until ubus list adblock-fast-monitor >/dev/null 2>&1; do i=$((i+1)); [ $i -lt 30 ] || exit 1; sleep 1; done');
-      expect(guest('ls /tmp/dnsmasq*.d/adblock-fast-monitor.conf 2>/dev/null || true').trim()).not.toBe('');
-      monitoring = true;
-    } else {
-      expect(allowMissing, 'monitord.uc is not installed').toBe(true);
-    }
+    guest('uci set adblock-fast-monitor.config.enabled=1 && uci commit adblock-fast-monitor && /etc/init.d/adblock-fast-monitor restart');
+    expect(guestOk('i=0; until ubus list adblock-fast-monitor >/dev/null 2>&1; do i=$((i+1)); [ $i -lt 30 ] || exit 1; sleep 1; done'),
+      'daemon object after enabling').toBe(true);
+    expect(guest('ls /tmp/dnsmasq*.d/adblock-fast-monitor.conf 2>/dev/null || true').trim()).not.toBe('');
   });
 
   await test.step('System → Software → Installed → Remove… removes everything', async () => {
@@ -178,8 +166,8 @@ test('LuCI: unsigned upload refused, key by URL, signed upload, remove, feed ins
     expect(guestOk('ubus list luci.adblock-fast-monitor')).toBe(false);
     expect(guest('sha256sum /etc/config/dhcp')).toBe(dhcp);
     expect(rpcdId()).not.toBe(before);
-    // A modified conffile is kept (apk conffile semantics); an unmodified one is removed.
-    expect(guestOk('test -e /etc/config/adblock-fast-monitor')).toBe(monitoring);
+    // The modified conffile (enabled=1) is kept, as apk does for changed conffiles.
+    expect(guest('uci -q get adblock-fast-monitor.config.enabled', { check: false })?.trim()).toBe('1');
     expect(guestOk(`test -e ${KEY_PATH}`)).toBe(true);
   });
 
@@ -205,10 +193,9 @@ test('LuCI: unsigned upload refused, key by URL, signed upload, remove, feed ins
     const out = await finishPackageManager(page);
     expect(out).not.toMatch(/failed with code|UNTRUSTED/);
     expect(guestOk(`apk info -e ${PKG}`)).toBe(true);
-    if (guestOk('test -e /usr/share/rpcd/ucode/luci.adblock-fast-monitor'))
-      expect(guestOk('ubus list luci.adblock-fast-monitor')).toBe(true);
-    if (monitoring)
-      expect(guestOk('i=0; until ubus list adblock-fast-monitor; do i=$((i+1)); [ $i -lt 30 ] || exit 1; sleep 1; done')).toBe(true);
+    expect(guestOk('ubus list luci.adblock-fast-monitor')).toBe(true);
+    // The kept config (enabled=1) starts the daemon on reinstall.
+    expect(guestOk('i=0; until ubus list adblock-fast-monitor; do i=$((i+1)); [ $i -lt 30 ] || exit 1; sleep 1; done')).toBe(true);
   });
 
   await test.step('sysupgrade keeps the key and the feed line', async () => {

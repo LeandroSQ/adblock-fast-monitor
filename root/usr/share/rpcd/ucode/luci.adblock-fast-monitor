@@ -1,0 +1,501 @@
+// rpcd ucode plugin `luci.adblock-fast-monitor` (docs/CONTRACT.md §6, §7.1,
+// §7.3). It runs inside rpcd's single-threaded uloop, so every method returns
+// within milliseconds: file scans run in a forked uloop.task (rules) and all
+// adblock-fast work runs in the detached job (job.uc).
+'use strict';
+
+const fs = require('fs');
+const uci = require('uci');
+const ubus = require('ubus');
+const dom = require('abfm.domain');
+
+const API = 1;
+const RUN_DIR = '/var/run/adblock-fast-monitor';
+const JOB_FILE = RUN_DIR + '/job.json';
+const UCI_SAVEDIR = RUN_DIR + '/uci';
+const LOCK_DIR = '/var/lock';
+const LOCK_FILE = LOCK_DIR + '/adblock-fast-monitor.lock';
+const JOB_BIN = '/usr/libexec/adblock-fast-monitor/job.uc';
+const AF_INIT = '/etc/init.d/adblock-fast';
+const AF_CONFIG = '/etc/config/adblock-fast';
+const AF_PENDING = '/tmp/.uci/adblock-fast';
+const AF_DEFAULT_HEARTBEAT = 'heartbeat.mossdef.org';
+const AF_DEFAULT_UPDATE_URL = 'https://cdn.jsdelivr.net/gh/openwrt/packages/net/adblock-fast/files/adblock-fast.config.update';
+const QUEUE_WINDOW = 30;
+const LIST_CAP = 2048;
+const RULES_MAX = 50;
+const SCAN_TIMEOUT_MS = 10000;
+const SCAN_LINE_CAP = 100000;
+const CACHE_MAX = 512;
+const TERMINAL = { applied: true, partial: true, failed: true };
+const LISTED_MODES = { 'dnsmasq.servers': true, 'dnsmasq.conf': true, 'dnsmasq.addnhosts': true };
+const UNSUPPORTED_DNS = /^(smartdns|unbound)\./;
+
+function fail(code, message, extra) {
+	let r = { api: API, ok: false, error: { code, message } };
+	for (let k, v in extra)
+		r[k] = v;
+	return r;
+}
+
+function ensure_dir(path) {
+	if (!fs.stat(path))
+		fs.mkdir(path, 0700);
+}
+
+// Reads committed UCI only: the private savedir never holds LuCI's pending
+// changes (those live in /tmp/.uci, see pending-uci-changes).
+function cursor() {
+	ensure_dir(RUN_DIR);
+	ensure_dir(UCI_SAVEDIR);
+	return uci.cursor(null, UCI_SAVEDIR);
+}
+
+function as_list(v) {
+	return (type(v) == 'array') ? v : (v != null && v != '') ? [ '' + v ] : [];
+}
+
+function clamp(v, lo, hi, def) {
+	let n = +v;
+	if (v == null || v === '' || n != n)
+		return def;
+	n = int(n);
+	return (n < lo) ? lo : (n > hi) ? hi : n;
+}
+
+function service(conn, name) {
+	return conn ? conn.call('service', 'list', { name })?.[name] : null;
+}
+
+function service_running(svc) {
+	for (let n, inst in svc?.instances ?? {})
+		if (inst?.running)
+			return { running: true, pid: inst.pid ?? null };
+	return { running: false, pid: null };
+}
+
+// --- adblock-fast discovery (WU2) ---
+// Private until abfm.system lands (WU1 owns that module); see the report.
+
+function af_state(c, conn) {
+	let installed = !!(fs.access(AF_INIT) && fs.access(AF_CONFIG));
+	c.load('adblock-fast');
+	let cfg = c.get_all('adblock-fast', 'config') ?? {};
+	let dns = cfg.dns || 'dnsmasq.servers';
+	let output_file = dom.DNSMASQ_MODES[dns] ?? null;
+	let pending = fs.stat(AF_PENDING);
+	let svc = service(conn, 'adblock-fast');
+	return {
+		installed,
+		enabled: cfg.enabled == '1',
+		status: svc?.data?.status || null,
+		dns,
+		output_file,
+		output_exists: !!(output_file && fs.access(output_file)),
+		external_config: !!(cfg.dnsmasq_config_file_url ?? ''),
+		pending_uci_changes: !!(pending && pending.size > 0),
+		allowed: as_list(cfg.allowed_domain),
+		blocked: as_list(cfg.blocked_domain),
+		heartbeat_domain: (cfg.heartbeat_domain && cfg.heartbeat_domain != '-') ? cfg.heartbeat_domain : AF_DEFAULT_HEARTBEAT,
+		config_update_url: cfg.config_update_url || AF_DEFAULT_UPDATE_URL,
+	};
+}
+
+function protect_ctx(c, af) {
+	let names = [ af.heartbeat_domain ], hosts = [ dom.url_host(af.config_update_url) ];
+	c.load('dhcp');
+	c.foreach('dhcp', 'dnsmasq', (s) => {
+		for (let v in [ ...as_list(s.domain), ...as_list(s.local) ])
+			push(names, v);
+	});
+	c.load('system');
+	push(names, c.get_first('system', 'system', 'hostname'));
+	c.foreach('adblock-fast', 'file_url', (s) => {
+		if (s.enabled != '0')
+			push(hosts, dom.url_host(s.url));
+	});
+	return dom.protect_context(names, hosts);
+}
+
+function dnsmasq_instances(c) {
+	c.load('adblock-fast-monitor');
+	let targets = as_list(c.get('adblock-fast-monitor', 'config', 'dnsmasq_instance'));
+	let all = !length(targets) || index(targets, '*') >= 0;
+	let out = [];
+	c.load('dhcp');
+	c.foreach('dhcp', 'dnsmasq', (s) => {
+		if (s.disabled == '1')
+			return;
+		let name = s['.name'];
+		let confdir = split(s.confdir || `/tmp/dnsmasq.${name}.d`, ',')[0];
+		if (substr(confdir, 0, 1) != '/')
+			confdir = null;
+		push(out, {
+			section: name,
+			confdir,
+			dropin: !!(confdir && fs.access(confdir + '/adblock-fast-monitor.conf')),
+			uci_logqueries: s.logqueries == '1',
+			logfacility_file: index(s.logfacility ?? '', '/') >= 0,
+			targeted: all || index(targets, name) >= 0,
+		});
+	});
+	return out;
+}
+
+// --- job.json and lock (§7.3) ---
+
+function read_job() {
+	let data = fs.readfile(JOB_FILE);
+	if (!data)
+		return null;
+	try {
+		let j = json(data);
+		return (type(j) == 'object') ? j : null;
+	}
+	catch (e) {
+		return null;
+	}
+}
+
+function write_job(job) {
+	ensure_dir(RUN_DIR);
+	let tmp = JOB_FILE + '.tmp';
+	fs.unlink(tmp);
+	let f = fs.open(tmp, 'wx', 0600);
+	if (!f)
+		return false;
+	let ok = f.write(sprintf('%J', job)) != null;
+	f.close();
+	return ok && fs.rename(tmp, JOB_FILE);
+}
+
+function lock_try() {
+	if (!fs.stat(LOCK_DIR))
+		fs.mkdir(LOCK_DIR, 0755);
+	let f = fs.open(LOCK_FILE, 'ae', 0600);
+	if (!f)
+		return null;
+	if (!f.lock('xn')) {
+		f.close();
+		return null;
+	}
+	return f;
+}
+
+function unlock(f) {
+	f.lock('u');
+	f.close();
+}
+
+// With the lock held, a non-terminal job.json belongs to a dead job.
+function reap_locked(job, now) {
+	if (!job || TERMINAL[job.state])
+		return job;
+	let code = null;
+	if (job.state == 'applying' || job.state == 'verifying')
+		code = [ 'interrupted', 'the job process ended before it finished' ];
+	else if (job.state == 'queued' && now - (job.created_at ?? 0) >= QUEUE_WINDOW)
+		code = [ 'start-timeout', 'the job did not start' ];
+	if (!code)
+		return job;
+	job.state = 'failed';
+	job.finished_at = now;
+	job.error = { code: code[0], message: code[1] };
+	for (let it in job.items ?? [])
+		if (it.result == 'pending')
+			it.result = 'unverified';
+	write_job(job);
+	return job;
+}
+
+function job_view(job) {
+	if (!job)
+		return null;
+	let v = { ...job };
+	delete v.ctx;
+	return v;
+}
+
+function new_job_id(now) {
+	let rnd = fs.readfile('/dev/urandom', 2);
+	return sprintf('j%010d-%s', now, rnd ? hexenc(rnd) : sprintf('%04x', (now * 7919) % 65536));
+}
+
+// --- rules scan cache (§6.2) ---
+
+let scan_cache = { sig: null, map: {}, order: [] };
+
+function cache_get(sig, d) {
+	return (scan_cache.sig == sig) ? scan_cache.map[d] : null;
+}
+
+function cache_put(sig, results) {
+	if (scan_cache.sig != sig)
+		scan_cache = { sig, map: {}, order: [] };
+	for (let d, r in results) {
+		if (!exists(scan_cache.map, d))
+			push(scan_cache.order, d);
+		scan_cache.map[d] = r;
+	}
+	while (length(scan_cache.order) > CACHE_MAX)
+		delete scan_cache.map[shift(scan_cache.order)];
+}
+
+// Runs in a forked child (uloop.task): one grep over the output file.
+function scan_output(file, domains, dns) {
+	let p = fs.popen(dom.grep_command(file, domains, dns), 'r');
+	let lines = [], line;
+	while (p && length(lines) < SCAN_LINE_CAP && (line = p.read('line')) != null && line != '')
+		push(lines, rtrim(line, '\n'));
+	p?.close();
+	return dom.listed(domains, lines, dns);
+}
+
+// --- methods ---
+
+function m_info() {
+	let c = cursor();
+	let conn = ubus.connect();
+	let af = af_state(c, conn);
+	c.load('adblock-fast-monitor');
+	let mon = c.get_all('adblock-fast-monitor', 'config') ?? {};
+	let msvc = service_running(service(conn, 'adblock-fast-monitor'));
+	let object = length(conn?.list('adblock-fast-monitor') ?? []) > 0;
+	let dnsmasq_running = service_running(service(conn, 'dnsmasq')).running;
+	conn?.disconnect();
+
+	let instances = dnsmasq_instances(c);
+	c.load('system');
+	let warnings = [];
+	for (let i in instances)
+		if (i.dropin || i.uci_logqueries) {
+			push(warnings, 'query-logging-active');
+			break;
+		}
+	if (c.get_first('system', 'system', 'log_file'))
+		push(warnings, 'logd-to-flash');
+	if (c.get_first('system', 'system', 'log_ip'))
+		push(warnings, 'logd-remote');
+
+	return {
+		api: API, ok: true,
+		monitor: {
+			enabled: mon.enabled == '1',
+			manage_logging: (mon.manage_logging ?? '1') == '1',
+			poll_interval: clamp(mon.poll_interval, 2, 60, 5),
+			service: msvc,
+			object,
+		},
+		adblock_fast: {
+			installed: af.installed, enabled: af.enabled, status: af.status, dns: af.dns,
+			output_file: af.output_file, output_exists: af.output_exists,
+			external_config: af.external_config, pending_uci_changes: af.pending_uci_changes,
+		},
+		dnsmasq: { running: dnsmasq_running, instances },
+		warnings,
+	};
+}
+
+function m_rules(req) {
+	let input = req.args?.domains ?? [];
+	if (type(input) != 'array' || length(input) > RULES_MAX)
+		return fail('invalid-request', `domains must be an array of at most ${RULES_MAX} names`);
+	let domains = [];
+	for (let i = 0; i < length(input); i++) {
+		let d = dom.normalize(input[i]);
+		if (!dom.valid(d))
+			return fail('invalid-domain', 'not a valid domain name', { index: i, domain: d });
+		if (index(domains, d) < 0)
+			push(domains, d);
+	}
+
+	let c = cursor();
+	let af = af_state(c, null);
+	let reply = {
+		api: API, ok: true,
+		allowed_domain: slice(af.allowed, 0, LIST_CAP),
+		blocked_domain: slice(af.blocked, 0, LIST_CAP),
+		truncated: length(af.allowed) > LIST_CAP || length(af.blocked) > LIST_CAP,
+		domains: {},
+	};
+	let finish = (results) => {
+		for (let d in domains)
+			reply.domains[d] = dom.rule_info(d, af.allowed, af.blocked, results[d]?.listed ?? null);
+		return reply;
+	};
+
+	let results = {};
+	let st = af.output_file ? fs.stat(af.output_file) : null;
+	if (!length(domains) || !st || !LISTED_MODES[af.dns]) {
+		// No output file means adblock-fast blocks nothing through dnsmasq.
+		for (let d in domains)
+			results[d] = { listed: LISTED_MODES[af.dns] ? false : null };
+		return finish(results);
+	}
+
+	let sig = sprintf('%s:%J:%d:%d:%d', af.output_file, st.dev, st.inode, st.size, st.mtime);
+	let need = [];
+	for (let d in domains) {
+		let hit = cache_get(sig, d);
+		if (hit) results[d] = hit;
+		else push(need, d);
+	}
+	if (!length(need))
+		return finish(results);
+
+	// Exceptions inside uloop callbacks would end rpcd's main loop, so the
+	// callbacks below never throw.
+	let uloop = require('uloop');
+	let done = false, timer = null, task = null;
+	let respond = (scanned) => {
+		try {
+			if (done)
+				return;
+			done = true;
+			timer?.cancel();
+			if (type(scanned) == 'object') {
+				cache_put(sig, scanned);
+				for (let d, r in scanned) results[d] = r;
+			}
+			else
+				task?.kill();
+			for (let d in need)
+				if (!results[d])
+					results[d] = { listed: null };
+			req.reply(finish(results));
+		}
+		catch (e) {}
+	};
+	task = uloop.task(() => scan_output(af.output_file, need, af.dns), (out) => respond(out));
+	if (!task) {
+		for (let d in need) results[d] = { listed: null };
+		return finish(results);
+	}
+	timer = uloop.timer(SCAN_TIMEOUT_MS, () => respond(null));
+	return req.defer();
+}
+
+function m_apply(req) {
+	let args = req.args ?? {};
+	let now = time();
+	let c = cursor();
+	let conn = ubus.connect();
+	let af = af_state(c, conn);
+	conn?.disconnect();
+
+	// Steps 1-3.
+	let v = dom.validate_batch(args, af.installed ? protect_ctx(c, af) : dom.protect_context([], []));
+	if (v.error)
+		return { api: API, ok: false, error: v.error };
+
+	// Step 4.
+	if (!af.installed)
+		return fail('adblock-fast-missing', 'adblock-fast is not installed');
+	if (af.external_config)
+		return fail('external-config', 'adblock-fast uses an external dnsmasq config file');
+	if (match(af.dns, UNSUPPORTED_DNS) || !dom.DNSMASQ_MODES[af.dns])
+		return fail('unsupported-dns-mode', `adblock-fast dns mode ${af.dns} is not supported`);
+	if (af.pending_uci_changes)
+		return fail('pending-uci-changes', 'adblock-fast has unsaved LuCI changes; save or revert them first');
+
+	// Step 5.
+	let p = dom.plan(v.ops, { allowed: af.allowed, blocked: af.blocked, enabled: af.enabled, rebuild: args.rebuild === true });
+	if (p.error)
+		return { api: API, ok: false, error: p.error };
+	let plan = dom.plan_view(p.items);
+	if (p.noop)
+		return { api: API, ok: true, noop: true, job_id: null, mode: p.mode, plan };
+
+	// Steps 6-7.
+	if (p.mode == 'rebuild' && args.confirm_rebuild !== true)
+		return fail('confirm-required', 'this change rebuilds the block-list: it downloads all lists over WAN, restarts DNS and may take minutes',
+			{ mode: p.mode, plan });
+	if (args.dry_run === true)
+		return { api: API, ok: true, dry_run: true, noop: false, mode: p.mode, may_escalate: p.may_escalate, plan };
+
+	// Step 8.
+	let lock = lock_try();
+	if (!lock)
+		return fail('busy', 'another job is running', { job_id: read_job()?.id ?? null });
+	let prev = reap_locked(read_job(), now);
+	if (prev?.state == 'queued') {
+		unlock(lock);
+		return fail('busy', 'another job is starting', { job_id: prev.id });
+	}
+
+	// Step 9.
+	let changes = 0;
+	for (let it in p.items) {
+		for (let ch in it.change) {
+			let parts = split(ch, ':');
+			let opt = (parts[0] == 'allow') ? 'allowed_domain' : 'blocked_domain';
+			let ok = (parts[1] == 'add')
+				? c.list_append('adblock-fast', 'config', opt, it.domain)
+				: c.list_remove('adblock-fast', 'config', opt, it.domain);
+			if (!ok) {
+				c.revert('adblock-fast');
+				unlock(lock);
+				return fail('uci-error', `cannot update adblock-fast.config.${opt}: ${uci.error() ?? 'unknown error'}`);
+			}
+			changes++;
+		}
+	}
+	if (changes && !c.commit('adblock-fast')) {
+		c.revert('adblock-fast');
+		unlock(lock);
+		return fail('uci-error', `cannot commit adblock-fast: ${uci.error() ?? 'unknown error'}`);
+	}
+
+	// Step 10.
+	let id = new_job_id(now);
+	let job = {
+		id, state: 'queued', mode: p.mode, phase: null,
+		created_at: now, started_at: null, finished_at: null,
+		persisted: changes > 0, escalated: false,
+		adblock_fast_status: af.status, error: null,
+		items: map(p.items, (it) => ({
+			op: it.op, domain: it.domain, effective_op: it.effective_op, change: it.change,
+			expect: it.expect, result: 'pending', observed: null, answer: null, reason: null,
+		})),
+		ctx: { dns: af.dns, output_file: af.output_file },
+	};
+	let written = write_job(job);
+	unlock(lock);
+	if (!written)
+		return fail('spawn-failed', 'cannot write the job state', { persisted: changes > 0 });
+
+	// Step 11.
+	let rc = fs.access(JOB_BIN, 'x')
+		? system(`S=$(command -v setsid); exec </dev/null >/dev/null 2>&1; $S ${JOB_BIN} ${id} &`)
+		: -1;
+	if (rc != 0)
+		return fail('spawn-failed', 'cannot start the job', { persisted: changes > 0, job_id: id });
+
+	return { api: API, ok: true, job_id: id, state: 'queued', mode: p.mode, may_escalate: p.may_escalate, plan };
+}
+
+function m_job(req) {
+	let want = req.args?.job_id;
+	if (want != null && (type(want) != 'string' || !match(want, /^j[0-9]{10}-[0-9a-f]{4}$/)))
+		return fail('not-found', 'no such job');
+	let job = read_job();
+	if (job && !TERMINAL[job.state]) {
+		let lock = lock_try();
+		if (lock) {
+			job = reap_locked(read_job(), time());
+			unlock(lock);
+		}
+	}
+	if (want != null && job?.id != want)
+		return fail('not-found', 'no such job');
+	return { api: API, ok: true, job: job_view(job) };
+}
+
+return {
+	'luci.adblock-fast-monitor': {
+		info: { args: {}, call: m_info },
+		rules: { args: { domains: [] }, call: m_rules },
+		apply: { args: { ops: [], confirm_rebuild: true, rebuild: true, dry_run: true }, call: m_apply },
+		job: { args: { job_id: '' }, call: m_job },
+	},
+};

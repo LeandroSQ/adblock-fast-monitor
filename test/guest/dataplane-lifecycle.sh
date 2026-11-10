@@ -10,6 +10,11 @@ SECTION=$(uci -q -X show dhcp | sed -n 's/^dhcp\.\([^.=]*\)=dnsmasq$/\1/p' | hea
 DROPIN=/tmp/dnsmasq.$SECTION.d/adblock-fast-monitor.conf
 MARK=0
 
+# Leave the monitor config byte-identical for later tests (package §3 checks).
+CONF_BAK=/tmp/abfm-lifecycle-config.bak
+cp /etc/config/adblock-fast-monitor "$CONF_BAK"
+trap 'cp "$CONF_BAK" /etc/config/adblock-fast-monitor; rm -f "$CONF_BAK"' EXIT
+
 monitord_pids() { pgrep -f '^/usr/bin/ucode /usr/libexec/adblock-fast-monitor/monitord.uc' | sort; }
 logread_pids() { pgrep -f '^/sbin/logread -f -e \^dnsmasq' | sort; }
 count() { [ -z "$1" ] && echo 0 || printf '%s\n' "$1" | wc -l | tr -d ' '; }

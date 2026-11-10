@@ -23,6 +23,9 @@ py() { python3 -c 'import json, sys; d = json.loads(sys.argv[1]); v = eval(sys.a
 settle() { sleep 2; }
 
 guest_copy_dir "$lib" /tmp/abfm-dp
+# Leave both configs byte-identical for later tests (package §3 checks).
+guest_exec 'cp /etc/config/adblock-fast-monitor /tmp/abfm-live-monitor.bak; cp /etc/config/adblock-fast /tmp/abfm-live-af.bak'
+trap "guest_exec 'cp /tmp/abfm-live-monitor.bak /etc/config/adblock-fast-monitor; cp /tmp/abfm-live-af.bak /etc/config/adblock-fast; rm -f /tmp/abfm-live-*.bak'" EXIT
 G 'reload_config; sleep 2; dp_upstream_start' || nok "fake upstream starts"
 G 'dp_mon_set enabled=1 record_clients=1 exclude_router=1 pending_ttl=2; /etc/init.d/adblock-fast-monitor start;
 	dp_wait 20 ubus list adblock-fast-monitor' || nok "monitor starts"

@@ -12,6 +12,9 @@ n=0 failed=0
 ok() { n=$((n + 1)); echo "ok $n - $1"; }
 nok() { n=$((n + 1)); failed=$((failed + 1)); echo "not ok $n - $1"; [[ -z "${2:-}" ]] || sed 's/^/#   /' <<<"$2"; }
 eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else nok "$1" "expected: <$2>"$'\n'"actual:   <$3>"; fi; }
+# Leave the monitor config byte-identical for later tests (package §3 checks).
+guest_exec 'cp /etc/config/adblock-fast-monitor /root/.abfm-boot-config.bak'
+trap "guest_exec 'cp /root/.abfm-boot-config.bak /etc/config/adblock-fast-monitor; rm -f /root/.abfm-boot-config.bak'" EXIT
 
 guest_exec 'uci set adblock-fast-monitor.config.enabled=1; uci commit adblock-fast-monitor
 	/etc/init.d/adblock-fast-monitor enable; reload_config; sleep 2'

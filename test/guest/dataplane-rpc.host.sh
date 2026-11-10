@@ -8,6 +8,9 @@ n=0 failed=0
 ok() { n=$((n + 1)); echo "ok $n - $1"; }
 nok() { n=$((n + 1)); failed=$((failed + 1)); echo "not ok $n - $1"; [[ -z "${2:-}" ]] || sed 's/^/#   /' <<<"$2"; }
 eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else nok "$1" "expected: <$2>"$'\n'"actual:   <$3>"; fi; }
+# Leave the monitor config byte-identical for later tests (package §3 checks).
+guest_exec 'cp /etc/config/adblock-fast-monitor /tmp/abfm-rpc-config.bak'
+trap "guest_exec 'cp /tmp/abfm-rpc-config.bak /etc/config/adblock-fast-monitor; rm -f /tmp/abfm-rpc-config.bak'" EXIT
 
 # post SID METHOD ARGS_JSON EXPR -> EXPR evaluated on (status, data, error)
 post() {

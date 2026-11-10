@@ -24,7 +24,7 @@ This file supersedes `MONITORING_API.md`, `RULE_ACTION_API.md`,
 | D2 | **No edits to `/etc/config/dhcp`.** Query logging comes from a tmpfs drop-in, `<confdir>/adblock-fast-monitor.conf` containing `log-queries=extra`, written for each targeted dnsmasq instance. It is removed on disable or stop. dnsmasq restarts **only** when the set of drop-ins changes **and** dnsmasq is running. |
 | D3 | **Classification** is computed from the log line alone (§4.4). The `source` field records attribution. |
 | D4 | **Statistics** are cumulative since daemon start or the last purge. They are bounded: recent-domains LRU, Space-Saving top-N maps, and a pending-correlation map with a TTL (§4.5). |
-| D5 | **Rule changes are staged in the browser**; the server keeps no shadow rules. One `apply` call sends the whole batch to the rpcd ucode plugin `luci.adblock-fast-monitor`. `apply` validates the batch, writes **only** `/etc/config/adblock-fast`, commits, and spawns **one** detached job. The job runs the adblock-fast runtime step (fast `allow` or one rebuild), then verifies each domain against real DNS answers from `127.0.0.1`. One job runs at a time, enforced by `flock` on a file descriptor. |
+| D5 | **Rule changes are staged in the browser**; the server keeps no shadow rules. One `apply` call sends the whole batch to the rpcd ucode plugin `luci.adblock-fast-monitor`. `apply` validates the batch, writes **only** `/etc/config/adblock-fast`, commits, and spawns **one** detached job. The job runs the adblock-fast runtime step (one rebuild; adblock-fast's own `allow` is not usable, §14.1), then verifies each domain against real DNS answers from `127.0.0.1`. One job runs at a time, enforced by `flock` on a file descriptor. |
 
 Process inventory: none while disabled. While enabled, there is exactly one
 `ucode monitord.uc` process plus one `/sbin/logread` child. A job, when
@@ -407,8 +407,18 @@ rpcd loads plugins once at startup from `/usr/share/rpcd/ucode/`. The plugin
 runs **inside rpcd's single-threaded uloop**, so every method must return or
 defer within **200 ms**. Long work (file scans, DNS, adblock-fast) goes to a
 child process or the job. For `rules.listed`, the call may be deferred
-(`req.defer()` and `req.reply()`), with the scan running in a child; on
-timeout, `listed` is `null`.
+(`req.defer()` and `req.reply()`), with the scan running in a fork+exec'd
+`grep` read through a non-blocking pipe (not a `uloop.task`, whose
+long-lived fork shares rpcd's pages copy-on-write); on a 10 s timeout,
+`listed` is `null`. Plugin regexes avoid bounded repetition (`{m,n}`): musl
+expands it into an automaton that costs milliseconds per match.
+
+rpcd validates arguments against each method's declared signature before
+the plugin runs: an undeclared field or a field of the wrong JSON type is
+answered with ubus status `UBUS_STATUS_INVALID_ARGUMENT` (2), not with a
+JSON error. Declared fields: `info {}`, `rules {domains: array}`,
+`apply {ops: array, confirm_rebuild: bool, rebuild: bool, dry_run: bool}`,
+`job {job_id: string}`.
 
 ### 6.1 `info` (read)
 
@@ -433,7 +443,13 @@ Field sources:
 - `adblock_fast.status`: from `service list` data, or `null`.
 - `output_file`: from the `dns` mode (§10).
 - `external_config`: `dnsmasq_config_file_url` is non-empty.
-- `pending_uci_changes`: `/tmp/.uci/adblock-fast` exists and is non-empty.
+- `pending_uci_changes`: `/tmp/.uci/adblock-fast` holds a delta other than
+  `adblock-fast.<section>.size='N'`. adblock-fast itself saves (without
+  committing) every `file_url` size after each download when
+  `update_config_sizes=1` (the default); that bookkeeping is ignored.
+- `dnsmasq.instances[]` lists every `dnsmasq` section with `disabled≠1`;
+  `confdir` is `null` when invalid (`confdir-invalid`), and `targeted` tells
+  whether `dnsmasq_instance` selects it.
 
 | `warnings` code | Condition |
 |---|---|
@@ -498,7 +514,7 @@ Request:
 
 ```json
 { "ops":[{"op":"allow","domain":"ads.example.com"},{"op":"block","domain":"tracker.example.net"}],
-  "confirm_rebuild":false,   // must be true when mode=rebuild, or to let fast-allow escalate
+  "confirm_rebuild":false,   // must be true when mode=rebuild
   "rebuild":false,           // true + ops:[] = run one rebuild for already-persisted UCI
   "dry_run":false }
 ```
@@ -535,8 +551,9 @@ step.
    doesn't fire. On failure: `uci-error`.
 10. Write `job.json` with `state:"queued"` and release the lock.
 11. Spawn
-    `/usr/libexec/adblock-fast-monitor/job.uc <job_id> </dev/null >/dev/null 2>&1 &`
-    via `system()`. On failure, the error is `spawn-failed` with
+    `setsid /usr/libexec/adblock-fast-monitor/job.uc <job_id> </dev/null >/dev/null 2>&1 &`
+    via `system()` (`setsid` when present). The job closes the sockets,
+    pipes and epoll descriptors it inherits from rpcd before doing anything. On failure, the error is `spawn-failed` with
     `persisted:true`.
 
 If every op is a `noop` and `rebuild` is false, the response is
@@ -545,14 +562,14 @@ If every op is a `noop` and `rebuild` is false, the response is
 Success response:
 
 ```json
-{ "api":1,"ok":true,"job_id":"j1762747400-3f2a","state":"queued","mode":"fast-allow","may_escalate":true,
+{ "api":1,"ok":true,"job_id":"j1762747400-3f2a","state":"queued","mode":"rebuild","may_escalate":false,
   "plan":[{"op":"allow","domain":"ads.example.com","effective_op":"allow","change":["allow:add","block:remove"]},
           {"op":"unblock","domain":"x.example.com","effective_op":"allow","change":["allow:add"]}] }
 ```
 
 `change` lists the UCI mutations: `allow:add`, `allow:remove`, `block:add`
-and `block:remove`. An empty list means noop. `may_escalate` is `true` only
-for `fast-allow` and means the job may switch to a rebuild (§7.2).
+and `block:remove`. An empty list means noop. `may_escalate` is reserved for
+`fast-allow` and is always `false` in v1 (§6.6).
 
 Error codes: `invalid-request`, `batch-empty`, `batch-too-large`,
 `invalid-domain`, `protected-domain`, `public-suffix`, `conflict`,
@@ -615,15 +632,14 @@ Let `A` be the current `allowed_domain`, `B` the current `blocked_domain`, and
 Mode:
 - **`persist-only`**: adblock-fast `enabled≠1`. UCI is written and there is
   no runtime step.
-- **`fast-allow`**: all of the following hold:
-  - every non-noop op has `effective_op="allow"` and changes ⊆
-    {`allow:add`, `block:remove` of the same D};
-  - `dns` ∈ {`dnsmasq.servers`, `dnsmasq.addnhosts`, `dnsmasq.conf`,
-    `dnsmasq.ipset`, `dnsmasq.nftset`};
-  - `output_exists`;
-  - adblock-fast `status="statusSuccess"`.
-- **`rebuild`**: everything else. The UI must obtain explicit confirmation:
-  "downloads all lists over WAN, restarts DNS, may take minutes".
+- **`fast-allow`**: reserved; v1 never selects it. adblock-fast 1.2.4-r4's
+  `allow` does not remove the blocking line, deletes unrelated lines and
+  clears the service status (§10, §14.1), so there is no correct fast path
+  that only uses adblock-fast.
+- **`rebuild`**: every other batch with at least one change, and
+  `rebuild:true`. The UI must obtain explicit confirmation:
+  "downloads all lists over WAN, restarts DNS, may take minutes". The user
+  stages many changes and pays for one rebuild per Apply.
 
 ---
 
@@ -638,11 +654,11 @@ means the latest job. A non-matching ID gives `not-found`. Response:
 { "api":1,"ok":true,"job":{
   "id":"j1762747400-3f2a",            // ^j[0-9]{10}-[0-9a-f]{4}$
   "state":"verifying",                 // queued|applying|verifying|applied|partial|failed
-  "mode":"fast-allow",                 // fast-allow|rebuild|persist-only
+  "mode":"rebuild",                    // rebuild|persist-only (fast-allow reserved)
   "phase":"verify",                    // null|uci|allow|rebuild|verify
   "created_at":1762747400,"started_at":1762747400,"finished_at":null,
   "persisted":true,                    // UCI committed by apply
-  "escalated":false,                   // fast-allow switched to rebuild
+  "escalated":false,                   // reserved for fast-allow; always false in v1
   "adblock_fast_status":"statusSuccess",
   "error":null,                        // or {"code":"…","message":"…"}
   "items":[{"op":"allow","domain":"ads.example.com","effective_op":"allow","change":["allow:add"],
@@ -678,33 +694,23 @@ means the latest job. A non-matching ID gives `not-found`. Response:
 
 ### 7.2 Execution
 
-1. Acquire the lock (§7.3). On failure: `failed`, `lock-failed`.
+1. Acquire the lock (§7.3), retrying `xn` for up to 10 s. On failure:
+   `failed`, `lock-failed`. A job whose `job.json` no longer holds its id in
+   state `queued` exits without changes.
 2. Set `state="applying"`.
 3. Run the runtime step for the mode:
-   - **`fast-allow`**:
-     - Collateral check: for each D, find every output-file line that
-       adblock-fast's own sed address `\:/\(/D\|.D\):d` would delete
-       (adblock-fast.uc L2686). That address is unanchored, and `.` matches
-       any character. The check passes only if every such line's domain is D
-       or ends in `.D`. It is computed with `grep -F -- D <output>` in a
-       child process, then filtered in ucode, with a cap of 10 000 lines;
-       more lines than the cap counts as collateral.
-     - If there is collateral: when `confirm_rebuild` was true, set
-       `escalated=true` and run the rebuild step instead. Otherwise the job
-       ends `failed` with `rebuild-required` and `persisted:true`; the UI
-       offers "Run rebuild", which is `apply{ops:[],rebuild:true,confirm_rebuild:true}`.
-     - Otherwise run `/etc/init.d/adblock-fast allow D1 D2 …` **once**
-       (`phase="allow"`). That is one sed per name, one commit and one
-       resolver restart. Its exit status means nothing, so success is judged
-       by the result: each D is in `allowed_domain`, no output line matches
-       D or `*.D` other than `server=/D/#`, and the `adblock-fast` status in
-       `service list` is still `statusSuccess`. Otherwise: `failed`,
-       `allow-failed`.
-   - **`rebuild`**: run `/etc/init.d/adblock-fast dl` with `phase="rebuild"`.
+   - **`rebuild`**: wait while another adblock-fast CLI run
+     (`/lib/adblock-fast/cli.uc`, e.g. one orphaned by a killed job) is
+     still working (at most 15 min), then run `/etc/init.d/adblock-fast dl`
+     with `phase="rebuild"`.
      There is **no timeout** (BusyBox `timeout` is off, and a half-built list
-     is worse). Success means status `statusSuccess` and the output file
-     exists. Otherwise: `failed`, `rebuild-failed`. UCI stays persisted;
-     there is no rollback.
+     is worse). Success means status `statusSuccess`, an empty
+     `data.errors` (adblock-fast reports `statusSuccess` with
+     `errorDownloadingList` when a list server is down but manual
+     `blocked_domain` entries exist) and the output file exists. Otherwise:
+     `failed`, `rebuild-failed`, with the status and error codes in the
+     message. UCI stays persisted; there is no rollback. The UI offers "Run
+     rebuild", which is `apply{ops:[],rebuild:true,confirm_rebuild:true}`.
    - **`persist-only`**: skip; set item results to `skipped`, then
      `applied`.
 4. `state="verifying"`, `phase="verify"`. One `resolv.query(domains, {type:['A','AAAA'], nameserver:['127.0.0.1'], timeout:3000, retries:1})`.
@@ -724,14 +730,15 @@ means the latest job. A non-matching ID gives `not-found`. Response:
 
 Then release the lock.
 
-Job error codes: `lock-failed`, `rebuild-required`, `allow-failed`,
-`rebuild-failed`, `interrupted`, `start-timeout`.
+Job error codes: `lock-failed`, `rebuild-failed`, `interrupted`,
+`start-timeout`; `rebuild-required` and `allow-failed` are reserved for
+`fast-allow`.
 
 ### 7.3 Lock and busy semantics
 
-- Lock: `fs.open('/var/lock/adblock-fast-monitor.lock','a')` and `.lock('xn')`
-  (`flock`). The kernel releases it when the holder dies, so a stale lock
-  cannot exist.
+- Lock: `fs.open('/var/lock/adblock-fast-monitor.lock','ae')` (`O_CLOEXEC`,
+  so adblock-fast's children never inherit it) and `.lock('xn')` (`flock`).
+  The kernel releases it when the holder dies, so a stale lock cannot exist.
 - `apply` holds the lock only for steps 8–10.
 - `busy` when either:
   - the lock can't be taken; or
@@ -748,8 +755,7 @@ Job error codes: `lock-failed`, `rebuild-required`, `allow-failed`,
 
 ```
 (none) --apply--> queued --job acquires lock--> applying --runtime ok--> verifying --> applied | partial
-                    |                              |  \--fast-allow collateral & confirm--> (escalated) rebuild, still applying
-                    |                              \--error--> failed{allow-failed|rebuild-failed|rebuild-required|lock-failed}
+                    |                              \--error--> failed{rebuild-failed|lock-failed}
                     \--not started 30 s--> failed{start-timeout}      applying|verifying --holder died--> failed{interrupted}
 ```
 
@@ -854,9 +860,11 @@ write grant.
 |---|---|
 | UCI | `adblock-fast.config`: `enabled`, `dns`, `allowed_domain` (list), `blocked_domain` (list), `dnsmasq_config_file_url`, `heartbeat_domain`, `config_update_url`, `file_url` sections (`url`, `enabled`, `action`) |
 | Output file by `dns` | `dnsmasq.servers` → `/var/run/adblock-fast/dnsmasq.servers` (`server=/D/`, allow `server=/D/#`); `dnsmasq.addnhosts` → `/var/run/adblock-fast/dnsmasq.addnhosts` (`127.0.0.1 D`, `:: D`); `dnsmasq.conf`/`ipset`/`nftset` → `/var/run/adblock-fast/adblock-fast.dnsmasq` (`local=/D/`, `ipset=/D/adb`, `nftset=/D/4#inet#fw4#adb4…`) |
-| `allow` fast path | requires the output file; refuses with an external config; for each D runs `sed -i '\:/\(/D\|.D\):d'` (**over-broad**, which is why §7.2 checks for collateral), appends `server=/D/#` in servers mode, adds `allowed_domain`, commits, refreshes the `/dev/shm` config cache, and restarts the resolver once. Its exit code is not meaningful. |
+| `allow` fast path | **defective, not used** (§14.1). Requires the output file; refuses with an external config; for each D runs `sed -i '\:/\(/D\|.D\):d'`, appends `server=/D/#` in servers mode, adds `allowed_domain`, commits, refreshes the `/dev/shm` config cache, restarts the resolver once and then publishes an empty `status` to procd. Its exit code is not meaningful. |
+| `update_config_sizes` | default `1`: after a download adblock-fast `save`s (never commits) each `file_url`'s `size`, leaving a delta in `/tmp/.uci/adblock-fast` (§6.1). |
 | Rebuild | any change to `allowed_domain` or `blocked_domain` makes `start` choose `download`; `dl` forces it. Allowed names are removed with `/(^|\.)D$/d` **after** blocked names are appended. |
-| Status | `ubus call service list '{"name":"adblock-fast"}'` → `.adblock-fast.data.status` (`statusSuccess`, `statusFail`, …) |
+| Status | `ubus call service list '{"name":"adblock-fast"}'` → `.adblock-fast.data.status` (`statusSuccess`, `statusFail`, …) and `.data.errors[].code`; a download failure of one list still ends `statusSuccess` with `errorDownloadingList` when the output file could be built |
+| `heartbeat_domain` | `-` does **not** disable the heartbeat (it falls back to the default `heartbeat.mossdef.org`); the heartbeat must resolve within `heartbeat_sleep_timeout` or the start fails |
 | Trigger | the init registers `config.change` → `reload`. The ucode `uci` commit does not emit it, while LuCI `uci.apply` does. |
 
 ---
@@ -977,8 +985,8 @@ Environments:
 | T12 | §6.4–6.5 | grammar, normalization, protected set (incl. heartbeat and list hosts), PSL guard lists (positive and negative) | U | WU2 |
 | T13 | §6.6 | plan table: `unblock`→`allow` translation, conflicts, `allow-overrides`, noop, mode selection | U | WU2 |
 | T14 | §6.3 pipeline | each error code is produced by a real `ubus call` on G; `dry_run` has no side effects; `pending-uci-changes` | G | WU2 |
-| T15 | §7 fast-allow | allow of a listed name: UCI persisted, one dnsmasq restart, DNS answer flips, job `applied` | G | WU2 |
-| T16 | §7.2 collateral | allow `ads.com` with the fixture containing `badads.com`: without confirm → `failed/rebuild-required`, `badads.com` still blocked; with confirm → `escalated` rebuild | G | WU2 |
+| T15 | §7 allow | allow of a listed name: UCI persisted, one dnsmasq restart, one adblock-fast run, DNS answer flips, job `applied` | G | WU2 |
+| T16 | §14.1 collateral | allow `ads.example.com` with the fixture containing `bads.example.com` (what adblock-fast's own `allow` deletes): `ads` resolves, `bads` stays blocked; the upstream `allow` defects are recorded | G | WU2 |
 | T17 | §7 rebuild | block, unblock and unallow each run one `dl`; state sequence `queued→applying→verifying→applied`; reboot → UCI persists and `job` is `null` | G | WU2 |
 | T18 | §7.2 failure | list server down → `failed/rebuild-failed`, `persisted:true` | G | WU2 |
 | T19 | §7.3 | second apply → `busy`; `kill -9` of the job → `interrupted`, lock free, next apply accepted | G | WU2 |
@@ -997,10 +1005,16 @@ Environments:
 None of the coordinator decisions is impossible at these pins. The
 constraints below are encoded above.
 
-1. **adblock-fast `allow` is over-broad.** Its sed address is unanchored and
-   uses an unescaped `.`, so allowing `ads.com` also deletes `badads.com` and
-   `ads.com.cn`. "Verified-correct" is therefore a runtime collateral check
-   in the job (§7.2), not a static property.
+1. **adblock-fast `allow` is defective (verified on the 25.12.6 guest).** Its
+   sed address `\:/\(/D\|.D\):d` starts with a literal `/`, so it matches
+   `//D` or `/` + one character + `D`. It therefore never deletes
+   `server=/D/` (or `local=/D/`, and nothing at all in addnhosts files): D
+   stays blocked, because dnsmasq answers `server=/D/` locally even when
+   `server=/D/#` is appended. It does delete the block of names that are D
+   with one extra leading character (allowing `ads.example.com` unblocks
+   `bads.example.com`), and it publishes an empty `status`. v1 therefore
+   applies every change with one rebuild (§6.6, §7.2), and the job never
+   calls `allow`.
 2. **`uloop.process` cannot capture output.** stdout must be redirected with
    `io.pipe` + `dup2` around the call (§4.1). Killing the child needs its pid
    and `kill`; `delete()` doesn't kill.

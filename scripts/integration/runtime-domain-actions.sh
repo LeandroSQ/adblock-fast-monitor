@@ -8,8 +8,8 @@ set -euo pipefail
 
 ssh_opts=(-i "$OPENWRT_SSH_KEY" -p "$OPENWRT_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 remote() { ssh "${ssh_opts[@]}" "root@$OPENWRT_HOST" "$@"; }
-dns_a() { dig +time=2 +tries=1 +short @"$OPENWRT_HOST" -p 5353 "$1" A; }
-dns_aaaa() { dig +time=2 +tries=1 +short @"$OPENWRT_HOST" -p 5353 "$1" AAAA; }
+dns_a() { dig +time=2 +tries=1 +short @"$OPENWRT_HOST" -p "${OPENWRT_DNS_PORT:-5353}" "$1" A; }
+dns_aaaa() { dig +time=2 +tries=1 +short @"$OPENWRT_HOST" -p "${OPENWRT_DNS_PORT:-5353}" "$1" AAAA; }
 
 wait_job() {
 	local expected_state="$1" job state result

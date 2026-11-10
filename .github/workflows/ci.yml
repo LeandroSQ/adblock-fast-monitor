@@ -3,85 +3,155 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - "**"
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: "22"
+
 jobs:
-  host-verification:
+  host:
+    name: Host (static, unit, ucode, shell)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci
-      - run: npm run verify:host
-      - name: Validate P0 performance baseline state
+      - name: Restore OpenWrt host userland image cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .local-validation/host-ucode
+          key: host-userland-${{ hashFiles('scripts/hosttools/**') }}
+      - run: npm ci --no-audit --no-fund
+      - name: Build or load the ucode/BusyBox userland (OpenWrt 25.12.6 pins)
+        run: scripts/build-host-ucode.sh
+      - name: Static checks, schema, unit, contract, ucode and BusyBox shell suites
+        run: npm run verify:host
+      - name: P0 performance baseline state
         run: npm run test:performance
 
-  package-sdk:
+  package:
+    name: Package (OpenWrt 25.12.6 SDK)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Install SDK extraction dependency
-        run: sudo apt-get update && sudo apt-get install --yes zstd
-      - name: Download and verify the pinned OpenWrt SDK
-        run: |
-          set -euo pipefail
-          url=https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-sdk-25.12.6-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-          sha256=1864152619092e781fa36a401960c8e9ae42d6a364c44ee5f0b197ca5f3c0fcc
-          curl --fail --location --retry 3 --output sdk.tar.zst "$url"
-          printf '%s  %s\n' "$sha256" sdk.tar.zst | sha256sum --check
-          tar --use-compress-program=unzstd -xf sdk.tar.zst
-          rm sdk.tar.zst
-      - name: Build target-neutral APK with the pinned SDK
-        run: |
-          set -euo pipefail
-          sdk=$(find . -maxdepth 1 -type d -name 'openwrt-sdk-*' -print -quit)
-          test -n "$sdk"
-          mkdir -p "$sdk/package/luci-app-adblock-fast-monitor"
-          tar --exclude-vcs --exclude=node_modules --exclude=dist --exclude='openwrt-sdk-*' -cf - . |
-            tar -C "$sdk/package/luci-app-adblock-fast-monitor" -xf -
-          (cd "$sdk" && ./scripts/feeds update -a && ./scripts/feeds install -a)
-          make -C "$sdk" defconfig
-          make -C "$sdk" package/luci-app-adblock-fast-monitor/compile V=s
-      - name: Preserve APK for real-system verification
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: luci-app-adblock-fast-monitor-apk
-          path: openwrt-sdk-*/bin/packages/**/luci-app-adblock-fast-monitor-*.apk
+          persist-credentials: false
+      - name: Restore SDK tarball cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .local-validation/openwrt-sdk-25.12.6-1864152619092e78.tar.zst
+          key: openwrt-sdk-25.12.6-x86-64-1864152619092e78
+      - name: Build the APK with the pinned SDK
+        run: |
+          set -euo pipefail
+          apk="$(scripts/build-package.sh)"
+          mkdir -p .ci-work/apk
+          cp "$apk" "$(dirname "$apk")/package.sha256" .ci-work/apk/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apk
+          path: .ci-work/apk/
           if-no-files-found: error
+          retention-days: 14
 
-  qemu-runtime:
-    needs: package-sdk
+  guest:
+    name: Guest (QEMU, stock 25.12.6)
+    needs: package
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Install isolated runtime prerequisites
+          persist-credentials: false
+      - &enable-kvm
+        name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - &install-qemu
+        name: Install QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install --yes qemu-system-x86 libguestfs-tools dnsutils
-      - run: npx playwright install --with-deps chromium
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 qemu-utils dnsutils
+      - &guest-cache
+        name: Restore stock image, baseline and package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: luci-app-adblock-fast-monitor-apk
+          path: |
+            .local-validation/qemu/openwrt.img.gz
+            .local-validation/qemu/abfm-baseline-25.12.6.qcow2
+            .local-validation/qemu/abfm-baseline-25.12.6.qcow2.manifest
+            .local-validation/openwrt-package-mirror
+          key: guest-25.12.6-${{ hashFiles('scripts/guest/prepare-baseline.sh', 'scripts/guest/lib.sh') }}
+      - &download-apk
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: apk
           path: .ci-work/apk
-      - name: Run package and real LuCI browser verification in QEMU
-        run: |
-          set -euo pipefail
-          export PACKAGE_IPK="$(find "$PWD/.ci-work/apk" -type f -name '*.apk' -print -quit)"
-          test -n "$PACKAGE_IPK"
-          npm run test:qemu
+      - name: Run guest tests against the installed APK
+        run: scripts/guest/run-guest-tests.sh .ci-work/apk/package.apk
+        env:
+          GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run
+      - name: Upload guest logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guest-logs
+          path: |
+            .ci-work/guest-run/results/
+            .ci-work/guest-run/serial.log
+            .ci-work/guest-run/qemu.log
+            .ci-work/guest-run/apk-proxy.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browser:
+    name: Browser (Playwright against the guest's LuCI)
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - *enable-kvm
+      - *install-qemu
+      - *guest-cache
+      - *download-apk
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Run Playwright against a fresh guest with the APK installed
+        run: scripts/guest/run-guest-tests.sh --no-tests --host-cmd scripts/guest/browser-tests.sh .ci-work/apk/package.apk
+        env:
+          GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run
+      - name: Upload browser report and guest logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-logs
+          path: |
+            playwright-report/
+            test-results/
+            .ci-work/guest-run/serial.log
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,7 +1,6 @@
 // rpcd ucode plugin `luci.adblock-fast-monitor` (docs/CONTRACT.md §6, §7.1,
 // §7.3). It runs inside rpcd's single-threaded uloop, so every method returns
-// within milliseconds: file scans run in a child process (rules) and all
-// adblock-fast work runs in the detached job (job.uc).
+// within milliseconds: all adblock-fast work runs in the detached job (job.uc).
 'use strict';
 
 const fs = require('fs');
@@ -10,7 +9,7 @@ const ubus = require('ubus');
 const dom = require('abfm.domain');
 const sys = require('abfm.system');
 
-const API = 1;
+const API = 2;
 const RUN_DIR = '/var/run/adblock-fast-monitor';
 const JOB_FILE = RUN_DIR + '/job.json';
 const UCI_SAVEDIR = RUN_DIR + '/uci';
@@ -18,13 +17,7 @@ const LOCK_DIR = '/var/lock';
 const LOCK_FILE = LOCK_DIR + '/adblock-fast-monitor.lock';
 const JOB_BIN = '/usr/libexec/adblock-fast-monitor/job.uc';
 const QUEUE_WINDOW = 30;
-const LIST_CAP = 2048;
-const RULES_MAX = 50;
-const SCAN_TIMEOUT_MS = 10000;
-const SCAN_BYTES_CAP = 1048576;
-const CACHE_MAX = 512;
 const TERMINAL = { applied: true, partial: true, failed: true };
-const LISTED_MODES = { 'dnsmasq.servers': true, 'dnsmasq.conf': true, 'dnsmasq.addnhosts': true };
 const UNSUPPORTED_DNS = /^(smartdns|unbound)\./;
 
 function fail(code, message, extra) {
@@ -39,8 +32,8 @@ function ensure_dir(path) {
 		fs.mkdir(path, 0700);
 }
 
-// Reads committed UCI only: the private savedir never holds LuCI's pending
-// changes (those live in /tmp/.uci, see pending-uci-changes).
+// Reads committed UCI only: the private savedir never holds another session's
+// staged changes (LuCI stages in /var/run/rpcd/uci-<sid>, the CLI in /tmp/.uci).
 function cursor() {
 	ensure_dir(RUN_DIR);
 	ensure_dir(UCI_SAVEDIR);
@@ -139,85 +132,6 @@ function new_job_id(now) {
 	return sprintf('j%010d-%s', now, rnd ? hexenc(rnd) : sprintf('%04x', (now * 7919) % 65536));
 }
 
-// --- rules scan cache (§6.2) ---
-
-let scan_cache = { sig: null, map: {}, order: [] };
-
-function cache_get(sig, d) {
-	if (scan_cache.sig != sig || !exists(scan_cache.map, d))
-		return null;
-	let i = index(scan_cache.order, d);
-	if (i >= 0) {
-		splice(scan_cache.order, i, 1);
-		push(scan_cache.order, d);
-	}
-	return scan_cache.map[d];
-}
-
-function cache_put(sig, results) {
-	if (scan_cache.sig != sig)
-		scan_cache = { sig, map: {}, order: [] };
-	for (let d, r in results) {
-		let i = index(scan_cache.order, d);
-		if (i >= 0)
-			splice(scan_cache.order, i, 1);
-		push(scan_cache.order, d);
-		scan_cache.map[d] = r;
-	}
-	while (length(scan_cache.order) > CACHE_MAX)
-		delete scan_cache.map[shift(scan_cache.order)];
-}
-
-// One grep over the output file in a fork+exec'd child, read through a
-// non-blocking pipe. (A uloop.task would keep rpcd's pages shared with a
-// long-running child and make every write in rpcd a copy-on-write fault.)
-// done(results|null) runs once; null on failure or timeout.
-function start_scan(file, domains, dns, done) {
-	let io = require('io'), uloop = require('uloop');
-	let fds = io.pipe();
-	if (!fds)
-		return false;
-	let r = fds[0], w = fds[1];
-	let proc = uloop.process('/bin/sh', [ '-c', `exec >&${w.fileno()}; ${dom.grep_command(file, domains, dns)}` ],
-		{ PATH: '/usr/sbin:/usr/bin:/sbin:/bin' }, () => {});
-	w.close();
-	if (!proc) {
-		r.close();
-		return false;
-	}
-	let buf = '', handle = null, timer = null, finished = false;
-	// Exceptions inside uloop callbacks would end rpcd's main loop.
-	let end = (ok) => {
-		try {
-			if (finished)
-				return;
-			finished = true;
-			timer?.cancel();
-			handle?.delete();
-			r.close();
-			if (!ok)
-				system([ '/bin/kill', '-9', '' + proc.pid() ]);
-			done(ok ? dom.listed(domains, split(buf, '\n'), dns) : null);
-		}
-		catch (e) {}
-	};
-	handle = uloop.handle(r, () => {
-		try {
-			for (let chunk = r.read(65536); chunk != null; chunk = r.read(65536)) {
-				if (chunk == '')
-					return end(true);
-				if (length(buf) < SCAN_BYTES_CAP)
-					buf += chunk;
-			}
-		}
-		catch (e) {
-			end(false);
-		}
-	}, uloop.ULOOP_READ);
-	timer = uloop.timer(SCAN_TIMEOUT_MS, () => end(false));
-	return true;
-}
-
 // --- methods ---
 
 function m_info() {
@@ -228,9 +142,6 @@ function m_info() {
 	c.load('dhcp');
 	c.load('system');
 	let mon = sys.monitor_config(c);
-	let msvc = sys.service_state(conn, 'adblock-fast-monitor');
-	let mpid = msvc.running ? sys.service_pid(conn, 'adblock-fast-monitor') : null;
-	let object = length(conn?.list('adblock-fast-monitor') ?? []) > 0;
 	let dnsmasq = sys.dnsmasq_info(c, conn);
 	conn?.disconnect();
 
@@ -248,12 +159,13 @@ function m_info() {
 	return {
 		api: API, ok: true,
 		monitor: {
-			enabled: mon.enabled,
-			manage_logging: mon.manage_logging,
+			query_logging: mon.query_logging,
+			dnsmasq_instance: mon.dnsmasq_instance,
+			exclude_router: mon.exclude_router,
 			poll_interval: mon.poll_interval,
-			service: { running: msvc.running, pid: mpid },
-			object,
 		},
+		local_domains: sys.local_domains(c),
+		logd: { size_kib: sys.logd_size_kib(c) },
 		adblock_fast: {
 			installed: af.installed, enabled: af.enabled, status: af.status, dns: af.dns,
 			output_file: af.output_file, output_exists: af.output_exists,
@@ -262,71 +174,6 @@ function m_info() {
 		dnsmasq,
 		warnings,
 	};
-}
-
-function m_rules(req) {
-	let input = req.args?.domains ?? [];
-	if (type(input) != 'array' || length(input) > RULES_MAX)
-		return fail('invalid-request', `domains must be an array of at most ${RULES_MAX} names`);
-	let domains = [];
-	for (let i = 0; i < length(input); i++) {
-		let d = dom.normalize(input[i]);
-		if (!dom.valid(d))
-			return fail('invalid-domain', 'not a valid domain name', { index: i, domain: d });
-		if (index(domains, d) < 0)
-			push(domains, d);
-	}
-
-	let c = cursor();
-	let af = af_state(c, null);
-	let reply = {
-		api: API, ok: true,
-		allowed_domain: slice(af.allowed, 0, LIST_CAP),
-		blocked_domain: slice(af.blocked, 0, LIST_CAP),
-		truncated: length(af.allowed) > LIST_CAP || length(af.blocked) > LIST_CAP,
-		domains: {},
-	};
-	let finish = (results) => {
-		for (let d in domains)
-			reply.domains[d] = dom.rule_info(d, af.allowed, af.blocked, results[d]?.listed ?? null);
-		return reply;
-	};
-
-	let results = {};
-	let st = af.output_file ? fs.stat(af.output_file) : null;
-	if (!length(domains) || !st || !LISTED_MODES[af.dns]) {
-		// No output file means adblock-fast blocks nothing through dnsmasq.
-		for (let d in domains)
-			results[d] = { listed: LISTED_MODES[af.dns] ? false : null };
-		return finish(results);
-	}
-
-	let sig = sprintf('%s:%J:%d:%d:%d', af.output_file, st.dev, st.inode, st.size, st.mtime);
-	let need = [];
-	for (let d in domains) {
-		let hit = cache_get(sig, d);
-		if (hit) results[d] = hit;
-		else push(need, d);
-	}
-	if (!length(need))
-		return finish(results);
-
-	let started = start_scan(af.output_file, need, af.dns, (scanned) => {
-		try {
-			if (scanned)
-				cache_put(sig, scanned);
-			for (let d in need)
-				results[d] = scanned?.[d] ?? { listed: null };
-			req.reply(finish(results));
-		}
-		catch (e) {}
-	});
-	if (!started) {
-		for (let d in need)
-			results[d] = { listed: null };
-		return finish(results);
-	}
-	return req.defer();
 }
 
 function m_apply(req) {
@@ -350,7 +197,7 @@ function m_apply(req) {
 	if (match(af.dns, UNSUPPORTED_DNS) || !dom.DNSMASQ_MODES[af.dns])
 		return fail('unsupported-dns-mode', `adblock-fast dns mode ${af.dns} is not supported`);
 	if (af.pending_uci_changes)
-		return fail('pending-uci-changes', 'adblock-fast has unsaved LuCI changes; save or revert them first');
+		return fail('pending-uci-changes', 'adblock-fast has uncommitted changes in /tmp/.uci; commit or revert them first');
 
 	// Step 5.
 	let p = dom.plan(v.ops, { allowed: af.allowed, blocked: af.blocked, enabled: af.enabled, rebuild: args.rebuild === true });
@@ -448,7 +295,6 @@ function m_job(req) {
 return {
 	'luci.adblock-fast-monitor': {
 		info: { args: {}, call: m_info },
-		rules: { args: { domains: [] }, call: m_rules },
 		apply: { args: { ops: [], confirm_rebuild: true, rebuild: true, dry_run: true }, call: m_apply },
 		job: { args: { job_id: '' }, call: m_job },
 	},

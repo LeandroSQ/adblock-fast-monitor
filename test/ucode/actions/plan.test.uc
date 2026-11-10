@@ -1,6 +1,6 @@
 // T13 (docs/CONTRACT.md §6.6) plan table and mode selection, plus the pure
-// halves of §6.2 (listed, rule view) and §7.2 (observed, verdict) that the
-// plugin and job feed with real files and DNS answers.
+// halves of §7.2 (listed, observed, verdict) that the job feeds with real
+// files and DNS answers.
 push(REQUIRE_SEARCH_PATH, '/src/root/usr/share/ucode/*.uc');
 let t = require('testlib');
 let d = require('abfm.domain');
@@ -25,39 +25,30 @@ t.test('allow: allow:add unless allowed, block:remove when blocked', () => {
 	t.eq(one('allow', D, [ D ], []), [ 'allow', [] ]);
 });
 
-t.test('unblock of a manual block removes it; otherwise it becomes allow', () => {
-	t.eq(one('unblock', D, [], [ D ]), [ 'unblock', [ 'block:remove' ] ]);
-	t.eq(one('unblock', D, [], []), [ 'allow', [ 'allow:add' ] ], 'listed by a downloaded list');
-	t.eq(one('unblock', D, [], [ 'example.com' ]), [ 'allow', [ 'allow:add' ] ], 'blocked by a parent rule');
-	t.eq(one('unblock', D, [ D ], []), [ 'allow', [] ]);
-});
-
 t.test('block: allow:remove when allowed, block:add unless blocked', () => {
 	t.eq(one('block', D, [], []), [ 'block', [ 'block:add' ] ]);
 	t.eq(one('block', D, [ D ], []), [ 'block', [ 'allow:remove', 'block:add' ] ]);
 	t.eq(one('block', D, [], [ D ]), [ 'block', [] ]);
 });
 
-t.test('unallow: allow:remove or noop; membership is exact', () => {
-	t.eq(one('unallow', D, [ D ], []), [ 'unallow', [ 'allow:remove' ] ]);
-	t.eq(one('unallow', D, [], []), [ 'unallow', [] ]);
-	t.eq(one('unallow', D, [ 'example.com' ], []), [ 'unallow', [] ]);
+t.test('only allow and block exist (v1 unblock/unallow are rejected)', () => {
+	for (let op in [ 'unblock', 'unallow' ])
+		t.eq(plan([ { op, domain: D } ], { allowed: [ D ], blocked: [ D ], enabled: true }).error.code, 'invalid-request', op);
 });
 
 t.test('expectations per op', () => {
-	let p = plan([ { op: 'allow', domain: 'a.example.com' }, { op: 'unblock', domain: 'b.example.com' },
-		{ op: 'block', domain: 'c.example.com' }, { op: 'unallow', domain: 'd.example.com' } ],
-		{ allowed: [ 'd.example.com' ], blocked: [], enabled: true });
-	t.eq(map(p.items, (i) => i.expect), [ 'allowed', 'allowed', 'blocked', 'any' ]);
-	t.eq(d.plan_view(p.items)[1], { op: 'unblock', domain: 'b.example.com', effective_op: 'allow', change: [ 'allow:add' ] });
+	let p = plan([ { op: 'allow', domain: 'a.example.com' }, { op: 'block', domain: 'c.example.com' } ],
+		{ allowed: [], blocked: [ 'a.example.com' ], enabled: true });
+	t.eq(map(p.items, (i) => i.expect), [ 'allowed', 'blocked' ]);
+	t.eq(d.plan_view(p.items)[0], { op: 'allow', domain: 'a.example.com', effective_op: 'allow', change: [ 'allow:add', 'block:remove' ] });
 });
 
 t.test('allow-overrides: blocking under an allowed entry that stays', () => {
 	let p = plan([ { op: 'block', domain: 'ads.cdn.example.com' } ], { allowed: [ 'cdn.example.com' ], blocked: [], enabled: true });
 	t.eq([ p.error.code, p.error.index, p.error.domain ], [ 'allow-overrides', 0, 'ads.cdn.example.com' ]);
-	p = plan([ { op: 'unallow', domain: 'cdn.example.com' }, { op: 'block', domain: 'ads.cdn.example.com' } ],
+	p = plan([ { op: 'block', domain: 'cdn.example.com' }, { op: 'block', domain: 'ads.cdn.example.com' } ],
 		{ allowed: [ 'cdn.example.com' ], blocked: [], enabled: true });
-	t.ok(!p.error, 'the parent allow is removed in the same batch');
+	t.ok(!p.error, 'blocking the parent removes its allow in the same batch');
 	p = plan([ { op: 'allow', domain: 'example.com' }, { op: 'block', domain: 'ads.example.com' } ],
 		{ allowed: [], blocked: [], enabled: true });
 	t.eq([ p.error.code, p.error.index ], [ 'allow-overrides', 1 ], 'allowed in the same batch');
@@ -66,7 +57,7 @@ t.test('allow-overrides: blocking under an allowed entry that stays', () => {
 });
 
 t.test('noop batches', () => {
-	let p = plan([ { op: 'allow', domain: D }, { op: 'unallow', domain: 'y.example.com' } ], { allowed: [ D ], blocked: [], enabled: true });
+	let p = plan([ { op: 'allow', domain: D }, { op: 'block', domain: 'y.example.com' } ], { allowed: [ D ], blocked: [ 'y.example.com' ], enabled: true });
 	t.ok(p.noop);
 	p = plan([], { allowed: [], blocked: [], enabled: true, rebuild: true });
 	t.ok(!p.noop, 'rebuild:true with ops:[] is not a noop');
@@ -77,7 +68,7 @@ t.test('noop batches', () => {
 
 t.test('mode selection: persist-only when adblock-fast is disabled, otherwise one rebuild', () => {
 	t.eq(plan([ { op: 'allow', domain: D } ], { allowed: [], blocked: [], enabled: false }).mode, 'persist-only');
-	for (let op in [ 'allow', 'unblock', 'block', 'unallow' ]) {
+	for (let op in [ 'allow', 'block' ]) {
 		let p = plan([ { op, domain: D } ], { allowed: [ D ], blocked: [ D ], enabled: true });
 		t.eq([ p.mode, p.may_escalate ], [ 'rebuild', false ], op);
 	}
@@ -117,18 +108,6 @@ t.test('listed (conf, addnhosts, other modes)', () => {
 	t.eq(r['ads.example.com'], { listed: null, by: null });
 });
 
-t.test('rule_info: manual, manual_parent, effective and actions', () => {
-	t.eq(d.rule_info('ads.example.com', [], [ 'ads.example.com' ], true),
-		{ manual: 'block', manual_parent: null, listed: true, effective: 'blocked', actions: [ 'allow', 'unblock' ] });
-	t.eq(d.rule_info('www.example.org', [], [], false),
-		{ manual: null, manual_parent: null, listed: false, effective: 'allowed', actions: [ 'block' ] });
-	t.eq(d.rule_info('x.cdn.example.com', [ 'cdn.example.com' ], [ 'example.com' ], null),
-		{ manual: null, manual_parent: { list: 'allow', domain: 'cdn.example.com' }, listed: null, effective: 'unknown',
-		  actions: [ 'allow', 'block' ] });
-	t.eq(d.rule_info('a.example.com', [ 'a.example.com' ], [], null).effective, 'allowed');
-	t.eq(d.rule_info('a.example.com', [ 'a.example.com' ], [], true).actions, [ 'allow', 'unallow' ]);
-});
-
 t.test('answer_of follows CNAMEs; observe classifies answers', () => {
 	let res = {
 		'www.example.org': { CNAME: [ 'cdn.example.net' ] }, 'cdn.example.net': { A: [ '93.184.215.14' ] },
@@ -163,7 +142,7 @@ t.test('verdict: ok, mismatch reasons, unverified', () => {
 	t.eq(d.verdict(block, 'unknown', { rcode: 'NOERROR' }, null, 'dnsmasq.servers'), { result: 'mismatch', reason: null });
 	t.eq(d.verdict(block, 'allowed', nx, null, 'dnsmasq.nftset'), { result: 'unverified', reason: 'dns-mode-unsupported' });
 	t.eq(d.verdict({ ...block, change: [] }, 'allowed', nx, null, 'dnsmasq.servers'), { result: 'ok', reason: null }, 'noop');
-	t.eq(d.verdict({ ...block, expect: 'any' }, 'allowed', nx, null, 'dnsmasq.servers'), { result: 'ok', reason: null }, 'unallow');
+	t.eq(d.verdict({ ...block, expect: 'any' }, 'allowed', nx, null, 'dnsmasq.servers'), { result: 'ok', reason: null }, 'expect any (v1 jobs)');
 });
 
 t.done();

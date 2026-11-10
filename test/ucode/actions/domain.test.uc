@@ -86,12 +86,12 @@ t.test('protected set: list hosts match exactly', () => {
 	t.ok(!d.protected_domain('x.big.oisd.nl', ctx));
 });
 
-t.test('check_domain: protected applies to block and unallow only; public-suffix to all ops', () => {
+t.test('check_domain: protected applies to block only; public-suffix to both ops', () => {
 	t.eq(d.check_domain('block', 'heartbeat.mossdef.org', ctx), 'protected-domain');
-	t.eq(d.check_domain('unallow', 'cdn.jsdelivr.net', ctx), 'protected-domain');
+	t.eq(d.check_domain('block', 'cdn.jsdelivr.net', ctx), 'protected-domain');
 	t.eq(d.check_domain('allow', 'heartbeat.mossdef.org', ctx), null);
-	t.eq(d.check_domain('unblock', 'router.lan', ctx), null);
-	for (let op in [ 'allow', 'unblock', 'block', 'unallow' ]) {
+	t.eq(d.check_domain('allow', 'router.lan', ctx), null);
+	for (let op in [ 'allow', 'block' ]) {
 		t.eq(d.check_domain(op, 'github.io', ctx), 'public-suffix', op);
 		t.eq(d.check_domain(op, 'co.uk', ctx), 'public-suffix', op);
 		t.eq(d.check_domain(op, 'bad_domain-.com', ctx), 'invalid-domain', op);
@@ -103,7 +103,7 @@ t.test('validate_batch normalizes and reports index and domain', () => {
 	t.eq(r.error, { code: 'public-suffix', message: 'refusing a rule for a public suffix', index: 1, domain: 'co.uk' });
 	r = d.validate_batch({ ops: [ { op: 'allow', domain: ' Ads.Example.com. ' } ] }, ctx);
 	t.eq(r.ops, [ { op: 'allow', domain: 'ads.example.com', index: 0 } ]);
-	r = d.validate_batch({ ops: [ { op: 'unallow', domain: 'nas.home.arpa' } ] }, ctx);
+	r = d.validate_batch({ ops: [ { op: 'block', domain: 'nas.home.arpa' } ] }, ctx);
 	t.eq([ r.error.code, r.error.index, r.error.domain ], [ 'protected-domain', 0, 'nas.home.arpa' ]);
 	r = d.validate_batch({ ops: [ { op: 'allow', domain: '1.2.3.4' } ] }, ctx);
 	t.eq(r.error.code, 'invalid-domain');
@@ -115,7 +115,9 @@ t.test('validate_batch shape errors', () => {
 	t.eq(d.validate_batch({ ops: [], rebuild: true }, ctx).ops, []);
 	t.eq(d.validate_batch({ ops: 'x' }, ctx).error.code, 'invalid-request');
 	t.eq(d.validate_batch({ ops: [ { op: 'nuke', domain: 'a.example.com' } ] }, ctx).error, {
-		code: 'invalid-request', message: 'each op needs op (allow|unblock|block|unallow) and domain', index: 0 });
+		code: 'invalid-request', message: 'each op needs op (allow|block) and domain', index: 0 });
+	for (let op in [ 'unblock', 'unallow' ])
+		t.eq(d.validate_batch({ ops: [ { op, domain: 'a.example.com' } ] }, ctx).error.code, 'invalid-request', op);
 	t.eq(d.validate_batch({ ops: [ 'a.example.com' ] }, ctx).error.code, 'invalid-request');
 	let ops = [];
 	for (let i = 0; i < 64; i++) push(ops, { op: 'allow', domain: `d${i}.example.com` });
@@ -127,7 +129,7 @@ t.test('validate_batch shape errors', () => {
 t.test('validate_batch: identical ops collapse, different ops conflict', () => {
 	let r = d.validate_batch({ ops: [ { op: 'allow', domain: 'a.example.com' }, { op: 'allow', domain: 'A.example.com.' } ] }, ctx);
 	t.eq(length(r.ops), 1);
-	r = d.validate_batch({ ops: [ { op: 'allow', domain: 'a.example.com' }, { op: 'unallow', domain: 'a.example.com' } ] }, ctx);
+	r = d.validate_batch({ ops: [ { op: 'allow', domain: 'a.example.com' }, { op: 'block', domain: 'a.example.com' } ] }, ctx);
 	t.eq([ r.error.code, r.error.index, r.error.domain ], [ 'conflict', 1, 'a.example.com' ]);
 });
 

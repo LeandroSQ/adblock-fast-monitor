@@ -1,10 +1,10 @@
-// abfm.domain: pure helpers for the actions backend (docs/CONTRACT.md §6.2,
+// abfm.domain: pure helpers for the actions backend (docs/CONTRACT.md
 // §6.4-6.6, §7.2). No I/O: callers pass in UCI values, file lines and DNS
 // answers, so every function runs under a bare ucode interpreter.
 'use strict';
 
 const MAX_OPS = 64;
-const OPS = { allow: true, unblock: true, block: true, unallow: true };
+const OPS = { allow: true, block: true };
 
 // §6.5 (b): two-label names whose first label is one of these are suffixes.
 const SLD_GENERIC = {};
@@ -128,7 +128,7 @@ function check_domain(op, d, ctx) {
 		return 'invalid-domain';
 	if (public_suffix(d))
 		return 'public-suffix';
-	if ((op == 'block' || op == 'unallow') && protected_domain(d, ctx))
+	if (op == 'block' && protected_domain(d, ctx))
 		return 'protected-domain';
 	return null;
 }
@@ -153,7 +153,7 @@ function validate_batch(args, ctx) {
 	for (let i = 0; i < length(ops); i++) {
 		let o = ops[i];
 		if (type(o) != 'object' || type(o.op) != 'string' || !OPS[o.op] || type(o.domain) != 'string')
-			return { error: err('invalid-request', 'each op needs op (allow|unblock|block|unallow) and domain', { index: i }) };
+			return { error: err('invalid-request', 'each op needs op (allow|block) and domain', { index: i }) };
 		let d = normalize(o.domain);
 		let code = check_domain(o.op, d, ctx);
 		if (code)
@@ -170,7 +170,7 @@ function validate_batch(args, ctx) {
 	return { ops: out };
 }
 
-const EXPECT = { allow: 'allowed', unblock: 'allowed', block: 'blocked', unallow: 'any' };
+const EXPECT = { allow: 'allowed', block: 'blocked' };
 
 // §6.6. state: { allowed, blocked, enabled, rebuild }.
 // Returns { items, mode, noop, may_escalate } or { error }.
@@ -183,13 +183,6 @@ function plan(ops, state) {
 	for (let o in ops) {
 		let D = o.domain, eff = o.op, change = [];
 		switch (o.op) {
-		case 'unblock':
-			if (B[D]) {
-				push(change, 'block:remove');
-				break;
-			}
-			eff = 'allow';
-			/* fall through */
 		case 'allow':
 			if (!A[D]) push(change, 'allow:add');
 			if (B[D]) push(change, 'block:remove');
@@ -197,9 +190,6 @@ function plan(ops, state) {
 		case 'block':
 			if (A[D]) push(change, 'allow:remove');
 			if (!B[D]) push(change, 'block:add');
-			break;
-		case 'unallow':
-			if (A[D]) push(change, 'allow:remove');
 			break;
 		}
 		for (let c in change) {
@@ -277,7 +267,7 @@ function parse_line(line, dns) {
 	return null;
 }
 
-// §6.2 `listed` per domain: { listed: true|false|null, by: entry|null }.
+// §7.2 `listed` per domain: { listed: true|false|null, by: entry|null }.
 // lines: output-file lines (any superset of the grep_patterns matches).
 function listed(domains, lines, dns) {
 	let out = {};
@@ -303,24 +293,6 @@ function listed(domains, lines, dns) {
 		out[d] = r;
 	}
 	return out;
-}
-
-// §6.2 per-domain rule view.
-function rule_info(d, allowed, blocked, listed_value) {
-	let manual = (index(allowed, d) >= 0) ? 'allow' : (index(blocked, d) >= 0) ? 'block' : null;
-	let manual_parent = null;
-	for (let s in slice(suffixes(d), 1)) {
-		if (index(allowed, s) >= 0) { manual_parent = { list: 'allow', domain: s }; break; }
-		if (index(blocked, s) >= 0) { manual_parent = { list: 'block', domain: s }; break; }
-	}
-	let effective = (listed_value === true) ? 'blocked'
-		: (listed_value === false || manual == 'allow') ? 'allowed' : 'unknown';
-	let actions = [];
-	if (effective != 'allowed') push(actions, 'allow');
-	if (manual == 'block') push(actions, 'unblock');
-	if (effective != 'blocked') push(actions, 'block');
-	if (manual == 'allow') push(actions, 'unallow');
-	return { manual, manual_parent, listed: listed_value, effective, actions };
 }
 
 // Folds a resolv.query() result for d (following CNAMEs) into
@@ -384,6 +356,6 @@ return {
 	normalize, valid, valid_job_id, under, suffixes, public_suffix, url_host,
 	protect_context, protected_domain, check_domain,
 	validate_batch, plan, plan_view,
-	grep_patterns, grep_command, shell_quote, parse_line, listed, rule_info,
+	grep_patterns, grep_command, shell_quote, parse_line, listed,
 	answer_of, observe, verdict,
 };

@@ -91,20 +91,17 @@ function guest_dir() {
 t.test('§3: booleans, clamped uints, defaults and the instance list', () => {
 	monitor({});
 	t.eq(sys.monitor_config(cur()), {
-		enabled: false, manage_logging: true, record_clients: false, exclude_router: true,
-		recent_size: 500, top_size: 256, pending_size: 512, pending_ttl: 10, poll_interval: 5,
-		dnsmasq_instance: [ '*' ]
+		query_logging: false, exclude_router: true, poll_interval: 2, dnsmasq_instance: [ '*' ]
 	});
-	monitor({ enabled: 'yes', manage_logging: 'off', record_clients: '1', exclude_router: 'maybe',
-	          recent_size: '9999', top_size: '1', pending_size: 'abc', pending_ttl: ' 30 ',
-	          poll_interval: '-5', dnsmasq_instance: [ 'guest', 'main' ], max_events: '256' });
+	monitor({ query_logging: 'yes', exclude_router: 'maybe', poll_interval: '999',
+	          dnsmasq_instance: [ 'guest', 'main' ], enabled: '0', recent_size: '9' });
 	t.eq(sys.monitor_config(cur()), {
-		enabled: true, manage_logging: false, record_clients: true, exclude_router: true,
-		recent_size: 2000, top_size: 32, pending_size: 512, pending_ttl: 30, poll_interval: 5,
-		dnsmasq_instance: [ 'guest', 'main' ]
-	});
+		query_logging: true, exclude_router: true, poll_interval: 60, dnsmasq_instance: [ 'guest', 'main' ]
+	}, 'v1 options are ignored');
+	monitor({ query_logging: 'off', poll_interval: '-5' });
+	t.eq([ sys.monitor_config(cur()).query_logging, sys.monitor_config(cur()).poll_interval ], [ false, 2 ]);
 	write('adblock-fast-monitor', '');
-	t.eq(sys.monitor_config(cur()).enabled, false, 'missing section');
+	t.eq(sys.monitor_config(cur()).query_logging, false, 'missing section');
 });
 
 t.test('§5: confdir defaults, comma suffix, relative paths are invalid', () => {

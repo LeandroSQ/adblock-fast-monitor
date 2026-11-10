@@ -10,16 +10,17 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-adblock-fast-monitor
-PKG_VERSION:=0.1.0
+PKG_VERSION:=0.2.0
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=AdBlock Fast Monitor contributors
 
 LUCI_TITLE:=Dashboard and domain actions for adblock-fast
-LUCI_DESCRIPTION:=Standalone LuCI dashboard for adblock-fast: an opt-in, \
-	bounded, RAM-only DNS activity monitor and staged block/allow actions \
-	applied in one job.
-LUCI_DEPENDS:=+luci-base +adblock-fast +ucode-mod-uloop +ucode-mod-io +ucode-mod-resolv
+LUCI_DESCRIPTION:=Standalone LuCI dashboard for adblock-fast: recent DNS \
+	queries read from the system log in the browser (no resident process) \
+	and staged block/allow actions applied in one job. Grant it to admins \
+	only: viewers can read the whole system log.
+LUCI_DEPENDS:=+luci-base +adblock-fast +ucode-mod-io +ucode-mod-resolv
 LUCI_PKGARCH:=all
 LUCI_URL:=https://github.com/LeandroSQ/adblock-fast-monitor
 LUCI_MAINTAINER:=$(PKG_MAINTAINER)
@@ -39,14 +40,15 @@ define Package/$(PKG_NAME)/conffiles
 /etc/config/adblock-fast-monitor
 endef
 
-# The SDK's generated scripts call default_postinst (enable + start
+# The SDK's generated scripts call default_postinst (runs and deletes
+# /etc/uci-defaults/80_adblock-fast-monitor, then enable + start
 # /etc/init.d/adblock-fast-monitor) and default_prerm (disable + stop; stop
 # removes the dnsmasq drop-ins), so no prerm is needed. On top of that,
 # install and removal both do what luci.mk's postinst does, so the rpcd
 # plugin, ACL and menu appear and disappear without a manual rpcd restart.
-# On upgrade default_postinst only runs "start", which procd ignores for an
-# unchanged instance, so the old daemon code would keep running: restart it
-# (restart keeps the drop-ins, so dnsmasq is not restarted).
+# On upgrade, restart the init script so the drop-ins are reconciled with the
+# migrated configuration and procd drops a v1 daemon instance (restart keeps
+# the drop-ins, so dnsmasq is not restarted).
 define Package/$(PKG_NAME)/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {

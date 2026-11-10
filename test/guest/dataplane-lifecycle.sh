@@ -10,6 +10,11 @@ SECTION=$(uci -q -X show dhcp | sed -n 's/^dhcp\.\([^.=]*\)=dnsmasq$/\1/p' | hea
 DROPIN=/tmp/dnsmasq.$SECTION.d/adblock-fast-monitor.conf
 MARK=0
 
+# Leave the monitor config byte-identical for later tests (package §3 checks).
+CONF_BAK=/tmp/abfm-lifecycle-config.bak
+cp /etc/config/adblock-fast-monitor "$CONF_BAK"
+trap 'cp "$CONF_BAK" /etc/config/adblock-fast-monitor; rm -f "$CONF_BAK"' EXIT
+
 monitord_pids() { pgrep -f '^/usr/bin/ucode /usr/libexec/adblock-fast-monitor/monitord.uc' | sort; }
 logread_pids() { pgrep -f '^/sbin/logread -f -e \^dnsmasq' | sort; }
 count() { [ -z "$1" ] && echo 0 || printf '%s\n' "$1" | wc -l | tr -d ' '; }
@@ -49,7 +54,7 @@ set_opt enabled 1
 reload_config
 t_ok "enable: exactly one daemon, one logread and the object" abfm_wait_until 30 running_one
 t_ok "enable: drop-in written" test -f "$DROPIN"
-t_eq "enable: drop-in content" "log-queries=extra" "$(cat "$DROPIN")"
+t_eq "enable: drop-in content" "log-queries=extra log-async=25" "$(cat "$DROPIN" | tr '\n' ' ' | sed 's/ $//')"
 t_eq "enable: drop-in mode" "644" "$(abfm_stat %a "$DROPIN")"
 abfm_wait_until 30 dns_ready
 t_eq "enable: dnsmasq restarted exactly once" 1 "$(dnsmasq_starts)"
@@ -140,6 +145,7 @@ t_eq "drop-in set changed: dnsmasq restarted once" 1 "$(dnsmasq_starts)"
 
 # --- dnsmasq_instance naming a non-existent instance -> no drop-in ----------
 mark
+uci -q delete adblock-fast-monitor.config.dnsmasq_instance
 uci add_list adblock-fast-monitor.config.dnsmasq_instance=nonexistent
 uci commit adblock-fast-monitor
 reload_config

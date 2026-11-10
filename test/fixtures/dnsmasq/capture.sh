@@ -17,7 +17,7 @@ q() { python3 "$lib/dnsq.py" 127.0.0.1 "$GUEST_DNS_PORT" "$@" >/dev/null; }
 
 guest_copy_dir "$lib" /tmp/abfm-dp
 guest_exec ". /tmp/abfm-dp/guest.sh
-	mkdir -p \"\$DP_CONFDIR\" && echo log-queries=extra >\"\$DP_CONFDIR/adblock-fast-monitor.conf\"
+	mkdir -p \"\$DP_CONFDIR\" && printf 'log-queries=extra\\nlog-async=25\\n' >\"\$DP_CONFDIR/adblock-fast-monitor.conf\"
 	dp_upstream_start"
 
 capture() { # mode file

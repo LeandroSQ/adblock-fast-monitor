@@ -12,6 +12,9 @@ n=0 failed=0
 ok() { n=$((n + 1)); echo "ok $n - $1"; }
 nok() { n=$((n + 1)); failed=$((failed + 1)); echo "not ok $n - $1"; [[ -z "${2:-}" ]] || sed 's/^/#   /' <<<"$2"; }
 eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else nok "$1" "expected: <$2>"$'\n'"actual:   <$3>"; fi; }
+# Leave the monitor config byte-identical for later tests (package §3 checks).
+guest_exec 'cp /etc/config/adblock-fast-monitor /root/.abfm-boot-config.bak'
+trap "guest_exec 'cp /root/.abfm-boot-config.bak /etc/config/adblock-fast-monitor; rm -f /root/.abfm-boot-config.bak'" EXIT
 
 guest_exec 'uci set adblock-fast-monitor.config.enabled=1; uci commit adblock-fast-monitor
 	/etc/init.d/adblock-fast-monitor enable; reload_config; sleep 2'
@@ -30,7 +33,7 @@ guest_exec 'i=0; until ubus list adblock-fast-monitor >/dev/null 2>&1 && pidof d
 	nok "monitor object and dnsmasq are up after boot"
 
 section=$(guest_exec "uci -q -X show dhcp | sed -n 's/^dhcp\\.\\([^.=]*\\)=dnsmasq\$/\\1/p' | head -n1")
-eq "drop-in present after boot" "log-queries=extra" "$(guest_exec "cat /tmp/dnsmasq.$section.d/adblock-fast-monitor.conf")"
+eq "drop-in present after boot" "log-queries=extra log-async=25" "$(guest_exec "cat /tmp/dnsmasq.$section.d/adblock-fast-monitor.conf" | tr '\n' ' ' | sed 's/ $//')"
 eq "one daemon and one logread after boot" "1 1" \
 	"$(guest_exec "echo \$(pgrep -f '^/usr/bin/ucode /usr/libexec/adblock-fast-monitor/monitord.uc' | wc -l) \$(pgrep -f '^/sbin/logread -f -e' | wc -l)")"
 eq "dnsmasq started exactly once since boot" 1 "$(guest_exec "logread | grep -c 'dnsmasq\\[[0-9]*\\]: started, version'")"

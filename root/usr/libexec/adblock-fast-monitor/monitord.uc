@@ -189,17 +189,21 @@ function status_reply() {
 	};
 }
 
+// uhttpd's /ubus adds ubus_rpc_session to every call, and ucode-mod-ubus
+// refuses undeclared fields, so every method declares it (and ignores it).
+const SESSION = { ubus_rpc_session: '' };
+
 let obj = conn.publish(OBJECT, {
 	status: {
-		args: {},
+		args: { ...SESSION },
 		call: guarded((req) => status_reply())
 	},
 	domains: {
-		args: { view: '', decision: '', q: '', offset: 0, limit: 0 },
+		args: { ...SESSION, view: '', decision: '', q: '', offset: 0, limit: 0 },
 		call: guarded((req) => stats.domains(st, req.args, time()))
 	},
 	purge: {
-		args: {},
+		args: { ...SESSION },
 		call: guarded((req) => {
 			let now = time();
 			stats.reset(st, now);

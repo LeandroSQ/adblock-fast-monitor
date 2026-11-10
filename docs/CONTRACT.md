@@ -21,7 +21,7 @@ This file supersedes `MONITORING_API.md`, `RULE_ACTION_API.md`,
 | # | Decision |
 |---|---|
 | D1 | **One resident ucode daemon** (`monitord.uc`). procd execs it directly: the shebang is `#!/usr/bin/ucode`, with no shell parent. It runs **only** while `adblock-fast-monitor.config.enabled=1`. When disabled, `start_service` returns before `procd_open_instance`, so the package runs no process. The daemon spawns `logread` with a **string** executable, parses dnsmasq `log-queries=extra` lines with one anchored regex, keeps all state in bounded RAM structures, and **publishes its own ubus object** `adblock-fast-monitor` through `ucode-mod-ubus`. It writes no snapshot, lock or generation files, and no shell read plugin exists. |
-| D2 | **No edits to `/etc/config/dhcp`.** Query logging comes from a tmpfs drop-in, `<confdir>/adblock-fast-monitor.conf` containing `log-queries=extra`, written for each targeted dnsmasq instance. It is removed on disable or stop. dnsmasq restarts **only** when the set of drop-ins changes **and** dnsmasq is running. |
+| D2 | **No edits to `/etc/config/dhcp`.** Query logging comes from a tmpfs drop-in, `<confdir>/adblock-fast-monitor.conf` containing `log-queries=extra` and `log-async=25`, written for each targeted dnsmasq instance. It is removed on disable or stop. dnsmasq restarts **only** when the set of drop-ins changes **and** dnsmasq is running. |
 | D3 | **Classification** is computed from the log line alone (§4.4). The `source` field records attribution. |
 | D4 | **Statistics** are cumulative since daemon start or the last purge. They are bounded: recent-domains LRU, Space-Saving top-N maps, and a pending-correlation map with a TTL (§4.5). |
 | D5 | **Rule changes are staged in the browser**; the server keeps no shadow rules. One `apply` call sends the whole batch to the rpcd ucode plugin `luci.adblock-fast-monitor`. `apply` validates the batch, writes **only** `/etc/config/adblock-fast`, commits, and spawns **one** detached job. The job runs the adblock-fast runtime step (one rebuild; adblock-fast's own `allow` is not usable, §14.1), then verifies each domain against real DNS answers from `127.0.0.1`. One job runs at a time, enforced by `flock` on a file descriptor. |
@@ -61,7 +61,7 @@ Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 | `/var/run/adblock-fast-monitor/job.json` | plugin + job, 0600, atomic rename | last job (§7) |
 | `/var/run/adblock-fast-monitor/uci/` | plugin, 0700 | private UCI savedir for `apply` |
 | `/var/lock/adblock-fast-monitor.lock` | plugin + job | `flock` target (§7.3) |
-| `<confdir>/adblock-fast-monitor.conf` | `logging.uc`, 0644 | the single line `log-queries=extra` |
+| `<confdir>/adblock-fast-monitor.conf` | `logging.uc`, 0644 | the lines `log-queries=extra` and `log-async=25` |
 
 The `abfm.*` modules are loaded with `require('abfm.<name>')` from ucode's
 default search path `/usr/share/ucode/` and `return` their exports (an
@@ -323,14 +323,9 @@ Normal LRU eviction is **not** a drop.
 Errors use one shape across both objects:
 `{"api":1,"ok":false,"error":{"code":"<code>","message":"<text>"}}`, with
 ubus status 0. For `luci.adblock-fast-monitor`, any unknown request field is
-ignored and a field with the wrong type gives `invalid-argument`. The monitor
-object is published by `ucode-mod-ubus`, which checks the declared argument
-policy itself (`lib/ubus.c` L1441-1500): an undeclared field or a field
-whose blobmsg type differs (`offset`/`limit` must be int32, the others
-strings) is refused with ubus status 2 (`UBUS_STATUS_INVALID_ARGUMENT`)
-before the handler runs, so the UI must send only declared fields. Value
-errors (bad `view`, `decision` or `q`, negative `offset`) use the shape
-above.
+ignored and a field with the wrong type gives `invalid-argument`. For the
+monitor object see the exception below; its value errors (bad `view`,
+`decision` or `q`, negative `offset`) use the shape above.
 
 Exception for the daemon's own object: ucode `ubus.c` `uc_ubus_object_call_args`
 (L1440-1500) rejects, before the handler runs, any argument that is not in the
@@ -339,7 +334,11 @@ method's `args` policy or has another blobmsg type, with ubus status 2
 every call from LuCI. So every `adblock-fast-monitor` method declares
 `ubus_rpc_session` (string) in its policy, `offset`/`limit` are declared as
 integers, and other unknown or mistyped fields give ubus status 2 instead of a
-JSON error. rpcd-hosted plugins are not affected.
+JSON error. rpcd-hosted plugins are not affected. Verified on the guest through
+uhttpd's `/ubus` with real rpcd sessions for an admin and the read-only
+principal (`test/guest/dataplane-rpc.host.sh`): `status` and `domains` work for
+both, `purge` works for the admin and is `-32002` for the read-only one, a
+stopped daemon gives `-32000`.
 
 #### `status` (read)
 
@@ -423,6 +422,15 @@ adblock-fast. Response:
   `dhcp.<s>.logqueries=1`, write `<confdir>/adblock-fast-monitor.conf`
   atomically (tmp + rename, 0644), creating the confdir 0755 if needed.
   Remove drop-ins for instances that are no longer targeted.
+- **Content.** `log-queries=extra` plus `log-async=25`. Without `log-async`
+  dnsmasq writes each log line to syslog synchronously on the query path;
+  with it, dnsmasq queues up to 25 lines and, if the queue overflows, logs
+  `overflow: N log entries lost`, which the daemon counts in
+  `dropped.dnsmasq_reported` (reason `dnsmasq-log-overflow`). Guest result
+  (25.12.6, dnsmasq 2.93, `dataplane-live.host.sh`): with `log-async=25`
+  every query in both `dnsmasq.servers` and `dnsmasq.addnhosts` modes was
+  still correlated (exact counters, CNAME/cache/error rows unchanged) and
+  all three `dropped.*` counters stayed 0 at normal rates.
 - **`disable`.** Remove every `*/adblock-fast-monitor.conf` under the confdirs
   of **all** dnsmasq sections.
 - **Restart.** If the set of drop-in files changed **and** `ubus call service list '{"name":"dnsmasq"}'`

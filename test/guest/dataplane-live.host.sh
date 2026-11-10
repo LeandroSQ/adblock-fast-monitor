@@ -23,6 +23,9 @@ py() { python3 -c 'import json, sys; d = json.loads(sys.argv[1]); v = eval(sys.a
 settle() { sleep 2; }
 
 guest_copy_dir "$lib" /tmp/abfm-dp
+# Leave both configs byte-identical for later tests (package §3 checks).
+guest_exec 'cp /etc/config/adblock-fast-monitor /tmp/abfm-live-monitor.bak; cp /etc/config/adblock-fast /tmp/abfm-live-af.bak'
+trap "guest_exec 'cp /tmp/abfm-live-monitor.bak /etc/config/adblock-fast-monitor; cp /tmp/abfm-live-af.bak /etc/config/adblock-fast; rm -f /tmp/abfm-live-*.bak'" EXIT
 G 'reload_config; sleep 2; dp_upstream_start' || nok "fake upstream starts"
 G 'dp_mon_set enabled=1 record_clients=1 exclude_router=1 pending_ttl=2; /etc/init.d/adblock-fast-monitor start;
 	dp_wait 20 ubus list adblock-fast-monitor' || nok "monitor starts"
@@ -56,6 +59,7 @@ run_mode() { # mode expected-telemetry-source
 	eq "$mode: counters (T09)" \
 		'{"queries": 19, "blocked": 7, "allowed": 4, "other": 7, "expired": 1, "pending": 0, "rejected_lines": 4, "orphan_lines": 0}' \
 		"$(py "$st" '{k: d["counters"][k] for k in ("queries", "blocked", "allowed", "other", "expired", "pending", "rejected_lines", "orphan_lines")}')"
+	eq "$mode: no dropped lines at normal rates (log-async)" '{"input_overflow": 0, "pending_evicted": 0, "dnsmasq_reported": 0}' "$(py "$st" 'd["counters"]["dropped"]')"
 	eq "$mode: invariant" true "$(py "$st" 'd["counters"]["queries"] == sum(d["counters"][k] for k in ("blocked", "allowed", "other", "expired", "pending")) + d["counters"]["dropped"]["pending_evicted"]')"
 	eq "$mode: block_pct" 63.6 "$(py "$st" 'd["block_pct"]')"
 	eq "$mode: state running, dns mode reported" '["running", [], "'"$mode"'"]' "$(py "$st" '[d["state"], d["reasons"], d["adblock_fast"]["dns"]]')"

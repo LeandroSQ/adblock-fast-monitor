@@ -61,6 +61,20 @@ t_eq "daemon is exec'd by procd (no shell parent)" 1 "$(cut -d' ' -f4 /proc/"$d"
 t_eq "status reports the daemon pid" "$d" "$(ubus call $OBJ status | jsonfilter -e '@.daemon.pid')"
 t_eq "status: running" running "$(ubus call $OBJ status | jsonfilter -e '@.state')"
 
+# --- P3: no wakeups while idle (no timer armed without pending queries) ----
+nslookup ads.example.test 127.0.0.1 >/dev/null 2>&1   # router query: parsed, excluded
+sleep 2
+ctx() { sed -n 's/^voluntary_ctxt_switches:[[:space:]]*//p' /proc/"$d"/status; }
+lines() { logread | grep -c 'dnsmasq\['; }
+l0=$(lines); c0=$(ctx)
+sleep 10
+l1=$(lines); c1=$(ctx)
+if [ "$l0" = "$l1" ]; then
+	t_eq "idle 10 s with no dnsmasq lines: zero daemon wakeups" 0 "$((c1 - c0))"
+else
+	t_skip "idle wakeups" "dnsmasq logged $((l1 - l0)) lines during the window"
+fi
+
 # --- T08: a settings-only save restarts the daemon, not dnsmasq ------------
 pid1=$(dnsmasq_pid)
 mark
@@ -111,6 +125,9 @@ t_eq "stop: dnsmasq restarted once" 1 "$(dnsmasq_starts)"
 set_opt manage_logging 0
 mark
 $INIT start
+# Sync reload_config's snapshot so the next edit is reported as a change.
+reload_config
+sleep 2
 t_ok "manage_logging=0: daemon runs" abfm_wait_until 20 running_one
 t_ok "manage_logging=0: no drop-in" test ! -e "$DROPIN"
 t_eq "manage_logging=0: dnsmasq not restarted" 0 "$(dnsmasq_starts)"

@@ -12,6 +12,11 @@
 #   ABFM_PERF_IDLE_SECONDS  idle window (default 60, never less)
 #   ABFM_PERF_QPS        load rates (default "50 200")
 #   ABFM_PERF_SKIP_BOOT=1   skip the two reboots of P10
+#   ABFM_PERF_SELFTEST=1    harness self-test: enable/disable/save drive
+#                        scripts/perf/guest/adblock-fast-monitor-standin.uc and a
+#                        real log-queries drop-in instead of the package's
+#                        daemon (proves the daemon-side measurements; implies
+#                        SKIP_BOOT; the gate labels the run SELF-TEST)
 # Raw JSON lands in $ABFM_PERF_OUT/raw; run.json indexes it. Every phase
 # records its own errors and the run continues, so a broken daemon still
 # yields every off-baseline number. The verdict comes from
@@ -43,9 +48,14 @@ probe() {
 	[[ -s "$raw/$name.err" ]] || rm -f "$raw/$name.err"
 }
 gsh() { guest_exec "$@"; }
+selftest="${ABFM_PERF_SELFTEST:-0}"
 push_tools() {
 	guest_exec "mkdir -p $G" && guest_copy scripts/perf/guest/probe.uc "$G/probe.uc" &&
-		guest_copy scripts/perf/guest/lib.sh "$G/lib.sh"
+		guest_copy scripts/perf/guest/lib.sh "$G/lib.sh" || return 1
+	if [[ $selftest == 1 ]]; then
+		guest_copy scripts/perf/guest/adblock-fast-monitor-standin.uc "$G/adblock-fast-monitor-standin.uc" &&
+			guest_exec "touch $G/selftest"
+	fi
 }
 dnsload() { # tag qps seconds outfile [mix]
 	node scripts/perf/dnsload.mjs --port "$GUEST_DNS_PORT" --tag "$1" --qps "$2" --seconds "$3" \
@@ -63,7 +73,7 @@ cat >"$raw/meta-host.json" <<-EOF
 	 "host_uname":"$(uname -srm)","guest_cpus":${GUEST_CPUS:-2},"guest_memory_mib":${GUEST_MEMORY:-256},
 	 "package_sha256":"${PACKAGE_SHA256:-}","package_file":"$(basename "${PACKAGE_APK:-unknown}")",
 	 "repeats":$repeats,"load_seconds":$load_s,"idle_seconds":$idle_s,"rates":[${rates// /,}],
-	 "guest_run_dir":"${GUEST_RUN_DIR:-}"}
+	 "guest_run_dir":"${GUEST_RUN_DIR:-}","selftest":$([[ $selftest == 1 ]] && echo true || echo false)}
 EOF
 
 # --- fixtures: local responder, no WAN, quiet log --------------------------
@@ -172,7 +182,7 @@ cold_boot() { # n
 	GUEST_DISK="$GUEST_RUN_DIR/disk.qcow2" guest_start >"$raw/boot-$1.log" 2>&1 && own_guest=1
 }
 own_guest=0
-if [[ "${ABFM_PERF_SKIP_BOOT:-0}" != 1 ]]; then
+if [[ "${ABFM_PERF_SKIP_BOOT:-0}" != 1 && $selftest != 1 ]]; then
 	# shellcheck source=scripts/guest/lib.sh
 	source "$root/scripts/guest/lib.sh"
 	n=0

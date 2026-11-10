@@ -26,7 +26,7 @@ perf_dnsmasq_pids() {
 }
 
 # package processes: the cmdline names the package; plus `logread -f` readers
-perf_pkg_procs() { ps w | grep '[a]dblock-fast-monitor' | grep -v 'abfm-perf' | sed 's/^ *//'; }
+perf_pkg_procs() { ps w | grep '[a]dblock-fast-monitor' | grep -v 'lib\.sh' | sed 's/^ *//'; }
 perf_logread_procs() { ps w | grep '[l]ogread -f' | sed 's/^ *//'; }
 
 perf_json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\t' '  ')"; }
@@ -101,10 +101,40 @@ perf_apply_uci() {
 	_changes=$(uci changes adblock-fast-monitor | grep -c .)
 	uci commit adblock-fast-monitor
 	reload_config
+	if [ -e "$PERF_SELFTEST_FLAG" ]; then
+		case "$_what" in enabled=*) perf_selftest_apply enabled "${_what#enabled=}" ;; *) perf_selftest_apply save ;; esac
+	fi
 	_s=$(perf_settle)
 	printf '{"action":%s,"uci_changes":%d,"dnsmasq_restarts":%d,"dnsmasq_pids_before":%s,"settle_s":%d,' \
 		"$(perf_json_str "$_what")" "$_changes" "$(perf_starts_since "$_mk")" "$(perf_json_str "$_pb")" "$_s"
 	perf_state_fields; printf '}\n'
+}
+
+# Self-test (scripts/perf/run.sh with ABFM_PERF_SELFTEST=1): emulate the
+# contract's enable/disable/save with the stand-in daemon and a real
+# log-queries drop-in, so the daemon-side measurements run on real processes.
+PERF_SELFTEST_FLAG=/tmp/abfm-perf/selftest
+perf_selftest_stop() {
+	for _p in $(ps w | grep '[a]dblock-fast-monitor-standin' | awk '{print $1}'); do
+		for _c in $(grep -l "^PPid:[[:space:]]*$_p\$" /proc/[0-9]*/status 2>/dev/null | cut -d/ -f3); do kill "$_c"; done
+		kill "$_p"
+	done
+}
+perf_selftest_start() {
+	setsid ucode /tmp/abfm-perf/adblock-fast-monitor-standin.uc </dev/null >/dev/null 2>&1 &
+}
+perf_selftest_apply() { # enabled|save value
+	_changed=0
+	for _d in $(perf_confdirs); do
+		if [ "$1" = enabled ] && [ "$2" = 1 ]; then
+			[ -e "$_d/adblock-fast-monitor.conf" ] || { printf 'log-queries=extra\n' >"$_d/adblock-fast-monitor.conf"; _changed=1; }
+		elif [ "$1" = enabled ]; then
+			[ -e "$_d/adblock-fast-monitor.conf" ] && { rm -f "$_d/adblock-fast-monitor.conf"; _changed=1; }
+		fi
+	done
+	perf_selftest_stop
+	[ $_changed = 1 ] && /etc/init.d/dnsmasq restart >/dev/null 2>&1
+	[ "$(uci -q get adblock-fast-monitor.config.enabled)" = 1 ] && perf_selftest_start
 }
 
 perf_set() {

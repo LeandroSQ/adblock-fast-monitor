@@ -44,7 +44,7 @@ function read_proc(pid) {
 		pid: +pid,
 		ppid: +f[1],
 		comm: substr(stat, lp + 1, rp - lp - 1),
-		cmdline: rtrim(replace(cmdline, /\x00/g, ' ')),
+		cmdline: rtrim(join(' ', split(cmdline, chr(0)))),
 		state: f[0],
 		utime: +f[11],
 		stime: +f[12],
@@ -151,7 +151,7 @@ function watch(seconds) {
 			let c = fs.readfile(`/proc/${pid}/cmdline`);
 			if (c == null || index(c, PKG) < 0)
 				continue;
-			c = rtrim(replace(c, /\x00/g, ' '));
+			c = rtrim(join(' ', split(c, chr(0))));
 			if (index(c, 'probe.uc') >= 0)
 				continue;
 			seen[c] ??= { samples: 0, pids: [] };

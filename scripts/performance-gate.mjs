@@ -25,6 +25,7 @@ function latestRun() {
   const runs = readdirSync(perfRoot)
     .map(name => join(perfRoot, name))
     .filter(dir => existsSync(join(dir, 'run.json')))
+    .filter(dir => !(existsSync(join(dir, 'raw/meta-host.json')) && JSON.parse(readFileSync(join(dir, 'raw/meta-host.json'), 'utf8')).selftest))
     .sort((a, b) => statSync(join(b, 'run.json')).mtimeMs - statSync(join(a, 'run.json')).mtimeMs);
   return runs[0] ?? null;
 }
@@ -267,13 +268,16 @@ const daemonDuringLoad = Object.entries(loads).some(([k, runs]) =>
     const loss = state => loads[`${state}-${q}`].map(x => (x.dns ? (100 * x.dns.lost) / Math.max(1, x.dns.sent) : null));
     const off = p95('off'), on = p95('on');
     const spread = v => (v.length >= 2 ? Math.max(...v) - Math.min(...v) : null);
-    const noise = spread(off);
+    // Run-to-run spread of p95 in either state; the monitor's own effect is
+    // constant across on runs, so their spread is noise too.
+    const noise = spread(off) == null || spread(on) == null ? null : Math.max(spread(off), spread(on));
     const delta = off.length && on.length ? median(on) - median(off) : null;
     const allowed = noise == null ? null : Math.max(budgets.P5.p95_delta_floor_ms, noise);
     const lossOn = Math.max(0, ...loss('on').filter(Number.isFinite));
     out[q] = { p95_off_ms: off, p95_on_ms: on, p95_off_median_ms: round(median(off), 3),
       p95_on_median_ms: round(median(on), 3), delta_ms: round(delta, 3), noise_floor_ms: round(noise, 3),
-      noise_floor_on_ms: round(spread(on), 3), allowed_delta_ms: round(allowed, 3),
+      spread_off_ms: round(spread(off), 3), spread_on_ms: round(spread(on), 3),
+      p50_delta_ms: round(median(loads[`on-${q}`].map(x => x.dns?.latency_ms?.p50)) - median(loads[`off-${q}`].map(x => x.dns?.latency_ms?.p50)), 3), allowed_delta_ms: round(allowed, 3),
       p50_off_ms: loads[`off-${q}`].map(x => x.dns?.latency_ms?.p50 ?? null),
       p50_on_ms: loads[`on-${q}`].map(x => x.dns?.latency_ms?.p50 ?? null),
       loss_pct_off: loss('off').map(v => round(v, 3)), loss_pct_on: loss('on').map(v => round(v, 3)),
@@ -383,15 +387,17 @@ const summary = {
   run: relative(root, runDir), measured_at: run.finished_at,
   environment: { accel: meta.accel, guest_cpus: meta.guest_cpus, guest_memory_mib: meta.guest_memory_mib,
     host: meta.host_uname, package_file: meta.package_file, package_sha256: meta.package_sha256,
-    repeats: meta.repeats, load_seconds: meta.load_seconds, idle_seconds: meta.idle_seconds, rates: meta.rates },
+    selftest: !!meta.selftest, repeats: meta.repeats, load_seconds: meta.load_seconds, idle_seconds: meta.idle_seconds, rates: meta.rates },
   harness_errors: run.errors ?? [], metrics
 };
-const verdict = { verdict: failed.length ? 'FAIL' : 'PASS', failed, run: summary.run, accel: meta.accel ?? null,
+// A self-test run measures the harness's stand-in daemon, never the package.
+const verdict = { verdict: meta.selftest ? 'SELF-TEST' : failed.length ? 'FAIL' : 'PASS', selftest: !!meta.selftest, failed, run: summary.run, accel: meta.accel ?? null,
   per_metric: Object.fromEntries(order.map(id => [id, metrics[id]?.verdict ?? 'NOT_MEASURED'])) };
 writeFileSync(join(runDir, 'summary.json'), `${JSON.stringify(summary, null, 1)}\n`);
 writeFileSync(join(runDir, 'verdict.json'), `${JSON.stringify(verdict, null, 1)}\n`);
 
-console.log(`P0 performance gate: ${summary.run} (accel ${meta.accel ?? '?'})`);
+console.log(`P0 performance gate: ${summary.run} (accel ${meta.accel ?? '?'})` +
+  (meta.selftest ? ' SELF-TEST: numbers describe the harness stand-in daemon, not the package' : ''));
 for (const id of order) {
   const m = metrics[id] ?? { verdict: 'NOT_MEASURED' };
   console.log(`  ${id.padEnd(4)} ${m.verdict.padEnd(12)} ${m.reason ?? ''}`);
@@ -399,4 +405,4 @@ for (const id of order) {
 if (summary.harness_errors.length) console.log(`  harness errors: ${summary.harness_errors.join('; ')}`);
 console.log(`${verdict.verdict}: ${failed.length ? `${failed.join(', ')} not within budget or not measured` : 'all P0 budgets met'}` +
   ` (details: ${relative(root, join(runDir, 'summary.json'))})`);
-process.exit(failed.length ? 1 : 0);
+process.exit(failed.length || meta.selftest ? 1 : 0);

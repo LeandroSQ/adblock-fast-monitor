@@ -146,24 +146,53 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
     notMeasured('P1', 'stock or installed (logging off/on) snapshots missing');
   } else {
     const stockSigs = new Set(stock.flatMap(s => userland(s.procs).map(p => p.cmdline)));
+    // Resident = any package process except a short-lived init-script
+    // invocation (rc.common running /etc/init.d/adblock-fast-monitor, or the
+    // logging.uc it runs): those are counted separately as transient.
+    const isInit = c => /\/etc\/init\.d\/adblock-fast-monitor\b|\/usr\/libexec\/adblock-fast-monitor\/logging\.uc/.test(c);
     const found = new Set();
     const add = (where, cmdline) => found.add(`${where}: ${cmdline}`);
+    const idleSightings = [];
+    const see = (where, cmdline) => (isInit(cmdline) ? idleSightings.push(`${where}: ${cmdline}`) : add(where, cmdline));
     // New userland processes vs stock, in the installed steady states.
     for (const [where, snaps] of [['installed, logging off', instOff], ['installed, logging on', instOn]]) {
-      for (const s of snaps) for (const p of userland(s.procs)) if (!stockSigs.has(p.cmdline)) add(where, p.cmdline);
+      for (const s of snaps) for (const p of userland(s.procs)) if (!stockSigs.has(p.cmdline)) see(where, p.cmdline);
     }
-    // Package processes in every snapshot of every state (P1: none, ever).
+    // Package processes in every snapshot of every state (resident: none, ever).
     const snapshotFiles = loadMatching(/^(p1-(installed|after-boot)-.*-\d|p1-installed-(off|on)-\d)\.json$/);
-    for (const [f, s] of snapshotFiles) for (const p of packageProcs(s.procs ?? [])) add(f, p.cmdline);
+    for (const [f, s] of snapshotFiles) for (const p of packageProcs(s.procs ?? [])) see(f, p.cmdline);
     for (const [f, w] of loadMatching(/^win-.*\.json$/)) {
-      for (const snap of [w.t0, w.t1]) for (const p of packageProcs(snap?.procs ?? [])) add(f, p.cmdline);
+      for (const snap of [w.t0, w.t1]) for (const p of packageProcs(snap?.procs ?? [])) see(f, p.cmdline);
     }
-    for (const [f, w] of loadMatching(/^p1-.*-watch\.json$/)) for (const c of Object.keys(w.seen ?? {})) add(`${f} (250 ms watch)`, c);
     for (const [f, t] of loadMatching(/^(toggle-.*|p1-ensure-off|p10-.*)\.json$/)) {
-      for (const line of String(t.package_procs ?? '').split('\n').filter(Boolean)) add(f, line.replace(/^\d+\s+\S+\s+\d+\s+\S+\s+/, ''));
+      for (const line of String(t.package_procs ?? '').split('\n').filter(Boolean)) see(f, line.replace(/^\d+\s+\S+\s+\d+\s+\S+\s+/, ''));
       for (const line of String(t.logread_procs ?? '').split('\n').filter(Boolean)) add(f, line.replace(/^\d+\s+\S+\s+\d+\s+\S+\s+/, ''));
       if (t.monitor_object) add(f, 'ubus object adblock-fast-monitor');
     }
+    // Watches: per-pid lifetimes. A top-level init invocation (its parent is
+    // not another package process) that lives ≤ transient_max_lifetime_s is
+    // transient; anything else is resident.
+    const transient = {};
+    for (const [f, w] of loadMatching(/^p1-.*-watch\.json$/)) {
+      const name = f.replace(/\.json$/, '');
+      const recs = w.procs ?? Object.entries(w.seen ?? {}).flatMap(([c, v]) => v.pids.map(pid => ({ pid, ppid: null, cmdline: c,
+        first_ms: 0, last_ms: (v.samples - 1) * 250, samples: v.samples })));
+      const iv = w.interval_ms ?? 250, pids = new Set(recs.map(r => r.pid));
+      const inv = [];
+      for (const r of recs) {
+        const life = (r.last_ms - r.first_ms + iv) / 1000;
+        if (!isInit(r.cmdline) || life > budgets.P1.transient_max_lifetime_s) { add(`${name} (${iv} ms watch)`, r.cmdline); continue; }
+        if (!pids.has(r.ppid)) inv.push({ cmdline: r.cmdline, at_s: round(r.first_ms / 1000, 1), wall_s: round(life, 2) });
+      }
+      transient[name] = { invocations: inv.length, wall_s: round(inv.reduce((t, x) => t + x.wall_s, 0), 2),
+        watch_s: round((w.duration_ms ?? w.seconds * 1000) / 1000, 1), uptime_at_start_s: w.uptime_at_start_s ?? null,
+        interval_ms: iv, list: inv.slice(0, 10) };
+    }
+    const bootWatches = Object.entries(transient).filter(([k]) => /^p1-after-boot-(on|off)-watch$/.test(k));
+    const idleWatches = Object.entries(transient).filter(([k]) => /^p1-(idle-after-boot-(on|off)|installed-(on|off))-watch$/.test(k));
+    const bootMax = Math.max(0, ...bootWatches.map(([, v]) => v.invocations));
+    const idleCount = idleWatches.reduce((t, [, v]) => t + v.invocations, 0) + idleSightings.length;
+    const idleAfterBootChecked = idleWatches.some(([k]) => k.startsWith('p1-idle-after-boot-on'));
     const rpcdAnon = snaps => median(snaps.map(s => sum(named(s.procs, 'rpcd'), 'rss_anon_kb')));
     const afterBoot = ['on', 'off'].flatMap(st => [1, 2, 3].map(i => load(`p1-after-boot-${st}-${i}`))).filter(Boolean);
     const rpcdDelta = Math.max(rpcdAnon(instOff) - rpcdAnon(stock), rpcdAnon(instOn) - rpcdAnon(stock));
@@ -174,15 +203,20 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
     };
     const stockByComm = byComm(stock), instByComm = byComm(instOff);
     const bootsChecked = afterBoot.length > 0;
-    judge('P1', found.size <= budgets.P1.package_processes && rpcdDelta <= budgets.P1.rpcd_rss_anon_delta_kib && bootsChecked, {
+    const checked = bootsChecked && idleAfterBootChecked;
+    judge('P1', found.size <= budgets.P1.package_processes && rpcdDelta <= budgets.P1.rpcd_rss_anon_delta_kib && checked &&
+      bootMax <= budgets.P1.transient_boot_max && idleCount <= budgets.P1.transient_idle_max, {
       package_processes: found.size, found: [...found].slice(0, 40),
+      transient: { boot_max_invocations: bootMax, idle_invocations: idleCount, idle_sightings_in_snapshots: idleSightings.slice(0, 10),
+        boot: Object.fromEntries(bootWatches), idle: Object.fromEntries(idleWatches) },
       rpcd_rss_anon_kib: { stock: rpcdAnon(stock), installed_off: rpcdAnon(instOff), installed_on: rpcdAnon(instOn),
         after_boot: afterBoot.length ? rpcdAnon(afterBoot) : null },
       rpcd_rss_anon_delta_kib: rpcdDelta,
       rss_anon_delta_by_process_kib: Object.fromEntries(Object.keys(instByComm).map(k => [k, instByComm[k] - (stockByComm[k] ?? 0)])),
       mem_available_delta_kib: median(instOff.map(s => s.meminfo.MemAvailable)) - median(stock.map(s => s.meminfo.MemAvailable)),
       snapshots_checked: snapshotFiles.length + 2 * loadMatching(/^win-.*\.json$/).length,
-      after_boot_checked: bootsChecked, ...(bootsChecked ? {} : { missing: 'no snapshot after a boot (ABFM_PERF_SKIP_BOOT?)' }),
+      after_boot_checked: bootsChecked, idle_after_boot_checked: idleAfterBootChecked,
+      ...(checked ? {} : { missing: 'no boot or idle-after-boot watch (ABFM_PERF_SKIP_BOOT, or a run from an older harness)' }),
       budget: budgets.P1,
       raw: ['p1-*.json', 'win-*.json', 'toggle-*.json', 'p10-*.json', 'install.json']
     });
@@ -326,10 +360,21 @@ const pollStats = b => {
       const [cOn, cOff, aOn, aOff] = [median(cpus('on')), median(cpus('off')), anon('on'), anon('off')];
       const dCpu = cOn != null && cOff != null ? cOn - cOff : null;
       const dAnon = aOn != null && aOff != null ? aOn - aOff : null;
+      const limit = budgets.P6.cpu_delta_pp_by_process?.[comm]?.[q] ?? budgets.P6.cpu_delta_pp[q];
+      // Context switches per answered query (voluntary / involuntary): the
+      // P6 diagnosis in docs/performance.md (dnsmasq/logd contention).
+      const ctx = (state, k) => median(loads[`${state}-${q}`].map(x => {
+        if (!x.win || !x.dns?.received) return null;
+        const before = new Map(sel(x.win.t0.procs).map(p => [key(p), p]));
+        let n = 0;
+        for (const p of sel(x.win.t1.procs)) { const b = before.get(key(p)); if (b) n += p[k] - b[k]; }
+        return n / x.dns.received;
+      }));
       out[q][comm] = { cpu_off_pct_runs: roundAll(cpus('off')), cpu_on_pct_runs: roundAll(cpus('on')), cpu_delta_pp: round(dCpu),
-        rss_anon_off_kib: aOff, rss_anon_on_kib: aOn, rss_anon_delta_kib: dAnon };
+        budget_pp: limit, rss_anon_off_kib: aOff, rss_anon_on_kib: aOn, rss_anon_delta_kib: dAnon,
+        ctxsw_per_query: { off: [round(ctx('off', 'vctx')), round(ctx('off', 'nvctx'))], on: [round(ctx('on', 'vctx')), round(ctx('on', 'nvctx'))] } };
       if (dCpu == null) { measured = false; continue; }
-      if (dCpu > budgets.P6.cpu_delta_pp[q] || (dAnon ?? 0) > budgets.P6.rss_anon_delta_kib) pass = false;
+      if (dCpu > limit || (dAnon ?? 0) > budgets.P6.rss_anon_delta_kib) pass = false;
     }
     const busy = state => median(loads[`${state}-${q}`].map(x => {
       if (!x.win) return null;
@@ -420,12 +465,12 @@ function brief(id, m) {
   const b = budgets[id];
   try {
     switch (id) {
-      case 'P1': return `package processes ${m.package_processes}${m.found.length ? ` (${m.found[0]}${m.found.length > 1 ? ', …' : ''})` : ''}, rpcd RssAnon +${m.rpcd_rss_anon_delta_kib} KiB (≤ ${b.rpcd_rss_anon_delta_kib})${m.missing ? `; ${m.missing}` : ''}`;
+      case 'P1': return `resident ${m.package_processes}${m.found.length ? ` (${m.found[0]}${m.found.length > 1 ? ', …' : ''})` : ''} (≤ ${b.package_processes}); transient init at boot ≤ ${m.transient.boot_max_invocations} per boot (≤ ${b.transient_boot_max}), ${Object.values(m.transient.boot).map(v => `${v.wall_s} s`).join('/')} wall; idle ${m.transient.idle_invocations} (≤ ${b.transient_idle_max}); rpcd RssAnon +${m.rpcd_rss_anon_delta_kib} KiB (≤ ${b.rpcd_rss_anon_delta_kib})${m.missing ? `; ${m.missing}` : ''}`;
       case 'P2': return `hidden ${m.hidden_requests} req/${m.hidden_s} s (${m.hide_method}), closed ${m.closed_requests} req/${m.closed_s} s, visible control ${m.visible_control_requests} req/${m.visible_control_s} s`;
       case 'P3': return rates.map(q => `@${q}: Δ ${m.rates[q].cpu_delta_pp} pp (≤ ${b.cpu_delta_pp[q]}), log read p95 N=${m.rates[q].log_read.n_incremental_runs[0]} ${m.rates[q].log_read.incremental_p95_ms} ms (≤ ${m.rates[q].log_read.incremental_budget_ms}) N=900 ${m.rates[q].log_read.full_p95_ms} ms (≤ ${b.log_read_full_p95_ms})`).join('; ');
       case 'P4': return m.marks_at_900 ? `page marks p95 ${m.marks_p95_ms} ms over ${m.marks_at_900} polls (≤ ${b.poll_p95_ms})` : `querylog module p95 ${m.module_bench?.p95_ms} ms at ${m.module_bench?.entries?.[0]} entries (≤ ${b.poll_p95_ms}; no render)`;
       case 'P5': return rates.map(q => `@${q}: Δp95 ${m.rates[q].delta_ms} ms (≤ ${m.rates[q].allowed_delta_ms})`).join(', ');
-      case 'P6': return rates.map(q => `@${q}: max Δ ${Math.max(...b.processes.map(c => m.rates[q][c].cpu_delta_pp ?? 0))} pp (≤ ${b.cpu_delta_pp[q]})`).join(', ');
+      case 'P6': return rates.map(q => `@${q}: ${b.processes.map(c => `${c} ${m.rates[q][c].cpu_delta_pp}`).join(' ')} pp (≤ ${b.cpu_delta_pp[q]}, dnsmasq ≤ ${b.cpu_delta_pp_by_process.dnsmasq[q]})`).join('; ');
       case 'P7': return `info p95 ${m.info?.p95_ms} ms (≤ ${b.info_p95_ms})`;
       case 'P8': return `dry max ${m.dry_run.max_ms} ms, real ${m.real.max_ms} ms (≤ ${b.apply_max_ms}), rpcd probe max ${round(m.rpcd_probe?.max)} ms (≤ ${b.rpcd_block_max_ms})`;
       case 'P10': return `boot ${m.boot_logging_restarts}, enable ${JSON.stringify(m.enable.map(e => e.restarts))}, save ${m.save.restarts}`;

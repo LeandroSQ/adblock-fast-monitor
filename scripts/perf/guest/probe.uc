@@ -6,8 +6,8 @@
 //   probe.uc snapshot                    all userland processes + meminfo + /proc/stat
 //   probe.uc window SECONDS [TAG]        logger marker, snapshot, sleep, snapshot;
 //                                        counts syslog lines after the marker
-//   probe.uc watch SECONDS               package processes seen in /proc every
-//                                        250 ms (catches procd respawn loops)
+//   probe.uc watch SECONDS [INTERVAL_MS] package processes seen in /proc every
+//                                        INTERVAL (250) ms, with per-pid lifetimes
 //   probe.uc rpc OBJECT METHOD JSON N    N timed ubus calls (ms)
 //   probe.uc rpcprobe SECONDS INTERVAL_MS  repeated `session list` latencies (rpcd)
 //   probe.uc logbench CALLS INTERVAL_MS  `log read` latency at the browser's
@@ -131,10 +131,17 @@ function window(seconds, tag) {
 		t0: t0, t1: t1, log: log_lines_after(marker) };
 }
 
-function watch(seconds) {
-	let seen = {}, scans = 0, end = now_ms() + seconds * 1000;
+// Every process whose cmdline names the package, scanned every INTERVAL ms:
+// per cmdline (`seen`) and per pid (`procs`: ppid, first/last sighting in ms
+// since the watch started), so transient init invocations can be told from
+// resident processes (§11 P1).
+function watch(seconds, interval) {
+	interval ??= 250;
+	let seen = {}, procs = {}, scans = 0, t0 = now_ms(), end = t0 + seconds * 1000;
+	let up = +split(fs.readfile('/proc/uptime') ?? '0', ' ')[0];
 	let self = +fs.readlink('/proc/self');
 	while (now_ms() < end) {
+		let t = int(now_ms() - t0);
 		for (let pid in fs.lsdir('/proc') ?? []) {
 			if (!match(pid, /^[0-9]+$/) || +pid == self)
 				continue;
@@ -147,11 +154,20 @@ function watch(seconds) {
 			seen[c] ??= { samples: 0, pids: [] };
 			seen[c].samples++;
 			if (index(seen[c].pids, +pid) < 0) push(seen[c].pids, +pid);
+			let st = fs.readfile(`/proc/${pid}/stat`);
+			let key = `${pid}:${st ? split(trim(substr(st, rindex(st, ')') + 2)), ' ')[19] : 0}`;
+			if (!procs[key]) {
+				let pp = st ? +split(trim(substr(st, rindex(st, ')') + 2)), ' ')[1] : null;
+				procs[key] = { pid: +pid, ppid: pp, cmdline: c, first_ms: t, last_ms: t, samples: 0 };
+			}
+			procs[key].last_ms = t;
+			procs[key].samples++;
 		}
 		scans++;
-		sleep(250);
+		sleep(interval);
 	}
-	return { seconds: seconds, scans: scans, seen: seen };
+	return { seconds: seconds, interval_ms: interval, uptime_at_start_s: up, scans: scans,
+		duration_ms: int(now_ms() - t0), seen: seen, procs: values(procs) };
 }
 
 function percentile(sorted, q) {
@@ -255,7 +271,7 @@ let cmd = ARGV[0];
 let out;
 if (cmd == 'snapshot') out = snapshot();
 else if (cmd == 'window') out = window(+ARGV[1], ARGV[2]);
-else if (cmd == 'watch') out = watch(+ARGV[1]);
+else if (cmd == 'watch') out = watch(+ARGV[1], ARGV[2] ? +ARGV[2] : null);
 else if (cmd == 'rpc') out = rpc(ARGV[1], ARGV[2], ARGV[3], +(ARGV[4] ?? 1));
 else if (cmd == 'rpcprobe') out = rpcprobe(+ARGV[1], +(ARGV[2] ?? 20));
 else if (cmd == 'logbench') out = logbench(+(ARGV[1] ?? 20), +(ARGV[2] ?? 250));

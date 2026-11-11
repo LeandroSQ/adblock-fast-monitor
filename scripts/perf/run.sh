@@ -232,9 +232,12 @@ if [[ "${ABFM_PERF_SKIP_BOOT:-0}" != 1 ]]; then
 		set_logging "p10-preboot-$state" "$value"
 		if cold_boot "$n"; then
 			push_tools
-			probe "p1-after-boot-$state-watch" watch 20
-			gsh ". $G/lib.sh; sleep 5; perf_boot_report" >"$raw/p10-boot-$state.json" 2>&1 || err "boot report $state failed"
+			# Boot window: 30 s at 100 ms from the first SSH login (transient
+			# init invocations, §11 P1), then 60 s idle once boot has settled.
+			probe "p1-after-boot-$state-watch" watch 30 100
+			gsh ". $G/lib.sh; perf_boot_report" >"$raw/p10-boot-$state.json" 2>&1 || err "boot report $state failed"
 			for i in 1 2 3; do probe "p1-after-boot-$state-$i" snapshot; sleep 5; done
+			probe "p1-idle-after-boot-$state-watch" watch 60 100
 		else
 			err "boot ($state) failed: $(tail -c 300 "$raw/boot-$n.log")"
 			break

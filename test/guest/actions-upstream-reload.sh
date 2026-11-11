@@ -6,7 +6,9 @@
 # list in adblock-fast 1.2.4-r4 — start() skips the download when the last
 # status was statusSuccess and the output file exists, then stores the new
 # config as current. Recorded on the real guest; T15/T17 cover the `dl` job.
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
+# shellcheck source=test/fixtures/actions/guest-lib.sh
 . "$ABFM_FIXTURES/actions/guest-lib.sh"
 
 OUT=/var/run/adblock-fast/dnsmasq.servers

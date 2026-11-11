@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Behaviour of the real querylog.js (design B-min, docs/CONTRACT.md
-// §4.3-§4.4, §8): grammar and classification table, spoofing rejections,
+// Behaviour of the real querylog.js (docs/CONTRACT.md
+// §8.1-§8.3): grammar and classification table, spoofing rejections,
 // raw strings, request sizing, gaps and refetch, restarts, CNAME chains, the
 // pending TTL, router hiding, statistics and the row cap.
 import assert from 'node:assert/strict';
@@ -28,14 +28,14 @@ const outcome = (tail, o) => {
   return [row.decision, row.source];
 };
 
-test('T03: §4.4 classification table: config answers', () => {
+test('T03: §8.3 classification table: config answers', () => {
   for (const a of ['NXDOMAIN', 'NODATA', 'NODATA-IPv4', 'NODATA-IPv6', '0.0.0.0', '::', '127.0.0.1'])
     assert.deepEqual(outcome(`config ads.example.test is ${a}`), ['blocked', 'config'], a);
   assert.deepEqual(outcome('config ads.example.test is 198.51.100.7'), ['other', 'config'], 'address=');
   assert.deepEqual(outcome('config ads.example.test is <CNAME>'), ['other', 'config'], 'local cname=');
 });
 
-test('§4.4 local names: judged on the query name, never blocked', () => {
+test('§8.3 local names: judged on the query name, never blocked', () => {
   const local = (name, opts) => outcome(`config ${name} is NXDOMAIN`, { name, opts });
   for (const n of ['wpad', 'openwrt.lan', 'a.b.lan', 'printer.local', 'x.localhost', 'x.invalid',
     'x.onion', 'version.bind', '1.0.0.10.in-addr.arpa', 'home.arpa'])
@@ -53,7 +53,7 @@ test('§4.4 local names: judged on the query name, never blocked', () => {
   assert.deepEqual(outcome('config 192.0.2.1 is NXDOMAIN', { name: '192.0.2.1' }), ['other', 'local'], 'address');
 });
 
-test('§4.4 classification table: hosts, DHCP, reply, cache, auth', () => {
+test('§8.3 classification table: hosts, DHCP, reply, cache, auth', () => {
   assert.deepEqual(outcome('/var/run/adblock-fast/dnsmasq.addnhosts ads.example.test is ::'), ['blocked', 'addnhosts']);
   assert.deepEqual(outcome('/var/run/adblock-fast/dnsmasq.addnhosts ads.example.test is 127.0.0.1'), ['blocked', 'addnhosts']);
   assert.deepEqual(outcome('/etc/hosts ads.example.test is 127.0.0.1'), ['other', 'hosts']);
@@ -69,7 +69,7 @@ test('§4.4 classification table: hosts, DHCP, reply, cache, auth', () => {
   assert.deepEqual(outcome('auth ads.example.test is 192.0.2.1'), ['other', 'auth']);
 });
 
-test('§4.3 TCP/UDP prefix and the first terminal line decides', () => {
+test('§8.3 TCP/UDP prefix and the first terminal line decides', () => {
   const st = ql.create();
   ql.ingest(st, reply([
     'dnsmasq[1]: TCP 7 192.0.2.10/40000 query[A] tcp.example.test from 192.0.2.10',
@@ -100,7 +100,7 @@ test('orphan answers (query not seen) are ignored', () => {
   assert.equal(ql.stats(st).kept, 0);
 });
 
-test('§4.3 spoofing and malformed lines are rejected', () => {
+test('§8.3 spoofing and malformed lines are rejected', () => {
   const st = ql.create();
   const msgs = [
     'dnsmasq[1]: 1 192.0.2.10/1 query[A] victim.example.com is 0.0.0.0.example.test from 192.0.2.10',

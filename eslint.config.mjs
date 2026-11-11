@@ -31,6 +31,7 @@ export default defineConfig([
     plugins: { '@stylistic': stylistic },
     rules: {
       'no-new-func': 'error',
+      'no-unused-vars': ['error', { ignoreRestSiblings: true }], // const { omitted, ...rest } = o
       '@stylistic/quotes': ['error', 'single', { avoidEscape: true, allowTemplateLiterals: 'always' }],
       '@stylistic/semi': ['error', 'always'],
       '@stylistic/comma-dangle': ['error', 'never'],

@@ -4,5 +4,8 @@
 # BusyBox ash (OpenWrt /bin/sh) and every OpenWrt init script use `local`;
 # everything else stays POSIX. Not `shell=busybox`: it would accept `[[`.
 disable=SC3043
+# Test helpers are passed by name to t_ok/t_not/abfm_wait_until or trap,
+# which ShellCheck cannot follow.
+disable=SC2329
 # Follow the repo-root-relative `# shellcheck source=` directives.
 external-sources=true

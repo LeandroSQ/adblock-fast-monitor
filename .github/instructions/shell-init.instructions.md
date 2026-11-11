@@ -16,11 +16,11 @@ config and the lifecycle section it references).
   resident processes in every state (P1); it only reconciles the
   query-logging drop-ins. dnsmasq restarts only as the contract allows
   (P10). Never touch `/etc/config/dhcp` or adblock-fast's files.
-- `root/etc/config/adblock-fast-monitor` holds the contract defaults (§3);
-  privacy-relevant options stay off by default. Changing a default, or
-  renaming or removing an option, is a contract change (AGENTS.md hard
-  restriction 10) and updates `test/guest/package-files.host.sh`. Once a
-  release has shipped an option, removing or renaming it also needs a
-  migration with a test.
+- `root/etc/config/adblock-fast-monitor` holds the contract defaults (§3:
+  only `query_logging`, off by default). Adding, changing, renaming or
+  removing an option is a contract change (AGENTS.md hard restriction 10)
+  and updates `test/guest/package-files.host.sh`; it must also keep the
+  upgrade from the previous release working (T30,
+  `scripts/release/verify-upgrade.sh`).
 - Lifecycle behaviour is tested on the guest (`test/guest/`), including
   `test/guest/logging-lifecycle.sh` and `test/guest/perf-p1-disabled.sh`.

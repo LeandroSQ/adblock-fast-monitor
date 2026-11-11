@@ -35,6 +35,7 @@ dns_a() {
 # log_mark -> marker id; log_since MARK -> syslog lines after the marker
 # (fails if the ring buffer already dropped the marker).
 log_mark() {
+	# shellcheck disable=SC3028 # BusyBox ash provides RANDOM
 	_m="abfm-mark-$$-$(date +%s)-$RANDOM"
 	logger -t abfm-test "$_m"
 	echo "$_m"

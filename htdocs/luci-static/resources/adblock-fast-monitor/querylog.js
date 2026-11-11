@@ -4,8 +4,8 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Browser-side dnsmasq query log (design B-min, docs/CONTRACT.md §4.3-§4.4,
- * §8): turns replies of core `log read {lines, stream:false, oneshot:true}`
+ * Browser-side dnsmasq query log (docs/CONTRACT.md §8.1-§8.3):
+ * turns replies of core `log read {lines, stream:false, oneshot:true}`
  * into a bounded list of recent queries. Pure logic: no DOM, no RPC, no
  * timers, so the same file is loaded unchanged by test/unit/querylog*.
  *
@@ -30,7 +30,7 @@
  *       {key, time (epoch s), domain, qtype, answers (<=4), decision,
  *        source, client, router}
  *       decision: blocked | allowed | other | no-answer | pending;
- *       source: §4.4 attribution or null. key is opaque and unique
+ *       source: §8.3 attribution or null. key is opaque and unique
  *       (`epoch:pid:serial:client/port`, epoch = dnsmasq restarts seen).
  *       show_router defaults to !hide_router.
  *   stats(state, {show_router}) -> {kept, blocked, allowed, other,
@@ -49,7 +49,7 @@ const LINES_MAX = 900;          // keeps 1 KiB lines under ubus's 1 MiB cap
 const ANSWERS_MAX = 4;
 const ADDNHOSTS = '/var/run/adblock-fast/dnsmasq.addnhosts';
 
-// §4.3: logd keeps the `dnsmasq[pid]: ` tag in `msg`; there is no ctime /
+// §8.3: logd keeps the `dnsmasq[pid]: ` tag in `msg`; there is no ctime /
 // facility prefix in `log read` replies.
 const PREFIX = /^dnsmasq\[([0-9]+)\]: (.*)$/;
 const BODY = /^(TCP |UDP )?([0-9]+) ([^ /]+)\/([0-9]+) ([^ ]+) ([a-z0-9_.:-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$/;
@@ -60,7 +60,7 @@ const DIGITS = /^[0-9]+$/;
 const ADDRESS = /^[0-9.]+$/;
 
 // Special-use TLDs OpenWrt answers locally (rfc6761.conf); `test` is
-// deliberately absent (fixtures use it for listed ad domains), §4.4.
+// deliberately absent (fixtures use it for listed ad domains), §8.3.
 const SPECIAL = { localhost: true, local: true, invalid: true, onion: true, bind: true, arpa: true };
 const ROUTER = { '127.0.0.1': true, '::1': true };
 const CONFIG_BLOCK = {
@@ -79,7 +79,7 @@ function under(name, domain) {
 		 name.charAt(name.length - domain.length - 1) === '.');
 }
 
-// §4.4 "local": single label, an address, a special-use TLD, or equal to /
+// §8.3 "local": single label, an address, a special-use TLD, or equal to /
 // under a dhcp `domain` / `local` value (passed in by the UI from `info`).
 function isLocal(name, localDomains) {
 	const dot = name.lastIndexOf('.');
@@ -95,7 +95,7 @@ function isLocal(name, localDomains) {
 
 // Returns {pid, serial, client, port, source, name, verb, answer}, or a
 // {lost:N} / {started:true} marker, or null (ignored); rejected query-log
-// lines bump state.rejected (§4.3).
+// lines bump state.rejected (§8.3).
 function parse(st, msg) {
 	const m = PREFIX.exec(msg);
 	if (!m)
@@ -118,7 +118,7 @@ function parse(st, msg) {
 	};
 }
 
-// §4.4 table for terminal (`is`) lines: [decision, source] or null.
+// §8.3 table for terminal (`is`) lines: [decision, source] or null.
 function classify(ev, qname, localDomains) {
 	const src = ev.source, ans = ev.answer;
 
@@ -188,7 +188,7 @@ function addAnswer(e, value) {
 		e.answers.push(value);
 }
 
-// One answer line of an entry: the first decides (§4.4); every line adds to
+// One answer line of an entry: the first decides (§8.3); every line adds to
 // the displayed answer. A `<CNAME>` answer is shown as the next name in the
 // chain (the following line's name).
 function answer(e, ev) {

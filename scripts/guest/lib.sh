@@ -114,6 +114,7 @@ guest_fetch() {
 
 # In-guest readiness: LAN has an IPv4 address, dnsmasq runs, dropbear and (if
 # installed) uhttpd listen. Polls once a second; no fixed delays.
+# shellcheck disable=SC2016 # expanded by the guest shell
 GUEST_READY_CHECK='( i=0; until ifstatus lan 2>/dev/null | jsonfilter -e "@[\"ipv4-address\"][0].address" | grep -q "^10[.]0[.]2[.]" && pidof dnsmasq >/dev/null && netstat -ltn 2>/dev/null | grep -q ":22 " && { [ ! -x /etc/init.d/uhttpd ] || ! /etc/init.d/uhttpd enabled || netstat -ltn 2>/dev/null | grep -q ":80 "; }; do i=$((i+1)); [ $i -lt 180 ] || exit 1; sleep 1; done )'
 
 # QEMU's pid lives in $GUEST_RUN_DIR/qemu.pid: guest_reboot may start a new
@@ -184,6 +185,7 @@ guest_start() {
 	GUEST_READONLY_PASSWORD="$(openssl rand -hex 16)"
 
 	rm -f "$GUEST_RUN_DIR/proxy.port"
+	# shellcheck disable=SC2046 # expands to no argument unless offline
 	python3 "$GUEST_LIB_ROOT/scripts/guest/apk-cache-proxy.py" --port 0 \
 		--cache "${GUEST_PACKAGE_CACHE:-$GUEST_LIB_ROOT/.local-validation/openwrt-package-mirror}" \
 		--fixtures "$GUEST_LIB_ROOT/test/fixtures" --ready-file "$GUEST_RUN_DIR/proxy.port" \
@@ -194,6 +196,7 @@ guest_start() {
 	[[ -s "$GUEST_RUN_DIR/proxy.port" ]] || guest__die 'package cache proxy did not start' || return 1
 	GUEST_HOST_URL="http://10.0.2.2:$(cat "$GUEST_RUN_DIR/proxy.port")"
 
+	# shellcheck disable=SC2054 # the comma is part of the QEMU option value
 	local accel=(-accel tcg,thread=multi -cpu max)
 	GUEST_ACCEL_USED=tcg
 	if [[ "${GUEST_ACCEL:-auto}" != tcg && -r /dev/kvm && -w /dev/kvm ]]; then

@@ -163,7 +163,7 @@ test('cancelling the confirmation sends only the dry run; uncommitted CLI change
   expect(applies.filter((a) => a.dry_run)).toHaveLength(1);
   await expect(pendingRow(page, 'telemetry.example.test')).toHaveAttribute('data-op', 'allow');
 
-  // §5.10: the guard sees uncommitted `uci` command-line changes, not LuCI's staged ones
+  // §14.9: the guard sees uncommitted `uci` command-line changes, not LuCI's staged ones
   guest('uci set adblock-fast.config.abfm_browser_probe=1');
   try {
     await page.getByRole('button', { name: 'Apply changes' }).click();

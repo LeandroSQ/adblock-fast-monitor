@@ -10,6 +10,7 @@
 # foreign jailed dnsmasq (not the procd service) that stays stale forever
 # never makes the trigger restart dnsmasq again (no restart loop). T06: one
 # trigger firing costs one process.
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
 
 INIT=/etc/init.d/adblock-fast-monitor

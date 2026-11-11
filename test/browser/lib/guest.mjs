@@ -150,8 +150,10 @@ export function waitAdblockFast(seconds = 300) {
 
 /*
  * Query logging on (the package's own drop-in), adblock-fast healthy in
- * dnsmasq.servers mode, and a fake upstream for *.up.example.test
- * (A 192.0.2.10, AAAA 2001:db8::10) so "allowed" answers are deterministic.
+ * dnsmasq.servers mode, and a fake upstream that answers *.example.test with
+ * A 192.0.2.10 / AAAA 2001:db8::10, so "allowed" answers are deterministic.
+ * It serves *.up.example.test and is dnsmasq's only default server: an
+ * allowed name (adblock-fast's `server=/name/#`) resolves through it too.
  */
 export function ensureHealthy() {
   guest([
@@ -168,11 +170,11 @@ export function ensureHealthy() {
     '/etc/init.d/adblock-fast-monitor restart',
     // fake upstream: a second dnsmasq on 127.0.0.1:5300 (test-only drop-in)
     'if ! [ -s /tmp/abfm-browser-upstream.pid ] || ! kill -0 "$(cat /tmp/abfm-browser-upstream.pid)" 2>/dev/null; then',
-    '  dnsmasq --conf-file=/dev/null --keep-in-foreground --port=5300 --listen-address=127.0.0.1 --bind-interfaces --no-resolv --no-hosts --local-ttl=300 --user=root --pid-file= --address=/up.example.test/192.0.2.10 --address=/up.example.test/2001:db8::10 >/dev/null 2>&1 &',
+    '  dnsmasq --conf-file=/dev/null --keep-in-foreground --port=5300 --listen-address=127.0.0.1 --bind-interfaces --no-resolv --no-hosts --local-ttl=300 --user=root --pid-file= --address=/example.test/192.0.2.10 --address=/example.test/2001:db8::10 >/dev/null 2>&1 &',
     '  echo $! >/tmp/abfm-browser-upstream.pid',
     'fi',
     'restart=0',
-    `for d in /tmp/dnsmasq.*.d; do [ -s "$d/${UPSTREAM_CONF}" ] && continue; printf '%s\\n' 'server=/up.example.test/127.0.0.1#5300' 'rebind-domain-ok=/example.test/' >"$d/${UPSTREAM_CONF}"; restart=1; done`,
+    `for d in /tmp/dnsmasq.*.d; do [ -s "$d/${UPSTREAM_CONF}" ] && continue; printf '%s\\n' 'server=/up.example.test/127.0.0.1#5300' 'server=127.0.0.1#5300' 'no-resolv' 'rebind-domain-ok=/example.test/' >"$d/${UPSTREAM_CONF}"; restart=1; done`,
     '[ $restart = 0 ] || /etc/init.d/dnsmasq restart'
   ].join('\n'));
   guestWait('pidof dnsmasq >/dev/null && grep -qs "^log-queries" /tmp/dnsmasq.*.d/* && nslookup a.up.example.test 127.0.0.1 >/dev/null 2>&1', 60);

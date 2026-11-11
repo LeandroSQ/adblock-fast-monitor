@@ -1,5 +1,6 @@
-// abfm.system adblock-fast discovery (WU2 section; docs/CONTRACT.md §6.1,
-// §6.5, §10) against a temporary UCI directory and real files.
+// SPDX-License-Identifier: Apache-2.0
+// abfm.system adblock-fast discovery (docs/CONTRACT.md §6.1, §6.5, §10)
+// against a temporary UCI directory and real files.
 'use strict';
 
 push(REQUIRE_SEARCH_PATH, '/src/root/usr/share/ucode/*.uc');
@@ -33,10 +34,6 @@ config dnsmasq 'off'
 write('system', `
 config system
 	option hostname 'MyRouter'
-`);
-write('adblock-fast-monitor', `
-config monitor 'config'
-	list dnsmasq_instance 'guest'
 `);
 write('adblock-fast', `
 config adblock-fast 'config'
@@ -100,14 +97,15 @@ t.test('adblock_fast_pending ignores adblock-fast size bookkeeping only', () => 
 	t.ok(sys.adblock_fast_pending(f), 'a list add');
 });
 
-t.test('dnsmasq_info: enabled sections with logfacility_file, targeted, confdir-invalid', () => {
+t.test('dnsmasq_info: enabled sections with logfacility_file, confdir-invalid', () => {
 	let info = sys.dnsmasq_info(cur(), null);
 	t.eq(info.running, false);
 	t.eq(length(info.instances), 2, 'disabled section left out');
 	let main = info.instances[0], guest = info.instances[1];
-	t.eq([ main.logfacility_file, main.targeted, main.dropin, main.uci_logqueries ], [ true, false, false, false ]);
-	t.eq([ guest.section, guest.confdir, guest.reason, guest.logfacility_file, guest.targeted ],
-		[ 'guest', null, 'confdir-invalid', false, true ]);
+	t.eq(sort(keys(main)), [ 'confdir', 'dropin', 'logfacility_file', 'running', 'section', 'uci_logqueries' ]);
+	t.eq([ main.logfacility_file, main.dropin, main.uci_logqueries ], [ true, false, false ]);
+	t.eq([ guest.section, guest.confdir, guest.reason, guest.logfacility_file ],
+		[ 'guest', null, 'confdir-invalid', false ]);
 });
 
 t.test('logd_size_kib: log_buffer_size, else log_size, else 64 (ubox log.init)', () => {

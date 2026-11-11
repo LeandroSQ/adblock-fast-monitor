@@ -74,10 +74,13 @@ let ctx = d.protect_context([ 'lan', '/lan/', '/home.example/', 'OpenWrt', 'hear
 t.test('protected set: built-ins, dhcp domain/local, hostname, heartbeat (equal or under)', () => {
 	for (let n in [ 'localhost', 'x.localhost', 'in-addr.arpa', '1.168.192.in-addr.arpa', 'printer.local',
 		'svc.internal', 'home.arpa', 'nas.home.arpa', 'router.lan', 'pc.home.example', 'x.openwrt',
-		'heartbeat.mossdef.org', 'a.heartbeat.mossdef.org' ])
+		'heartbeat.mossdef.org', 'a.heartbeat.mossdef.org', 'x.invalid', 'abc.onion', 'version.bind' ])
 		t.ok(d.protected_domain(n, ctx), n);
-	for (let n in [ 'mossdef.org', 'example.com', 'lan.example.com', 'arpa.example.com', 'oisd.nl' ])
+	for (let n in [ 'mossdef.org', 'example.com', 'lan.example.com', 'arpa.example.com', 'oisd.nl', 'ads.example.test' ])
 		t.ok(!d.protected_domain(n, ctx), n);
+	t.eq(slice(ctx.names, 0, 7), [ 'localhost', 'arpa', 'local', 'internal', 'invalid', 'onion', 'bind' ],
+		'built-ins first, then the configured names normalized (the info.protected_suffixes list)');
+	t.eq(slice(ctx.names, 7), [ 'lan', 'home.example', 'openwrt', 'heartbeat.mossdef.org' ], 'de-duplicated, lower-cased, slashes stripped');
 });
 
 t.test('protected set: list hosts match exactly', () => {

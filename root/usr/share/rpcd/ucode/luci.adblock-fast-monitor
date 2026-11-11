@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // rpcd ucode plugin `luci.adblock-fast-monitor` (docs/CONTRACT.md §6, §7.1,
 // §7.3). It runs inside rpcd's single-threaded uloop, so every method returns
 // within milliseconds: all adblock-fast work runs in the detached job (job.uc).
@@ -18,7 +19,6 @@ const LOCK_FILE = LOCK_DIR + '/adblock-fast-monitor.lock';
 const JOB_BIN = '/usr/libexec/adblock-fast-monitor/job.uc';
 const QUEUE_WINDOW = 30;
 const TERMINAL = { applied: true, partial: true, failed: true };
-const UNSUPPORTED_DNS = /^(smartdns|unbound)\./;
 
 function fail(code, message, extra) {
 	let r = { api: API, ok: false, error: { code, message } };
@@ -46,9 +46,8 @@ function af_state(c, conn) {
 	return sys.adblock_fast_state(c, conn);
 }
 
+// §6.5 protected names and list hosts; needs dhcp and system loaded.
 function protect_ctx(c, af) {
-	c.load('dhcp');
-	c.load('system');
 	let p = sys.adblock_fast_protected(c, af);
 	return dom.protect_context(p.names, p.hosts);
 }
@@ -119,14 +118,6 @@ function reap_locked(job, now) {
 	return job;
 }
 
-function job_view(job) {
-	if (!job)
-		return null;
-	let v = { ...job };
-	delete v.ctx;
-	return v;
-}
-
 function new_job_id(now) {
 	let rnd = fs.readfile('/dev/urandom', 2);
 	return sprintf('j%010d-%s', now, rnd ? hexenc(rnd) : sprintf('%04x', (now * 7919) % 65536));
@@ -158,13 +149,9 @@ function m_info() {
 
 	return {
 		api: API, ok: true,
-		monitor: {
-			query_logging: mon.query_logging,
-			dnsmasq_instance: mon.dnsmasq_instance,
-			exclude_router: mon.exclude_router,
-			poll_interval: mon.poll_interval,
-		},
+		monitor: { query_logging: mon.query_logging },
 		local_domains: sys.local_domains(c),
+		protected_suffixes: protect_ctx(c, af).names,
 		logd: { size_kib: sys.logd_size_kib(c) },
 		adblock_fast: {
 			installed: af.installed, enabled: af.enabled, status: af.status, dns: af.dns,
@@ -183,9 +170,11 @@ function m_apply(req) {
 	let conn = ubus.connect();
 	let af = af_state(c, conn);
 	conn?.disconnect();
+	c.load('dhcp');
+	c.load('system');
 
 	// Steps 1-3.
-	let v = dom.validate_batch(args, af.installed ? protect_ctx(c, af) : dom.protect_context([], []));
+	let v = dom.validate_batch(args, protect_ctx(c, af));
 	if (v.error)
 		return { api: API, ok: false, error: v.error };
 
@@ -194,7 +183,7 @@ function m_apply(req) {
 		return fail('adblock-fast-missing', 'adblock-fast is not installed');
 	if (af.external_config)
 		return fail('external-config', 'adblock-fast uses an external dnsmasq config file');
-	if (match(af.dns, UNSUPPORTED_DNS) || !dom.DNSMASQ_MODES[af.dns])
+	if (!dom.DNSMASQ_MODES[af.dns])
 		return fail('unsupported-dns-mode', `adblock-fast dns mode ${af.dns} is not supported`);
 	if (af.pending_uci_changes)
 		return fail('pending-uci-changes', 'adblock-fast has uncommitted changes in /tmp/.uci; commit or revert them first');
@@ -212,7 +201,7 @@ function m_apply(req) {
 		return fail('confirm-required', 'this change rebuilds the block-list: it downloads all lists over WAN, restarts DNS and may take minutes',
 			{ mode: p.mode, plan });
 	if (args.dry_run === true)
-		return { api: API, ok: true, dry_run: true, noop: false, mode: p.mode, may_escalate: p.may_escalate, plan };
+		return { api: API, ok: true, dry_run: true, noop: false, mode: p.mode, plan };
 
 	// Step 8.
 	let lock = lock_try();
@@ -252,13 +241,12 @@ function m_apply(req) {
 	let job = {
 		id, state: 'queued', mode: p.mode, phase: null,
 		created_at: now, started_at: null, finished_at: null,
-		persisted: changes > 0, escalated: false,
+		persisted: changes > 0,
 		adblock_fast_status: af.status, error: null,
 		items: map(p.items, (it) => ({
-			op: it.op, domain: it.domain, effective_op: it.effective_op, change: it.change,
+			op: it.op, domain: it.domain, change: it.change,
 			expect: it.expect, result: 'pending', observed: null, answer: null, reason: null,
 		})),
-		ctx: { dns: af.dns, output_file: af.output_file },
 	};
 	let written = write_job(job);
 	unlock(lock);
@@ -272,7 +260,7 @@ function m_apply(req) {
 	if (rc != 0)
 		return fail('spawn-failed', 'cannot start the job', { persisted: changes > 0, job_id: id });
 
-	return { api: API, ok: true, job_id: id, state: 'queued', mode: p.mode, may_escalate: p.may_escalate, plan };
+	return { api: API, ok: true, job_id: id, state: 'queued', mode: p.mode, plan };
 }
 
 function m_job(req) {
@@ -289,7 +277,7 @@ function m_job(req) {
 	}
 	if (want != null && job?.id != want)
 		return fail('not-found', 'no such job');
-	return { api: API, ok: true, job: job_view(job) };
+	return { api: API, ok: true, job };
 }
 
 return {

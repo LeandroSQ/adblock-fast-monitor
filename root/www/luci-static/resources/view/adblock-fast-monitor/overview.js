@@ -324,6 +324,12 @@ return view.extend({
 
 	updateState() {
 		const st = model.pageState(this.infoResult, this.logResult, this.hasRows);
+		/* §8.5: no actions without adblock-fast */
+		const noActions = (st.state == 'adblock-fast-missing' || st.state == 'access-denied');
+		if (noActions != !!this.noActions) {
+			this.noActions = noActions;
+			this.updatePending();
+		}
 		const children = [ E('strong', {}, T(STATE_TEXT[st.state] || st.state)) ];
 		if (st.reason)
 			children.push(E('p', { 'data-reason': st.reason }, T(REASON_TEXT[st.reason] || st.reason)));
@@ -409,6 +415,8 @@ return view.extend({
 
 	actionsCell(row) {
 		const domain = row.domain;
+		if (this.noActions)
+			return [];
 		const inflight = this.pending.inflight && this.pending.inflight.items.some(i => i.domain == domain);
 		if (inflight)
 			return [ E('em', {}, T(_('Applying…'))) ];
@@ -435,7 +443,7 @@ return view.extend({
 		const all = querylog.rows(this.log, { show_router: this.display.showRouter });
 		const rows = model.filterRows(all, this.display.q);
 		const key = JSON.stringify([ rows.map(r => [ r.key, r.decision, r.answers ]), this.display,
-			this.canWrite ? [ this.pending.items, this.pending.inflight ] : null ]);
+			this.canWrite ? [ this.pending.items, this.pending.inflight, !!this.noActions ] : null ]);
 		if (key == this.rowsKey)
 			return;
 		this.rowsKey = key;
@@ -506,7 +514,7 @@ return view.extend({
 			'maxlength': 253, 'placeholder': 'ads.example.com', 'autocomplete': 'off', 'spellcheck': 'false' });
 		const op = E('select', { 'id': 'abfm-add-op', 'class': 'cbi-input-select', 'aria-label': _('Change') },
 			model.OPS.map(o => E('option', { 'value': o, 'selected': (o == 'block') ? '' : null }, T(OP_LABEL[o]))));
-		const add = E('button', { 'class': 'cbi-button cbi-button-add', 'id': 'abfm-add',
+		const add = this.addButton = E('button', { 'class': 'cbi-button cbi-button-add', 'id': 'abfm-add',
 			'click': () => { if (this.stageOp(op.value, input.value)) input.value = ''; } }, T(_('Add to pending')));
 		input.addEventListener('keydown', ev => { if (ev.key == 'Enter') add.click(); });
 
@@ -537,7 +545,8 @@ return view.extend({
 		]));
 		dom.content(this.pendingNode, [ dataTable(_('Pending changes'), [ _('Domain'), _('Change'), _('Note'), _('Actions') ],
 			rows, _('No pending changes.')) ]);
-		this.applyButton.disabled = !items.length || !!this.pending.inflight || !!this.applying;
+		this.applyButton.disabled = !items.length || !!this.pending.inflight || !!this.applying || !!this.noActions;
+		this.addButton.disabled = !!this.noActions;
 		this.discardButton.disabled = !items.length;
 		this.updateJob();
 	},

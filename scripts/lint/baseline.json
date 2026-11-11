@@ -1,0 +1,169 @@
+{
+  "README.md": {
+    "markdownlint/MD004": 1
+  },
+  "docs/CONTRACT.md": {
+    "markdownlint/MD012": 1,
+    "markdownlint/MD032": 13,
+    "markdownlint/MD034": 11,
+    "markdownlint/MD038": 4,
+    "markdownlint/MD040": 4,
+    "markdownlint/MD056": 1,
+    "markdownlint/MD060": 76
+  },
+  "docs/performance.md": {
+    "markdownlint/MD032": 1,
+    "markdownlint/MD060": 36
+  },
+  "htdocs/luci-static/resources/adblock-fast-monitor/model.js": {
+    "eslint/no-useless-assignment": 2
+  },
+  "htdocs/luci-static/resources/adblock-fast-monitor/querylog.js": {
+    "eslint/@stylistic/indent": 1,
+    "eslint/no-useless-escape": 1
+  },
+  "htdocs/luci-static/resources/view/adblock-fast-monitor/overview.js": {
+    "eslint/@stylistic/brace-style": 4,
+    "eslint/luci/require-bindings": 2
+  },
+  "root/etc/init.d/adblock-fast-monitor": {
+    "shellcheck/SC2034": 2,
+    "shellcheck/SC2154": 1
+  },
+  "scripts/build-package.sh": {
+    "shellcheck/SC2046": 1
+  },
+  "scripts/guest/lib.sh": {
+    "shellcheck/SC2016": 1,
+    "shellcheck/SC2046": 1,
+    "shellcheck/SC2054": 1
+  },
+  "scripts/hosttools/build-userland.sh": {
+    "shellcheck/SC1091": 1
+  },
+  "scripts/perf/ab-dnsmasq.sh": {
+    "shellcheck/SC2016": 1,
+    "shellcheck/SC2164": 1
+  },
+  "scripts/perf/dnsload.mjs": {
+    "eslint/no-unused-vars": 1
+  },
+  "scripts/perf/guest/lib.sh": {
+    "shellcheck/SC2009": 2
+  },
+  "scripts/perf/run.sh": {
+    "shellcheck/SC2164": 1
+  },
+  "scripts/performance-gate.mjs": {
+    "eslint/@stylistic/brace-style": 2,
+    "eslint/@stylistic/indent": 10
+  },
+  "scripts/release/selftest.sh": {
+    "shellcheck/SC2329": 3
+  },
+  "scripts/release/verify-luci-install.sh": {
+    "shellcheck/SC2016": 1
+  },
+  "scripts/release/verify-upgrade.sh": {
+    "shellcheck/SC2016": 1,
+    "shellcheck/SC2046": 1
+  },
+  "test/browser/install-luci.spec.mjs": {
+    "eslint/preserve-caught-error": 1
+  },
+  "test/browser/lib/guest.mjs": {
+    "eslint/no-useless-assignment": 1,
+    "eslint/preserve-caught-error": 1
+  },
+  "test/browser/ui-staging.spec.mjs": {
+    "eslint/no-unused-vars": 1
+  },
+  "test/browser/ui-states.spec.mjs": {
+    "eslint/@stylistic/quotes": 2
+  },
+  "test/fixtures/actions/guest-lib.sh": {
+    "shellcheck/SC3028": 1
+  },
+  "test/guest/actions-api.sh": {
+    "shellcheck/SC1091": 2,
+    "shellcheck/SC2046": 4,
+    "shellcheck/SC2086": 4
+  },
+  "test/guest/actions-jobs.sh": {
+    "shellcheck/SC1091": 2,
+    "shellcheck/SC2010": 1,
+    "shellcheck/SC2046": 1,
+    "shellcheck/SC2086": 1
+  },
+  "test/guest/actions-reboot.host.sh": {
+    "shellcheck/SC2015": 2,
+    "shellcheck/SC2016": 1
+  },
+  "test/guest/actions-session.host.sh": {
+    "shellcheck/SC2015": 3,
+    "shellcheck/SC2016": 1,
+    "shellcheck/SC2034": 1
+  },
+  "test/guest/actions-upstream-reload.sh": {
+    "shellcheck/SC1091": 2
+  },
+  "test/guest/dataplane-boot.host.sh": {
+    "shellcheck/SC2016": 3
+  },
+  "test/guest/dataplane-lib/guest.sh": {
+    "shellcheck/SC2016": 1,
+    "shellcheck/SC2086": 2
+  },
+  "test/guest/harness-api.host.sh": {
+    "shellcheck/SC2016": 2
+  },
+  "test/guest/harness-smoke.sh": {
+    "shellcheck/SC1091": 1,
+    "shellcheck/SC2016": 1
+  },
+  "test/guest/logd-oversize.host.sh": {
+    "shellcheck/SC2016": 2,
+    "shellcheck/SC2329": 1
+  },
+  "test/guest/logging-lifecycle.sh": {
+    "shellcheck/SC1091": 1
+  },
+  "test/guest/logging-logd-restart.sh": {
+    "shellcheck/SC1091": 1,
+    "shellcheck/SC2012": 2
+  },
+  "test/guest/package-acl.host.sh": {
+    "shellcheck/SC2329": 1
+  },
+  "test/guest/package-files.host.sh": {
+    "shellcheck/SC2016": 3
+  },
+  "test/guest/package-luci-install.host.sh": {
+    "shellcheck/SC2329": 1
+  },
+  "test/guest/package-upgrade.host.sh": {
+    "shellcheck/SC2010": 1,
+    "shellcheck/SC2016": 3,
+    "shellcheck/SC2034": 1,
+    "shellcheck/SC2329": 1
+  },
+  "test/guest/perf-p1-disabled.sh": {
+    "shellcheck/SC1091": 1,
+    "shellcheck/SC2009": 4
+  },
+  "test/lib/sh/run-suite.sh": {
+    "shellcheck/SC1091": 1
+  },
+  "test/shell/harness-busybox.test.sh": {
+    "shellcheck/SC1091": 1,
+    "shellcheck/SC2012": 1
+  },
+  "test/shell/uci-defaults-migrate.test.sh": {
+    "shellcheck/SC1090": 3,
+    "shellcheck/SC1091": 1
+  },
+  "test/unit/docs-references.test.mjs": {
+    "eslint/@stylistic/brace-style": 2,
+    "eslint/@stylistic/indent": 1
+  }
+}

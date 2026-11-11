@@ -1,7 +1,8 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Actions backend API on a real guest (docs/CONTRACT.md §6): T11 info,
-# T14 apply pipeline errors through real `ubus call`s, P8 apply return time.
-# `rules` no longer exists (api 2).
+# T14 apply pipeline errors through real `ubus call`s, P8 apply return time,
+# a LuCI session's staged UCI change is never committed by apply.
 . "$ABFM_TESTLIB/sh/testlib.sh"
 . "$ABFM_FIXTURES/actions/guest-lib.sh"
 
@@ -25,35 +26,33 @@ t_eq "info: dnsmasq running, instance section and default confdir" "true $sec /t
 ql=false
 [ "$(uci -q get adblock-fast-monitor.config.query_logging)" = 1 ] && ql=true
 t_eq "info: query_logging mirrors UCI" "$ql" "$(jget "$info" @.monitor.query_logging)"
-t_eq "info: monitor defaults (instances, exclude_router)" "* true" \
-	"$(jget "$info" '@.monitor.dnsmasq_instance[*]') $(jget "$info" @.monitor.exclude_router)"
-t_eq "info: no daemon fields remain" "" "$(jget "$info" @.monitor.service)$(jget "$info" @.monitor.object)$(jget "$info" @.monitor.enabled)"
+t_eq "info: monitor holds only query_logging" query_logging "$(ucode -e 'print(join(" ", sort(keys(json(ARGV[0]).monitor))))' "$info")"
+t_eq "info: dnsmasq instances carry exactly the §6.1 fields" "confdir dropin logfacility_file running section uci_logqueries" \
+	"$(ucode -e 'print(join(" ", sort(keys(json(ARGV[0]).dnsmasq.instances[0]))))' "$info")"
+host=$(uci -q get system.@system[0].hostname | awk '{ print tolower($0) }')
+t_eq "info: protected_suffixes = built-ins, heartbeat, dhcp domain, hostname" \
+	"localhost arpa local internal invalid onion bind heartbeat.example.com lan $host" "$(jget "$info" '@.protected_suffixes[*]' | tr '\n' ' ' | sed 's/ $//')"
 t_eq "info: local_domains are the dhcp domain/local values" "lan" "$(jget "$info" '@.local_domains[*]' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 cp /etc/config/dhcp /tmp/abfm-dhcp.bak
 uci set dhcp.@dnsmasq[0].local=/corp.example/
 uci set dhcp.@dnsmasq[0].domain=Home.Example
 uci commit dhcp
 t_eq "info: local_domains follow dhcp (lower-cased, slashes stripped)" "home.example corp.example" \
-	"$(echo $(jget "$(call info)" '@.local_domains[*]'))"
+	"$(jget "$(call info)" '@.local_domains[*]' | tr '\n' ' ' | sed 's/ $//')"
 cp /tmp/abfm-dhcp.bak /etc/config/dhcp && rm -f /tmp/abfm-dhcp.bak
 logsize=$(uci -q get system.@system[0].log_buffer_size || uci -q get system.@system[0].log_size || echo 64)
 t_eq "info: logd.size_kib is the ring size log.init uses" "$logsize" "$(jget "$info" @.logd.size_kib)"
 
-old_poll=$(uci -q get adblock-fast-monitor.config.poll_interval)
-uci set adblock-fast-monitor.config.poll_interval=999 && uci commit adblock-fast-monitor
-t_eq "info: poll_interval is clamped to 60" 60 "$(jget "$(call info)" @.monitor.poll_interval)"
-uci set adblock-fast-monitor.config.poll_interval=abc && uci commit adblock-fast-monitor
-t_eq "info: unparsable poll_interval falls back to 2" 2 "$(jget "$(call info)" @.monitor.poll_interval)"
-if [ -n "$old_poll" ]; then uci set adblock-fast-monitor.config.poll_interval="$old_poll"; else uci delete adblock-fast-monitor.config.poll_interval; fi
-uci commit adblock-fast-monitor
-
 base_warn=$(jget "$info" '@.warnings[*]')
 t_not "info: no logd warnings on the stock config" sh -c "echo '$base_warn' | grep -q logd"
 uci set system.@system[0].log_file=/tmp/abfm-actions.log
+uci commit system
+t_not "info: a log_file on tmpfs is not logd-to-flash" sh -c "echo '$(jget "$(call info)" '@.warnings[*]')' | grep -q logd-to-flash"
+uci set system.@system[0].log_file=/root/abfm-actions.log
 uci set system.@system[0].log_ip=192.0.2.9
 uci commit system
 w=$(jget "$(call info)" '@.warnings[*]')
-t_match "info: log_file -> logd-to-flash" 'logd-to-flash' "$w"
+t_match "info: log_file on flash -> logd-to-flash" 'logd-to-flash' "$w"
 t_match "info: log_ip -> logd-remote" 'logd-remote' "$w"
 uci delete system.@system[0].log_file
 uci delete system.@system[0].log_ip
@@ -146,7 +145,7 @@ t_not "rpcd rejects an unknown field before the plugin" ubus call luci.adblock-f
 before=$(md5sum /etc/config/adblock-fast | cut -d' ' -f1)
 r=$(call apply '{"ops":[{"op":"allow","domain":"ads.example.com"},{"op":"block","domain":"new.example.com"}],"confirm_rebuild":true,"dry_run":true}')
 t_eq "apply: dry_run returns the plan (allow of a listed name)" "true true rebuild allow allow:add" \
-	"$(jget "$r" @.ok) $(jget "$r" @.dry_run) $(jget "$r" @.mode) $(jget "$r" @.plan[0].effective_op) $(jget "$r" @.plan[0].change[0])"
+	"$(jget "$r" @.ok) $(jget "$r" @.dry_run) $(jget "$r" @.mode) $(jget "$r" @.plan[0].op) $(jget "$r" @.plan[0].change[0])"
 t_eq "apply: dry_run leaves /etc/config/adblock-fast untouched" "$before" "$(md5sum /etc/config/adblock-fast | cut -d' ' -f1)"
 t_not "apply: dry_run starts no job" test -e "$JOB_FILE"
 uci add_list adblock-fast.config.allowed_domain=never.example.com && uci commit adblock-fast
@@ -163,6 +162,15 @@ uci rename adblock-fast.renamed=config && uci commit adblock-fast
 
 # persist-only (adblock-fast disabled): P8 timing, spawn, skipped items.
 uci set adblock-fast.config.enabled=0 && uci commit adblock-fast
+# A LuCI session stages enabled=1 for adblock-fast without applying it
+# (rpcd keeps it in /var/run/rpcd/uci-<sid>). apply commits through its own
+# savedir, so the staged change is neither used (the job stays persist-only)
+# nor committed, and stays staged (§6.3 step 9, §14.9).
+sid=$(jget "$(ubus call session create '{"timeout":300}')" @.ubus_rpc_session)
+ubus call session grant "{\"ubus_rpc_session\":\"$sid\",\"scope\":\"uci\",\"objects\":[[\"adblock-fast\",\"read\"],[\"adblock-fast\",\"write\"]]}"
+ubus call uci set "{\"ubus_rpc_session\":\"$sid\",\"config\":\"adblock-fast\",\"section\":\"config\",\"values\":{\"enabled\":\"1\"}}"
+t_match "a LuCI session has a staged adblock-fast change" "enabled" \
+	"$(ubus call uci changes "{\"ubus_rpc_session\":\"$sid\",\"config\":\"adblock-fast\"}")"
 chmod -x /usr/libexec/adblock-fast-monitor/job.uc
 r=$(call apply '{"ops":[{"op":"allow","domain":"spawn.example.com"}]}')
 chmod +x /usr/libexec/adblock-fast-monitor/job.uc
@@ -181,6 +189,10 @@ t_eq "persist-only job: applied with skipped items" "applied skipped skipped tru
 	"$(jget "$j" @.job.state) $(jget "$j" @.job.items[0].result) $(jget "$j" @.job.items[1].result) $(jget "$j" @.job.persisted)"
 t_ok "persist-only: allowed_domain persisted" uci_has allowed_domain persist.example.com
 t_ok "persist-only: blocked_domain persisted" uci_has blocked_domain pblock.example.com
+t_eq "the session's staged enabled=1 was not committed" 0 "$(uci -q get adblock-fast.config.enabled)"
+t_match "and is still staged in the session" "enabled" \
+	"$(ubus call uci changes "{\"ubus_rpc_session\":\"$sid\",\"config\":\"adblock-fast\"}")"
+ubus call session destroy "{\"ubus_rpc_session\":\"$sid\"}"
 t_eq "job: lookup by id" "$(jget "$r" @.reply.job_id)" "$(jget "$(call job "{\"job_id\":\"$(jget "$r" @.reply.job_id)\"}")" @.job.id)"
 t_eq "job: id format" 0 "$(jget "$j" @.job.id | grep -Eqx 'j[0-9]{10}-[0-9a-f]{4}'; echo $?)"
 t_eq "job.json is private (0600)" 600 "$(abfm_stat %a "$JOB_FILE")"
@@ -190,11 +202,11 @@ uci del_list adblock-fast.config.blocked_domain=pblock.example.com
 uci set adblock-fast.config.enabled=1
 uci commit adblock-fast
 
-# addnhosts mode: exact names only.
+# addnhosts mode: exact names only (jobs in this mode: actions-jobs.sh).
 t_ok "real adblock-fast rebuilds the fixture list (dnsmasq.addnhosts)" actions_setup dnsmasq.addnhosts
 t_eq "addnhosts: listed name answers with a sinkhole" 127.0.0.1 "$(dns_a ads.example.com)"
 t_eq "info (addnhosts): dns mode and output file" "dnsmasq.addnhosts /var/run/adblock-fast/dnsmasq.addnhosts true" \
-	"$(i=$(call info); echo $(jget "$i" @.adblock_fast.dns) $(jget "$i" @.adblock_fast.output_file) $(jget "$i" @.adblock_fast.output_exists))"
+	"$(i=$(call info); printf '%s %s %s' "$(jget "$i" @.adblock_fast.dns)" "$(jget "$i" @.adblock_fast.output_file)" "$(jget "$i" @.adblock_fast.output_exists)")"
 t_eq "addnhosts: unlisted subdomain resolves" "$UPSTREAM_A" "$(dns_a x.parent.example.com)"
 
 actions_teardown

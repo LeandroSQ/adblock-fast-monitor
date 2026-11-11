@@ -14,7 +14,12 @@ PKG_NAME:=luci-app-adblock-fast-monitor
 PKG_VERSION:=0.2.0
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
-PKG_MAINTAINER:=AdBlock Fast Monitor contributors
+PKG_LICENSE_FILES:=LICENSE
+PKG_MAINTAINER:=Leandro Quaresma <11012599+LeandroSQ@users.noreply.github.com>
+
+# luci.mk derives the package name from the directory name unless this is
+# set; the build directory may be named differently.
+LUCI_NAME:=$(PKG_NAME)
 
 LUCI_TITLE:=Dashboard and domain actions for adblock-fast
 LUCI_DESCRIPTION:=Standalone LuCI dashboard for adblock-fast: recent DNS \
@@ -41,22 +46,20 @@ define Package/$(PKG_NAME)/conffiles
 /etc/config/adblock-fast-monitor
 endef
 
-# The SDK's generated scripts call default_postinst (runs and deletes
-# /etc/uci-defaults/80_adblock-fast-monitor, then enable + start
-# /etc/init.d/adblock-fast-monitor) and default_prerm (disable + stop; stop
-# removes the dnsmasq drop-ins), so no prerm is needed. On top of that,
-# install and removal both do what luci.mk's postinst does, so the rpcd
-# plugin, ACL and menu appear and disappear without a manual rpcd restart.
-# On upgrade, restart the init script so the drop-ins are reconciled with the
-# migrated configuration and procd drops a v1 daemon instance (restart keeps
-# the drop-ins, so dnsmasq is not restarted).
+# The SDK's generated scripts call default_postinst (enable on install, then
+# start /etc/init.d/adblock-fast-monitor, which reconciles the drop-ins and
+# re-registers the procd triggers) and default_prerm (disable + stop on
+# removal; stop removes the dnsmasq drop-ins). On top of that, install and
+# removal both do what luci.mk's postinst does, so the rpcd plugin, ACL and
+# menu appear and disappear without a manual rpcd restart. Removal also
+# drops the runtime state (tmpfs): the last job, the private UCI savedir and
+# the lock files.
 define Package/$(PKG_NAME)/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	/etc/init.d/rpcd reload 2>/dev/null
-	[ "$${PKG_UPGRADE}" != 1 ] || /etc/init.d/adblock-fast-monitor restart 2>/dev/null
 }
 exit 0
 endef
@@ -67,6 +70,7 @@ define Package/$(PKG_NAME)/postrm
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	/etc/init.d/rpcd reload 2>/dev/null
+	[ "$${PKG_UPGRADE}" = 1 ] || rm -rf /var/run/adblock-fast-monitor /var/lock/adblock-fast-monitor.*lock
 }
 exit 0
 endef

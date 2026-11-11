@@ -183,7 +183,7 @@ test('§8.2 storage round-trip and hostile input', () => {
   assert.deepEqual(parsed, s);
   assert.deepEqual(m.parsePending('{not json'), m.emptyPending());
   assert.equal(m.STORAGE_KEY, 'adblock-fast-monitor.pending.v2');
-  // api-1 lists (pending.v1 shape, may hold unblock/unallow) are discarded
+  // any other storage version is discarded
   assert.deepEqual(m.parsePending('{"v":1,"items":[{"op":"block","domain":"a.example.com"}]}'), m.emptyPending());
   const hostile = m.parsePending(JSON.stringify({ v: 2,
     items: [{ op: 'block', domain: '<img src=x>' }, { op: 'eval', domain: 'x.com' }, { op: 'block', domain: 'OK.com' },
@@ -259,7 +259,7 @@ test('§8.4 in-flight batch is exactly the sent ops; items staged meanwhile stay
 
 test('applyPlan: confirmation needed for every rebuild, never for noop or persist-only', () => {
   assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['block:add'] }] }).needsConfirm, true);
-  // allow-only batches are rebuilds too (v1 never uses fast-allow)
+  // allow-only batches are rebuilds too
   assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['allow:add'] }] }).needsConfirm, true);
   assert.equal(m.applyPlan({ ok: true, mode: 'persist-only', plan: [{ change: ['allow:add'] }] }).needsConfirm, false);
   const noop = m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: [] }] });

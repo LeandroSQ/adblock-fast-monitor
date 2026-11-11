@@ -132,12 +132,7 @@ function applyToOf(file) {
 // delete entries once the path exists.
 const notYet = {
   // Created by the maintainer when the signing key is generated (keys/README.md).
-  'keys/README.md': ['keys/adblock-fast-monitor.pem', 'keys/adblock-fast-monitor-2027.pem'],
-  // api-1 history in CONTRACT §15; goes away with the api-1 cleanup.
-  'docs/CONTRACT.md': [
-    'root/test/*.sh', 'test/ucode/dataplane/{logparse,stats,replay}.test.uc',
-    'test/guest/dataplane-lifecycle.sh', 'test/guest/dataplane-rpc.host.sh'
-  ]
+  'keys/README.md': ['keys/adblock-fast-monitor.pem', 'keys/adblock-fast-monitor-2027.pem']
 };
 
 for (const file of markdown) {
@@ -221,7 +216,7 @@ function matrix() {
 
 // T-IDs whose §13 files do not name them yet. Shrink only: a row leaves this
 // list once one of its files names the ID (e.g. a `T07: …` test title).
-const unnamedIds = new Set(['T05', 'T07', 'T09', 'T10', 'T20', 'T30', 'T31', 'T32']);
+const unnamedIds = new Set(['T05']);
 
 test('T-IDs in tests are defined in CONTRACT §13 and each row\'s files name its ID', () => {
   const rows = matrix();

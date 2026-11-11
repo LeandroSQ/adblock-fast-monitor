@@ -1,5 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
 config monitor 'config'
 	option query_logging '0'
-	list dnsmasq_instance '*'
-	option exclude_router '1'
-	option poll_interval '2'

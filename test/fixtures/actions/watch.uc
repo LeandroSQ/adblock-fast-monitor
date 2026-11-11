@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Guest test helper: calls luci.adblock-fast-monitor apply over ubus, then
 // polls job.json every 2 ms and records each distinct job state.
 //   ucode watch.uc '<apply request JSON>' [timeout_s]

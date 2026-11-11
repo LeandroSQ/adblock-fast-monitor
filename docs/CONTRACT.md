@@ -1,19 +1,15 @@
-# luci-app-adblock-fast-monitor — interface contract, api 2 (design B-min)
+# luci-app-adblock-fast-monitor — interface contract, api 2
 
 Status: **frozen at API version 2**. All code implements this file. Changing
 any name, field, type, bound, state or error code needs a contract change:
 edit this file and bump `api` in the same commit. Every response that this
-package defines includes `"api": 2`. api 1 (a resident ucode daemon with its
-own ubus object `adblock-fast-monitor`) is gone; §3 migrates its
-configuration.
+package defines includes `"api": 2`. api 2 is the first released interface
+(api 1, a resident daemon, was never released, so nothing migrates from it).
 
 Targets: OpenWrt 25.12.6, adblock-fast 1.2.4-r4, LuCI openwrt-25.12, ucode
 `85922056`, procd `58eb263`, rpcd `d99f703`, dnsmasq 2.93, ubox `6f78fa4`,
 uhttpd `93b05e0`. The package is standalone. It depends on adblock-fast and
 never forks or patches it.
-
-This file supersedes `MONITORING_API.md`, `RULE_ACTION_API.md`,
-`INTEGRATION_CONTRACT.md` and `RUNTIME_TEST_REQUIREMENTS.md` (§15).
 
 ---
 
@@ -21,8 +17,8 @@ This file supersedes `MONITORING_API.md`, `RULE_ACTION_API.md`,
 
 | # | Decision |
 |---|---|
-| D1 | **No resident process.** The init script (`START=18`) is a procd service with **no instance**: on start, stop, reload and boot it only reconciles the query-logging drop-ins through `logging.uc` (§4, §5) and exits. Nothing of this package runs between those calls, except one `job.uc` during an Apply (D5). |
-| D2 | **No edits to `/etc/config/dhcp`.** Query logging comes from a tmpfs drop-in, `<confdir>/adblock-fast-monitor.conf` containing `log-queries=extra` and `log-async=25`, written for each targeted dnsmasq instance while `query_logging=1`. It is removed when `query_logging=0` or on stop. dnsmasq restarts **only** when the set of drop-ins changes **and** dnsmasq is running (P10). |
+| D1 | **No resident process.** The init script (`START=18`) is a procd service with **no instance**: on start, stop, reload and boot it only reconciles the query-logging drop-ins through `logging.uc` (§4, §5) and exits; procd runs the same `logging.uc reconcile` directly from one trigger (§4). Nothing of this package runs between those calls, except one `job.uc` during an Apply (D5). |
+| D2 | **No edits to `/etc/config/dhcp`.** Query logging comes from a tmpfs drop-in, `<confdir>/adblock-fast-monitor.conf` containing `log-queries=extra` and `log-async=25`, written for each enabled dnsmasq instance while `query_logging=1`. It is removed when `query_logging=0` or on stop. dnsmasq restarts **only** when the set of drop-ins changes **and** dnsmasq is running (P10). |
 | D3 | **The browser reads and processes the log.** The page calls core logd `log read` through uhttpd (§8.1), the same call LuCI's System Log page and luci-app-adblock-fast make, and parses, correlates and classifies dnsmasq's lines in a pure JS module (`querylog.js`, §8.2–8.3). The router does no per-query work for this package. |
 | D4 | **Statistics are the page's own:** computed over the rows the page keeps (≤ 500) and counters since the page was opened (§8.2). Nothing is stored on the router; closing the page discards them. |
 | D5 | **Rule changes are staged in the browser**; the server keeps no shadow rules. One `apply` call sends the whole batch (`allow`/`block` ops) to the rpcd ucode plugin `luci.adblock-fast-monitor`. `apply` validates the batch, writes **only** `/etc/config/adblock-fast`, commits, and spawns **one** detached job. The job runs `adblock-fast dl` (one rebuild; adblock-fast's own `allow` is defective, §14.1, and `reload`/`restart` absorb list changes without rebuilding, §10), then verifies each domain against real DNS answers from `127.0.0.1`. One job runs at a time, enforced by `flock` on a file descriptor. |
@@ -39,12 +35,11 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | Path | Mode | Purpose |
 |---|---|---|
 | `/etc/config/adblock-fast-monitor` | 0644 conffile | §3 |
-| `/etc/uci-defaults/80_adblock-fast-monitor` | 0644 | §3 migration of an api-1 config; `default_postinst` runs it and deletes it |
 | `/etc/init.d/adblock-fast-monitor` | 0755 | procd init, `START=18` (before dnsmasq `START=19`), no instance (§4) |
-| `/usr/libexec/adblock-fast-monitor/logging.uc` | 0755 | `enable` / `disable` / `status` of the dnsmasq drop-ins (§5) |
+| `/usr/libexec/adblock-fast-monitor/logging.uc` | 0755 | `reconcile` / `disable` / `status` of the dnsmasq drop-ins (§4, §5) |
 | `/usr/libexec/adblock-fast-monitor/job.uc` | 0755 | detached apply job (§7) |
 | `/usr/share/ucode/abfm/domain.uc` | 0644 | grammar, protected domains, public-suffix guard, `plan()`, job verification helpers (§6.4–6.6, §7.2) |
-| `/usr/share/ucode/abfm/system.uc` | 0644 | discovery of UCI, dnsmasq instances/confdirs, logd ring size and adblock-fast state |
+| `/usr/share/ucode/abfm/system.uc` | 0644 | discovery of UCI, dnsmasq instances/confdirs, logd ring size and adblock-fast state; stale `/dev/log` detection (§4) |
 | `/usr/share/rpcd/ucode/luci.adblock-fast-monitor` | 0644, **not** world-writable | rpcd ucode plugin (§6) |
 | `/usr/share/rpcd/acl.d/luci-app-adblock-fast-monitor.json` | 0644 | §9 |
 | `/lib/upgrade/keep.d/luci-app-adblock-fast-monitor` | 0644 | lists `/etc/apk/keys/adblock-fast-monitor.pem` (the feed key added in LuCI, owned by no package) so sysupgrade keeps it |
@@ -61,7 +56,9 @@ Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 | `/var/run/adblock-fast-monitor/` | plugin, 0700 root | directory |
 | `/var/run/adblock-fast-monitor/job.json` | plugin + job, 0600, atomic rename | last job (§7) |
 | `/var/run/adblock-fast-monitor/uci/` | plugin, 0700 | private UCI savedir for `apply` |
+| `/var/run/adblock-fast-monitor/stale-restart` | `logging.uc` | the `/dev/log` socket the last stale restart was made for (§4 loop guard) |
 | `/var/lock/adblock-fast-monitor.lock` | plugin + job | `flock` target (§7.3) |
+| `/var/lock/adblock-fast-monitor.logging.lock` | `logging.uc` | `flock` that serializes reconciles (§5) |
 | `<confdir>/adblock-fast-monitor.conf` | `logging.uc`, 0644 | the lines `log-queries=extra` and `log-async=25` |
 
 The `abfm.*` modules are loaded with `require('abfm.<name>')` from ucode's
@@ -71,78 +68,63 @@ need, and `ucode -c` can't check it standalone). Each module must load under a
 ucode interpreter built at pin `85922056` on the CI host, with no OpenWrt
 runtime present (§13).
 
-**Removed in api 2:** `/usr/libexec/adblock-fast-monitor/monitord.uc`,
-`/usr/share/ucode/abfm/logparse.uc` and `/usr/share/ucode/abfm/stats.uc`, the
-`adblock-fast-monitor` ubus object, the procd instance, and the plugin method
-`rules`. The v0 files (`adblock-fast-monitor-collector`, sh rpcd plugins,
-`/usr/lib/adblock-fast-monitor/common.sh`, `root/test/*.sh`) stay removed.
-
 **Package dependencies:** `+luci-base` (which pulls in `rpcd`,
 `rpcd-mod-ucode`, `ucode`, `ucode-mod-fs`, `ucode-mod-uci` and
 `ucode-mod-ubus`), `+adblock-fast`, `+ucode-mod-io` (the job closes the fds it
 inherits from rpcd) and `+ucode-mod-resolv` (the job's DNS verification).
-`ucode-mod-uloop` is no longer needed. `PKGARCH:=all`. Postinst and postrm do
-what `luci.mk` does: `rm -f /tmp/luci-indexcache.*; rm -rf /tmp/luci-modulecache/; /etc/init.d/rpcd reload`
-(SIGHUP makes rpcd re-exec, which loads the new plugin and ACL). On upgrade
-the postinst also runs `/etc/init.d/adblock-fast-monitor restart`, which
-reconciles the drop-ins with the migrated configuration (keeping them, so
-dnsmasq is not restarted) and makes procd drop an api-1 daemon instance. Prerm
-runs `/etc/init.d/adblock-fast-monitor stop` (the SDK's `default_prerm`),
-which removes the drop-ins. File modes are set by the Makefile, not taken
-from git. Install through LuCI → System → Software must work **without**
+`PKGARCH:=all`. Postinst and postrm do what `luci.mk` does:
+`rm -f /tmp/luci-indexcache.*; rm -rf /tmp/luci-modulecache/; /etc/init.d/rpcd reload`
+(SIGHUP makes rpcd re-exec, which loads the new plugin and ACL). The SDK's
+`default_postinst` enables the init script on install and starts it on
+install and upgrade; `start` reconciles the drop-ins (an unchanged set does
+not restart dnsmasq) and re-registers the procd triggers. The SDK's
+`default_prerm` runs `/etc/init.d/adblock-fast-monitor stop` on removal,
+which removes the drop-ins (one dnsmasq restart when it runs and had one).
+On removal (not upgrade) the postrm also deletes the runtime state:
+`/var/run/adblock-fast-monitor/` and `/var/lock/adblock-fast-monitor.*lock`.
+File modes are set by the Makefile, not taken from git. Install through LuCI → System → Software must work **without**
 `--allow-untrusted`, using a key added on the "Repository Public Keys" page.
 
 ---
 
 ## 3. Configuration `/etc/config/adblock-fast-monitor`
 
-One section: `config monitor 'config'`. Values outside their range are
-clamped to the nearest bound. Values that don't parse fall back to the
-default. Every consumer clamps the same way.
+One section: `config monitor 'config'` with one option. A value that doesn't
+parse as a UCI boolean falls back to the default. Other options in the
+section are ignored.
 
-| Option | Type | Default | Range | Consumer | Meaning |
-|---|---|---|---|---|---|
-| `query_logging` | bool | `0` | | init → `logging.uc` | `1`: write the drop-ins, so dnsmasq logs queries to logd; `0`: remove ours (logging enabled elsewhere, e.g. dhcp `logqueries`, is left alone) |
-| `dnsmasq_instance` | list | `*` | `*` or dhcp `dnsmasq` section names | `logging.uc` | instances that get a drop-in. `*` means every instance with `disabled!=1` |
-| `exclude_router` | bool | `1` | | UI | `1`: hide queries from `127.0.0.1` and `::1` (the job's verification, adblock-fast's heartbeat) by default |
-| `poll_interval` | uint (s) | `2` | 2–60 | UI | `log read` period while the page is visible (§8.1) |
+| Option | Type | Default | Consumer | Meaning |
+|---|---|---|---|---|
+| `query_logging` | bool | `0` | init → `logging.uc` | `1`: write a drop-in for every dnsmasq instance with `disabled!=1`, so dnsmasq logs queries to logd; `0`: remove ours (logging enabled elsewhere, e.g. dhcp `logqueries`, is left alone) |
+
+The page's other choices are not router settings: it polls every 2 s
+(§8.1), and whether router queries (`127.0.0.1`, `::1`) are shown is a
+checkbox on the page, off by default (§8.2).
 
 Settings saves go through LuCI `uci.apply`; the procd reload trigger runs the
 init script, which only reconciles the drop-ins (dnsmasq restarts only when
 the set changes).
 
-**Migration from api 1** (`/etc/uci-defaults/80_adblock-fast-monitor`, run by
-`default_postinst` on install and upgrade, idempotent; tested by
-`test/shell/uci-defaults-migrate.test.sh` and the upgrade test):
-- if `enabled` exists and `query_logging` does not:
-  `query_logging = enabled`, except `0` when `manage_logging` was false
-  (api 1 wrote no drop-ins then);
-- delete `enabled`, `manage_logging`, `recent_size`, `top_size`,
-  `pending_size`, `pending_ttl`, `record_clients` and the v0 options
-  `max_events` and `own_logqueries`;
-- keep `dnsmasq_instance`, `exclude_router` and `poll_interval` as they are;
-- commit only when something changed.
-
 ---
 
 ## 4. Lifecycle (init script)
 
-```
+```text
 START=18, USE_PROCD=1
-start_service:
-  config_load adblock-fast-monitor
-  query_logging=1 -> logging.uc enable  else logging.uc disable
-  (no procd_open_instance: nothing runs; procd keeps the service for its trigger
-   and drops any api-1 instance)
-stop_service:    logging.uc disable, except during `restart` (start reconciles,
-                 so dnsmasq is not restarted twice)
+start_service:    logging.uc reconcile   (reads query_logging itself: 1 -> write
+                  the drop-ins, 0 -> remove ours; no procd_open_instance:
+                  nothing runs, procd keeps the service for its triggers)
+stop_service:     logging.uc disable, except during `restart` (start reconciles,
+                  so dnsmasq is not restarted twice)
 service_triggers: procd_add_reload_trigger adblock-fast-monitor
                   query_logging=1 -> procd_add_raw_trigger instance.update 3000
-                                     /etc/init.d/adblock-fast-monitor reload
+                                     /usr/libexec/adblock-fast-monitor/logging.uc reconcile
 ```
 
-`reload` (what the triggers run) re-runs `start_service`. With an unchanged
-drop-in set nothing restarts.
+`reload` (what the config trigger runs) re-runs `start_service` and
+re-registers the triggers. With an unchanged drop-in set nothing restarts.
+procd runs the `instance.update` command directly (`execvp`, no shell), so
+a firing costs one short-lived `ucode` process.
 
 **logd restarts.** procd jails dnsmasq (`procd_add_jail dnsmasq ubus log`),
 bind-mounting `/dev/log` into the jail when dnsmasq starts. When logd
@@ -157,20 +139,44 @@ both `log-queries=extra` + `log-async=25` and plain `log-queries=extra`;
 all lines back after a dnsmasq restart. procd raises the trigger event
 `instance.update` whenever any service instance starts or stops; while
 `query_logging=1` the init script registers a raw trigger on it (debounced
-3 s), and `logging.uc enable` then compares the `/dev/log` inode seen through
-each dnsmasq's `/proc/<pid>/root` with the current one (`abfm.system`
-`dnsmasq_log_stale`) and restarts dnsmasq once if they differ (P10 exception,
-§11). Otherwise the trigger changes nothing; it is not registered while
-`query_logging=0`. A reconcile is a short-lived `ucode logging.uc` (D1). At boot (`START=18` < dnsmasq `19`) dnsmasq is
-not running yet, so writing the drop-ins never restarts it (P10).
+3 s) that runs `logging.uc reconcile`. With drop-ins in place, that compares
+the `/dev/log` inode seen through `/proc/<pid>/root` of the procd `dnsmasq`
+service's processes with the current one (`abfm.system` `dnsmasq_log_stale`)
+and restarts dnsmasq once if they differ (P10 exception, §11):
+
+- **Scope.** Only the pids of the running `dnsmasq` service instances
+  (`ubus call service list '{"name":"dnsmasq"}'`) and their direct children
+  (the jailed dnsmasq that ujail forks) are compared. Any other process named
+  dnsmasq, for example one in its own chroot or container, is ignored: a
+  restart of the system dnsmasq would not change it, so it would look stale
+  forever.
+- **Loop guard.** `/var/run/adblock-fast-monitor/stale-restart` records the
+  `/dev/log` socket (device and inode) a stale restart was made for. If the
+  service is still stale against that same socket, no further restart is
+  made; a new logd socket allows one new restart.
+
+Otherwise the trigger changes nothing; it is not registered while
+`query_logging=0`. A reconcile is a short-lived `ucode logging.uc` (D1). At
+boot (`START=18` < dnsmasq `19`) dnsmasq is not running yet, so writing the
+drop-ins never restarts it (P10). The same trigger also covers a hand-over
+with luci-app-adblock-fast's logging toggle (§14.14): when dhcp `logqueries`
+is set and dnsmasq restarts, the next reconcile removes our drop-in (one
+more restart); when it is cleared, the drop-in comes back.
 
 ---
 
 ## 5. Query-logging drop-ins (`logging.uc`)
 
-- **Targets.** Every `dhcp` section of type `dnsmasq` that has `disabled!=1`,
-  filtered by `dnsmasq_instance`. Anonymous sections use their UCI-generated
-  names (for example `cfg01411c`).
+- **Targets.** Every `dhcp` section of type `dnsmasq` that has
+  `disabled!=1`. Anonymous sections use their UCI-generated names (for
+  example `cfg01411c`).
+- **Modes.** `reconcile` reads `query_logging` (§3) and acts as `enable`
+  (1) or `disable` (0); `disable` is what `stop` runs; `status` only reads.
+  `reconcile` and `disable` hold `flock` on
+  `/var/lock/adblock-fast-monitor.logging.lock` (blocking, `O_CLOEXEC`), so
+  concurrent runs (a reload and a trigger) never both see a changed set.
+  Exit status 1 when a drop-in could not be written or removed
+  (`write-failed`, `remove-failed`, `confdir-invalid` on stderr), else 0.
 - **Confdir.** `confdir = uci dhcp.<s>.confdir`, defaulting to
   `/tmp/dnsmasq.<s>.d` (`dnsmasq.init` L1172). Everything from the first `,`
   is cut. The result must be absolute; otherwise the instance is reported as
@@ -179,8 +185,9 @@ not running yet, so writing the drop-ins never restarts it (P10).
   conf-dir suffix filters keep it.
 - **`enable`.** For each target that does **not** already have
   `dhcp.<s>.logqueries=1`, write `<confdir>/adblock-fast-monitor.conf`
-  atomically (tmp + rename, 0644), creating the confdir 0755 if needed.
-  Remove drop-ins for instances that are no longer targeted.
+  atomically (tmp + rename, 0644), creating the confdir 0755 if needed; a
+  damaged drop-in is rewritten. Remove drop-ins for instances that are no
+  longer targets.
 - **Content.** `log-queries=extra` plus `log-async=25`. Without `log-async`
   dnsmasq writes each log line to syslog synchronously on the query path;
   with it, dnsmasq queues up to 25 lines and, if the queue overflows, logs
@@ -203,7 +210,6 @@ not running yet, so writing the drop-ins never restarts it (P10).
 
 ---
 
-
 ---
 
 ## 6. Actions backend — rpcd ucode plugin `luci.adblock-fast-monitor`
@@ -214,18 +220,6 @@ within **200 ms** (P8). All adblock-fast and DNS work runs in the job (§7).
 Plugin regexes avoid bounded repetition (`{m,n}`): musl expands it into an
 automaton that costs milliseconds per match.
 
-rpcd validates arguments against each method's declared signature before
-the plugin runs: an undeclared field or a field of the wrong JSON type is
-answered with ubus status `UBUS_STATUS_INVALID_ARGUMENT` (2), not with a
-JSON error. uhttpd adds `ubus_rpc_session` to every call from LuCI; rpcd
-accepts it next to the declared fields. Declared fields: `info {}`,
-`apply {ops: array, confirm_rebuild: bool, rebuild: bool, dry_run: bool}`,
-`job {job_id: string}`.
-
-Errors use one shape:
-`{"api":2,"ok":false,"error":{"code":"<code>","message":"<text>"}}`, with
-ubus status 0.
-
 ### 6.1 `info` (read)
 
 Request `{}`. All values are cheap UCI reads, `stat` calls and one ubus
@@ -233,23 +227,30 @@ Request `{}`. All values are cheap UCI reads, `stat` calls and one ubus
 
 ```json
 { "api":2,"ok":true,
-  "monitor":{"query_logging":true,"dnsmasq_instance":["*"],"exclude_router":true,"poll_interval":2},
+  "monitor":{"query_logging":true},
   "local_domains":["lan"],
+  "protected_suffixes":["localhost","arpa","local","internal","invalid","onion","bind","heartbeat.mossdef.org","lan","openwrt"],
   "logd":{"size_kib":128},
   "adblock_fast":{"installed":true,"enabled":true,"status":"statusSuccess",
                   "dns":"dnsmasq.servers","output_file":"/var/run/adblock-fast/dnsmasq.servers",
                   "output_exists":true,"external_config":false,"pending_uci_changes":false},
   "dnsmasq":{"running":true,"instances":[{"section":"cfg01411c","confdir":"/tmp/dnsmasq.cfg01411c.d",
-             "dropin":true,"uci_logqueries":false,"running":true,"logfacility_file":false,"targeted":true}]},
+             "dropin":true,"uci_logqueries":false,"running":true,"logfacility_file":false}]},
   "warnings":["query-logging-active"] }
 ```
 
 Field sources:
-- `monitor`: §3, parsed and clamped.
+
+- `monitor`: §3, parsed.
 - `local_domains`: the dhcp `domain` values and the `local` values with their
   slashes stripped, lower-cased and de-duplicated, over all `dnsmasq`
   sections. The page treats names equal to or under them as local (§8.3),
   so it needs no `dhcp` read grant.
+- `protected_suffixes`: the names `apply` refuses to `block` together with
+  everything under them (§6.5: built-ins, dhcp `domain`/`local`, hostname,
+  heartbeat), normalized and de-duplicated, built-ins first. The page offers
+  no `Block` for such names (§8.4). The exact list hosts of §6.5 are not in
+  it; a `Block` of one is refused by `apply`.
 - `logd.size_kib`: the ring size logd runs with (`log_buffer_size`, else
   `log_size`, else 64, as `log.init` computes `-S`); the page shows it next
   to the window it could read (§8.1).
@@ -262,21 +263,31 @@ Field sources:
   `adblock-fast.<section>.size='N'` (§6.3 step 4). adblock-fast itself saves
   (without committing) every `file_url` size after each download when
   `update_config_sizes=1` (the default); that bookkeeping is ignored.
-- `dnsmasq.instances[]` lists every `dnsmasq` section with `disabled≠1`;
-  `confdir` is `null` when invalid (`"reason":"confdir-invalid"`), and
-  `targeted` tells whether `dnsmasq_instance` selects it.
+- `dnsmasq.instances[]` lists every `dnsmasq` section with `disabled≠1`
+  (each one is a drop-in target, §5); `confdir` is `null` when invalid
+  (`"reason":"confdir-invalid"`). `running` is that procd instance's state;
+  `dnsmasq.running` is true when any instance runs.
 
 | `warnings` code | Condition |
 |---|---|
 | `query-logging-active` | at least one drop-in exists, or `uci_logqueries` is set (logd's ring fills with DNS lines; informational) |
-| `logd-to-flash` | `system.@system[0].log_file` is set |
+| `logd-to-flash` | `system.@system[0].log_file` is set to a path outside tmpfs (not under `/tmp`, `/var` or `/dev/shm`), so logged queries are written to flash |
 | `logd-remote` | `system.@system[0].log_ip` is set |
 
-### 6.2 `rules` — removed in api 2
+### 6.2 Arguments and errors
 
-The page decides allow/block from what it saw in the log (§8.3): `Allow` on
-blocked rows, `Block` on allowed rows. Calling `rules` gives `-32002`
-through uhttpd (no ACL grant) or ubus `METHOD_NOT_FOUND`.
+rpcd validates arguments against each method's declared signature before
+the plugin runs: an undeclared field or a field of the wrong JSON type is
+answered with ubus status `UBUS_STATUS_INVALID_ARGUMENT` (2), not with a
+JSON error. uhttpd adds `ubus_rpc_session` to every call from LuCI; rpcd
+accepts it next to the declared fields. Declared fields: `info {}`,
+`apply {ops: array, confirm_rebuild: bool, rebuild: bool, dry_run: bool}`,
+`job {job_id: string}`. The plugin has no other method.
+
+Errors use one shape:
+`{"api":2,"ok":false,"error":{"code":"<code>","message":"<text>"}}`, with
+ubus status 0. Some errors add fields next to `error` (`job_id`, `mode`,
+`plan`, `persisted`) or inside it (`index`, `domain`), as §6.3 lists.
 
 ### 6.3 `apply` (write)
 
@@ -293,8 +304,7 @@ Pipeline. The call is all-or-nothing, and it rejects at the first failing
 step.
 
 1. Shape check (`invalid-request`, also for any `op` other than `allow` and
-   `block`; api 1's `unblock` and `unallow` are gone): 0–64 ops
-   (`batch-too-large`).
+   `block`): 0–64 ops (`batch-too-large`).
    `ops:[]` without `rebuild:true` gives `batch-empty`.
 2. Each op is normalized and validated (§6.4–6.5). The error carries `index`
    and `domain`.
@@ -303,22 +313,25 @@ step.
 4. Preconditions:
    - `adblock-fast-missing`;
    - `external-config` (`dnsmasq_config_file_url` is set);
-   - `unsupported-dns-mode` (`dns` is `smartdns.*` or `unbound.*`);
+   - `unsupported-dns-mode` (`dns` is not one of the five `dnsmasq.*` modes
+     of §10, e.g. `smartdns.*` or `unbound.*`);
    - `pending-uci-changes`: the default uci savedir `/tmp/.uci/adblock-fast`
      holds uncommitted changes other than adblock-fast's own `file_url` size
      bookkeeping (§6.1). These come from the `uci` CLI or scripts, and `dl`
      would read them. It does **not** see LuCI's staged-but-unapplied
      changes: rpcd keeps those per session in `/var/run/rpcd/uci-<sid>`
      (rpcd `uci.c` L289-315), which no other process reads (§14).
-5. `plan()` (§6.6) produces `effective_op`, `change` and `mode`.
+5. `plan()` (§6.6) produces each op's `change` and the batch's `mode`.
    A `block` whose name equals, or falls under, an `allowed_domain` entry that
    stays after the batch gives `allow-overrides`, because the rebuild removes
    allowed names after it adds blocks (adblock-fast.uc L2005-2030).
 6. If `mode="rebuild"` and `confirm_rebuild≠true`, the response is
    `{"ok":false,"error":{"code":"confirm-required",…},"mode":"rebuild","plan":[…]}`.
-7. `dry_run:true` stops here and returns the plan with `ok:true`.
-8. Take the lock with `xn`. If that fails, or the queued window of §7.3
-   applies, return `busy` with `job_id`.
+7. `dry_run:true` stops here:
+   `{"api":2,"ok":true,"dry_run":true,"noop":false,"mode":…,"plan":[…]}`.
+8. Take the lock with `xn`. If that fails (`job_id` is the last job's id or
+   `null`), or the queued window of §7.3 applies (`job_id` of that job),
+   return `busy`.
 9. Still under the lock, open a UCI cursor with savedir
    `/var/run/adblock-fast-monitor/uci`. Apply each `change` with exact
    `list_append` or `list_remove` on `adblock-fast.config.allowed_domain` or
@@ -330,22 +343,23 @@ step.
     `setsid /usr/libexec/adblock-fast-monitor/job.uc <job_id> </dev/null >/dev/null 2>&1 &`
     via `system()` (`setsid` when present). The job closes the sockets,
     pipes and epoll descriptors it inherits from rpcd before doing anything. On failure, the error is `spawn-failed` with
-    `persisted:true`.
+    `persisted` (whether step 9 committed a change) and `job_id`.
 
-If every op is a `noop` and `rebuild` is false, the response is
-`{"ok":true,"noop":true,"job_id":null,"plan":[…]}` and no job starts.
+If every op is a noop and `rebuild` is false, the response (also for a dry
+run) is `{"api":2,"ok":true,"noop":true,"job_id":null,"mode":…,"plan":[…]}`
+and no job starts.
 
 Success response:
 
 ```json
-{ "api":2,"ok":true,"job_id":"j1762747400-3f2a","state":"queued","mode":"rebuild","may_escalate":false,
-  "plan":[{"op":"allow","domain":"ads.example.com","effective_op":"allow","change":["allow:add","block:remove"]},
-          {"op":"block","domain":"x.example.com","effective_op":"block","change":["allow:remove","block:add"]}] }
+{ "api":2,"ok":true,"job_id":"j1762747400-3f2a","state":"queued","mode":"rebuild",
+  "plan":[{"op":"allow","domain":"ads.example.com","change":["allow:add","block:remove"]},
+          {"op":"block","domain":"x.example.com","change":["allow:remove","block:add"]}] }
 ```
 
-`change` lists the UCI mutations: `allow:add`, `allow:remove`, `block:add`
-and `block:remove`. An empty list means noop. `may_escalate` is reserved for
-`fast-allow` and is always `false` (§6.6).
+`plan` has one entry per distinct op, in request order, with the normalized
+domain. `change` lists the UCI mutations: `allow:add`, `allow:remove`,
+`block:add` and `block:remove`. An empty list means noop.
 
 Error codes: `invalid-request`, `batch-empty`, `batch-too-large`,
 `invalid-domain`, `protected-domain`, `public-suffix`, `conflict`,
@@ -356,11 +370,13 @@ Error codes: `invalid-request`, `batch-empty`, `batch-too-large`,
 ### 6.4 Domain grammar and normalization (`abfm.domain`)
 
 Normalization:
+
 1. trim the input;
 2. lower-case it;
 3. strip **one** trailing `.`.
 
 Valid when all of these hold:
+
 - total length ≤ 253;
 - 2–127 labels;
 - each label 1–63 characters from `[a-z0-9_-]`, not starting or ending with
@@ -374,14 +390,18 @@ Anything else is `invalid-domain`.
 ### 6.5 Protected domains and the public-suffix guard (no PSL file)
 
 `protected-domain` (`block` only):
-- the name equals or falls under: `localhost`, `arpa`, `local`, `internal`,
-  `home.arpa`, the dhcp `domain` and `local` values, the system hostname, or
-  adblock-fast's `heartbeat_domain` (a blocked heartbeat fails adblock-fast's
-  restart check);
+
+- the name equals or falls under: `localhost`, `arpa` (so `home.arpa`),
+  `local`, `internal`, `invalid`, `onion`, `bind` (the names the page treats
+  as local, §8.3, plus `internal`), the dhcp `domain` and `local` values, the
+  system hostname, or adblock-fast's `heartbeat_domain` (a blocked heartbeat
+  fails adblock-fast's restart check). `info.protected_suffixes` is this
+  list;
 - or it is the host of any enabled `file_url.url` or of `config_update_url`
   (blocking those breaks list downloads).
 
 `public-suffix` (both ops). The name is rejected when any of these holds:
+
 - (a) it has fewer than 2 labels (already excluded by §6.4);
 - (b) it has exactly 2 labels and the first is one of
   `ac co com edu gob gouv gov gv go govt ltd mil net nic nom or org plc sch ne int mod`
@@ -398,28 +418,28 @@ catastrophic over-broad rules, not a full PSL check. Known limitation: a
 Let `A` be the current `allowed_domain`, `B` the current `blocked_domain`, and
 `D` the domain. Membership is exact.
 
-| op | `effective_op` | UCI change | `expect` |
-|---|---|---|---|
-| `allow` | `allow` | `D∉A` → `allow:add`; `D∈B` → `block:remove` | `allowed` |
-| `block` | `block` | `D∈A` → `allow:remove`; `D∉B` → `block:add` | `blocked` |
+| op | UCI change | `expect` |
+|---|---|---|
+| `allow` | `D∉A` → `allow:add`; `D∈B` → `block:remove` | `allowed` |
+| `block` | `D∈A` → `allow:remove`; `D∉B` → `block:add` | `blocked` |
 
 So `Allow` undoes a manual block and overrides a downloaded list, and `Block`
-undoes a manual allow; api 1's `unblock`/`unallow` are not needed.
+undoes a manual allow; no "unblock"/"unallow" ops are needed.
 
-Mode:
+Mode (one per batch):
+
 - **`persist-only`**: adblock-fast `enabled≠1`. UCI is written and there is
   no runtime step.
-- **`fast-allow`**: reserved; never selected. adblock-fast 1.2.4-r4's `allow`
+- **`rebuild`**: adblock-fast `enabled=1`. Every change is applied with one
+  rebuild; adblock-fast 1.2.4-r4's own `allow` fast path is never used: it
   does not remove the blocking line, deletes unrelated lines and clears the
-  service status (§10, §14.1).
-- **`rebuild`**: every other batch with at least one change, and
-  `rebuild:true`. The UI must obtain explicit confirmation:
+  service status (§10, §14.1). The UI must obtain explicit confirmation:
   "downloads all lists over WAN, restarts DNS, may take minutes". The user
   stages many changes and pays for one rebuild per Apply.
 
 ---
 
-## 7. Job (`job.uc`, unchanged from api 1)
+## 7. Job (`job.uc`)
 
 ### 7.1 `job` (read)
 
@@ -430,27 +450,24 @@ means the latest job. A non-matching ID gives `not-found`. Response:
 { "api":2,"ok":true,"job":{
   "id":"j1762747400-3f2a",            // ^j[0-9]{10}-[0-9a-f]{4}$
   "state":"verifying",                 // queued|applying|verifying|applied|partial|failed
-  "mode":"rebuild",                    // rebuild|persist-only (fast-allow reserved)
-  "phase":"verify",                    // null|uci|allow|rebuild|verify
+  "mode":"rebuild",                    // rebuild|persist-only
+  "phase":"verify",                    // null|rebuild|verify
   "created_at":1762747400,"started_at":1762747400,"finished_at":null,
   "persisted":true,                    // UCI committed by apply
-  "escalated":false,                   // reserved for fast-allow; always false
   "adblock_fast_status":"statusSuccess",
   "error":null,                        // or {"code":"…","message":"…"}
-  "items":[{"op":"allow","domain":"ads.example.com","effective_op":"allow","change":["allow:add"],
+  "items":[{"op":"allow","domain":"ads.example.com","change":["allow:add"],
             "expect":"allowed","result":"ok","observed":"allowed",
             "answer":{"rcode":"NOERROR","a":["93.184.216.34"],"aaaa":[]},"reason":null}] } }
 ```
 
-`job` is `null` when no job has run since boot.
+`job` is `null` when no job has run since boot. The fields above are all
+the fields of a job.
 
-`items[].expect`:
-- `allow` → `"allowed"`;
-- `block` → `"blocked"`;
-- `"any"` (observed state reported only) appears only in a job started by
-  api 1's `unallow` before an upgrade; the job and `verdict()` still accept it.
+`items[].expect`: `allow` → `"allowed"`, `block` → `"blocked"`.
 
 `items[].result`:
+
 - `pending`: not verified yet;
 - `ok`: observed matches the expectation, or the op was a noop;
 - `mismatch`: the expectation failed (for example
@@ -461,6 +478,7 @@ means the latest job. A non-matching ID gives `not-found`. Response:
 - `skipped`: `persist-only`.
 
 `reason` (string or `null`):
+
 - `parent-blocked`: a parent entry still blocks the name, for example under
   `dnsmasq.conf` or `addnhosts`;
 - `still-listed`: after `allow`, the output file still blocks the name
@@ -512,8 +530,7 @@ means the latest job. A non-matching ID gives `not-found`. Response:
 Then release the lock.
 
 Job error codes: `lock-failed`, `rebuild-failed`, `interrupted`,
-`start-timeout`; `rebuild-required` and `allow-failed` are reserved for
-`fast-allow`.
+`start-timeout`.
 
 ### 7.3 Lock and busy semantics
 
@@ -534,7 +551,7 @@ Job error codes: `lock-failed`, `rebuild-failed`, `interrupted`,
 
 ### 7.4 State machine
 
-```
+```text
 (none) --apply--> queued --job acquires lock--> applying --runtime ok--> verifying --> applied | partial
                     |                              \--error--> failed{rebuild-failed|lock-failed}
                     \--not started 30 s--> failed{start-timeout}      applying|verifying --holder died--> failed{interrupted}
@@ -557,12 +574,13 @@ rpc.declare({ object: 'log', method: 'read', params: [ 'lines', 'stream', 'onesh
 ```
 
 Bounds and cadence:
+
 - **Always pass `lines`**, and `16 ≤ N ≤ 900`. Never `0` (returns nothing)
   and never omit it (returns the whole ring). 900 keeps the worst case, ~1 KiB
   lines, under the 1 MiB ubus message cap, so a fetch can never disconnect
   logd from ubus (§12; T10).
 - **First fetch** after load: `N = 900`.
-- **Polling:** every `poll_interval` s (default 2) **only while**
+- **Polling:** every 2 s **only while**
   `document.visibilityState === 'visible'`. LuCI's `poll` keeps running in a
   hidden tab, so the view adds its poll function when the page becomes
   visible and removes it on `visibilitychange` to hidden (P2: a hidden or
@@ -591,7 +609,8 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
 
 - `create(opts)` → `state`; `opts`: `{max_rows: 500, pending_ttl_s: 10,
   local_domains: [...], hide_router: true}` (`local_domains` from
-  `info.local_domains`, `hide_router` from `exclude_router`).
+  `info.local_domains`; router queries are hidden unless the page's "show
+  router queries" checkbox is ticked).
 - `nextRequest(state)` → `{lines: N}` per §8.1 (900 on the first call). Pure.
 - `ingest(state, reply)` with `reply = {log: [...]}` from `log read` →
   `{added, missed, reset, refetch: {lines: N} | null}`. When `refetch` is not
@@ -631,7 +650,7 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
 `<prio>` and the timestamp). Only messages starting with that tag are
 considered (`dnsmasq-dhcp[` and others are not). Grammar (POSIX ERE):
 
-```
+```text
 TAG  = ^dnsmasq\[([0-9]+)\]: (.*)$
 BODY = ^(TCP |UDP )?([0-9]+) ([^ /]+)/([0-9]+) ([^ ]+) ([a-z0-9_.:-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$
 LOST = ^overflow: ([0-9]+) log entries lost$
@@ -661,7 +680,7 @@ its query becomes `no-answer`. At most 500 rows are kept (oldest dropped).
 Line shapes (`"%s%u %s/%u %s %s%s%s %s%s"`, `cache.c` L2511), each prefixed
 with `dnsmasq[1]: `:
 
-```
+```text
 41 192.168.1.10/53211 query[A] ads.example.com from 192.168.1.10
 41 192.168.1.10/53211 config ads.example.com is NXDOMAIN            # dnsmasq.servers / dnsmasq.conf block
 42 192.168.1.10/53212 /var/run/adblock-fast/dnsmasq.addnhosts ads.example.com is ::   # addnhosts block
@@ -716,9 +735,10 @@ HTML string (T27).
 - `localStorage["adblock-fast-monitor.pending.v2"] = {"v":2,"items":[{"op":"allow","domain":"…","ts":1762747400}]}`,
   at most 64 items, `op` ∈ {`allow`, `block`}. Items may carry `reason` (the
   last failure), and the object may carry `inflight:{job_id,items}` so a
-  reload resumes the job. A stored api-1 list (`pending.v1`, which may hold
-  `unblock`/`unallow`) is discarded.
-- Row buttons: `Allow` on `blocked` rows, `Block` on `allowed` rows. Adding an
+  reload resumes the job.
+- Row buttons: `Allow` on `blocked` rows, `Block` on `allowed` rows, except
+  that no `Block` is offered for a name equal to or under one of
+  `info.protected_suffixes` (the server would refuse it, §6.5). Adding an
   op for D replaces any pending op for D; adding the same op again removes it.
 - Domains are normalized as in §6.4 before they are stored.
 - **Apply.**
@@ -742,8 +762,8 @@ States, first match wins: `access-denied` (`info` rejects with `-32002`);
 `logging-off` (`info.monitor.query_logging=false` and no instance has
 `uci_logqueries`; link to Settings, actions still available);
 `logging-unavailable(reason)` (`!info.dnsmasq.running` → `dnsmasq-not-running`;
-an instance with `logfacility_file` → `dnsmasq-logs-to-file`; no targeted
-instance has `dropin` or `uci_logqueries` → `confdir-invalid` or
+an instance with `logfacility_file` → `dnsmasq-logs-to-file`; no instance
+has `dropin` or `uci_logqueries` → `confdir-invalid` or
 `logging-not-active`); `healthy`; `error` (`log read` rejected with no
 earlier data); `loading`. `info.warnings` render as dismissible notes.
 
@@ -769,7 +789,7 @@ All dynamic text goes through `E()` array children or text nodes. Views
         "log": [ "read" ],
         "luci.adblock-fast-monitor": [ "info", "job" ]
       },
-      "uci": [ "adblock-fast-monitor", "adblock-fast" ]
+      "uci": [ "adblock-fast-monitor" ]
     },
     "write": {
       "ubus": {
@@ -784,12 +804,13 @@ All dynamic text goes through `E()` array children or text nodes. Views
 - Never `log write` and never the `:subscribe` method (SSE). Granting the read
   set exposes the whole system log (D6): **grant this app to admins only.**
   `root` (LuCI's admin) has every ACL anyway.
-- rpcd checks `uci get` against the `read` grant specifically. Writes to
-  adblock-fast's UCI happen only through `apply`, never through a LuCI `uci`
-  write grant.
+- rpcd checks `uci get` against the `read` grant specifically. The page
+  reads adblock-fast's state only through `info`, so there is no `uci` grant
+  on `adblock-fast`: writes happen only through `apply`, and `uci get`
+  of it is refused (ubus status 6) like any other config outside the grant.
 - Privacy: no client address is stored anywhere on the router by this
   package. The page's client column is **hidden by default**, and router
-  queries (`127.0.0.1`, `::1`) are hidden by default (`exclude_router`).
+  queries (`127.0.0.1`, `::1`) are hidden by default (a page checkbox).
 
 ---
 
@@ -801,7 +822,7 @@ All dynamic text goes through `E()` array children or text nodes. Views
 | Output file by `dns` | `dnsmasq.servers` → `/var/run/adblock-fast/dnsmasq.servers` (`server=/D/`, allow `server=/D/#`); `dnsmasq.addnhosts` → `/var/run/adblock-fast/dnsmasq.addnhosts` (`127.0.0.1 D`, `:: D`); `dnsmasq.conf`/`ipset`/`nftset` → `/var/run/adblock-fast/adblock-fast.dnsmasq` (`local=/D/`, `ipset=/D/adb`, `nftset=/D/4#inet#fw4#adb4…`) |
 | `allow` fast path | **defective, not used** (§14.1). Requires the output file; refuses with an external config; for each D runs `sed -i '\:/\(/D\|.D\):d'`, appends `server=/D/#` in servers mode, adds `allowed_domain`, commits, refreshes the `/dev/shm` config cache, restarts the resolver once and then publishes an empty `status` to procd. Its exit code is not meaningful. |
 | `update_config_sizes` | default `1`: after a download adblock-fast `save`s (never commits) each `file_url`'s `size`, leaving a delta in `/tmp/.uci/adblock-fast` (§6.1). |
-| Rebuild | any change to `allowed_domain` or `blocked_domain` makes `start` choose `download`; `dl` forces it. Allowed names are removed with `/(^|\.)D$/d` **after** blocked names are appended. |
+| Rebuild | any change to `allowed_domain` or `blocked_domain` makes `start` choose `download`; `dl` forces it. Allowed names are removed with `/(^\|\.)D$/d` **after** blocked names are appended. |
 | Status | `ubus call service list '{"name":"adblock-fast"}'` → `.adblock-fast.data.status` (`statusSuccess`, `statusFail`, …) and `.data.errors[].code`; a download failure of one list still ends `statusSuccess` with `errorDownloadingList` when the output file could be built |
 | `heartbeat_domain` | `-` does **not** disable the heartbeat (it falls back to the default `heartbeat.mossdef.org`); the heartbeat must resolve within `heartbeat_sleep_timeout` or the start fails |
 | Trigger | the init registers `config.change` → `reload`. The ucode `uci` commit does not emit it, while LuCI `uci.apply` does. |
@@ -811,7 +832,7 @@ All dynamic text goes through `E()` array children or text nodes. Views
 
 ## 11. Performance budgets
 
-Design B-min: no resident process; the browser reads `log read` and does all
+No resident process; the browser reads `log read` and does all
 parsing. Measured by T26 (`npm run test:performance:measure -- PKG.apk`) and
 judged by `scripts/performance-gate.mjs` against `scripts/perf/budgets.json`.
 Method, justification and measured data: [`docs/performance.md`](performance.md).
@@ -833,48 +854,49 @@ Chromium, logged in as `root`.
 | P6 | logd, dnsmasq, rpcd, uhttpd, ubusd CPU/RSS deltas, query logging on vs off | each ≤ 4 pp CPU at 50 qps (dnsmasq ≤ 10 pp), ≤ 12 pp at 200 qps; RssAnon ≤ 256 KiB |
 | P7 | `info` round trip through ubus | p95 ≤ 50 ms |
 | P8 | `apply` return time (rpcd blocking) | ≤ 200 ms, and rpcd never blocked > 200 ms (20 ms `session list` probe) (**hard**) |
-| P10 | dnsmasq restarts caused by the package (boot, enabling query logging, a settings save) | 0 / 1 / 0 (**hard**) |
+| P10 | dnsmasq restarts caused by the package (boot, enabling query logging, a settings save, a package upgrade) | 0 / 1 / 0 / 0 (**hard**) |
 
 P10 exception (§4, logd restarts): with `query_logging=1` only, a logd
 restart costs exactly one dnsmasq restart, made by the init script's
 `instance.update` trigger because the jailed dnsmasq lost its `/dev/log`.
 dnsmasq would otherwise log nothing until its next restart. With
-`query_logging=0` a logd restart never restarts dnsmasq. Tested by
-`test/guest/logging-logd-restart.sh`.
+`query_logging=0` a logd restart never restarts dnsmasq. A dnsmasq outside
+the procd service never causes a restart, and a restart is made at most
+once per logd socket (§4). Tested by `test/guest/logging-logd-restart.sh`.
 
 ---
 
 ## 12. Upstream facts (verified 2026-11-10)
 
 - ucode pin: `PKG_SOURCE_VERSION:=85922056ef7a…` —
-  https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/utils/ucode/Makefile.
+  <https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/utils/ucode/Makefile>.
   The same file packages the `ucode-mod-io`, `ucode-mod-resolv` and
   `ucode-mod-uloop` modules.
 - `uloop.process` accepts only a **string** executable (`lib/uloop.c` L1012)
   and does not capture stdout. `process.delete()` does not kill the child —
-  https://github.com/jow-/ucode/blob/85922056/lib/uloop.c
+  <https://github.com/jow-/ucode/blob/85922056/lib/uloop.c>
 - `conn.publish(name, {m:{args,call}})` exists (`lib/ubus.c` L1889).
   Returning an object replies, returning an integer sets the ubus status, and
   any exception other than `exit` halts uloop (L1574-1632) —
-  https://github.com/jow-/ucode/blob/85922056/lib/ubus.c
+  <https://github.com/jow-/ucode/blob/85922056/lib/ubus.c>
 - `io.pipe`, `io.new`, `dup2`, and `read` (a raw `read(2)`) exist
   (`lib/io.c` L501, L772, L1124, L1249). `fs.file#lock` is `flock` with
   `s`/`x`/`n`/`u` (`lib/fs.c` L849). `resolv.query(names,{type,nameserver,timeout,retries})`
   returns `{name:{A:[],AAAA:[],rcode}}` (`lib/resolv.c`) —
-  https://github.com/jow-/ucode/tree/85922056/lib
+  <https://github.com/jow-/ucode/tree/85922056/lib>
 - `luci-base` depends on `+rpcd +rpcd-mod-ucode +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus …` —
-  https://raw.githubusercontent.com/openwrt/luci/openwrt-25.12/modules/luci-base/Makefile.
+  <https://raw.githubusercontent.com/openwrt/luci/openwrt-25.12/modules/luci-base/Makefile>.
   The `luci.mk` postinst clears caches and runs `rpcd reload` (L238-240).
   `L.hasViewPermission()` is at luci.js L3259.
 - rpcd `d99f703`: ucode plugins come from `/usr/share/rpcd/ucode`, are loaded
   once at init, and world-writable scripts are skipped (`ucode.c` L35,
   L1087-1100). Requests can `defer`, `reply` and `error`. SIGHUP re-execs
   rpcd (`main.c` L44, L66) —
-  https://github.com/openwrt/rpcd/blob/d99f703e4035d03fbcfbada3cb697db346c2b984/ucode.c
+  <https://github.com/openwrt/rpcd/blob/d99f703e4035d03fbcfbada3cb697db346c2b984/ucode.c>
 - uhttpd `93b05e0` `ubus.c`: the object lookup comes before the ACL check, so
   a missing object gives `-32000 Object not found` and a denied call gives
   `-32002 Access denied` (L120-122, L973-979) —
-  https://github.com/openwrt/uhttpd/blob/93b05e0b65d91c23c5aa8fdde378df1f174ec71d/ubus.c
+  <https://github.com/openwrt/uhttpd/blob/93b05e0b65d91c23c5aa8fdde378df1f174ec71d/ubus.c>
 - dnsmasq 2.93 (`PKG_UPSTREAM_VERSION:=2.93`, openwrt-25.12
   `package/network/services/dnsmasq/Makefile`):
   - the `log_query` extra format, `config`/`reply`/`cached`/`cached-stale`
@@ -886,13 +908,13 @@ dnsmasq would otherwise log nothing until its next restart. With
   - `overflow: N log entries lost` (`src/log.c` L203).
 
   Fetched from the GitHub mirror at tag v2.93,
-  https://github.com/1g4-mirror/dnsmasq/tree/v2.93/src (upstream gitweb
+  <https://github.com/1g4-mirror/dnsmasq/tree/v2.93/src> (upstream gitweb
   requires interactive login for automated clients).
 - `dnsmasq.init` (openwrt-25.12): `START=19` (L4);
   `logqueries` → `--log-queries=extra` (L990); `logfacility` (L1026);
   conf-dir `confdir` defaulting to `/tmp/dnsmasq${cfg:+.$cfg}.d`, created if
   missing (L1172-1178) —
-  https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/network/services/dnsmasq/files/dnsmasq.init
+  <https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/network/services/dnsmasq/files/dnsmasq.init>
 - ubox `6f78fa4`:
   - `logread -e` compiles a **BRE** (`regcomp` without `REG_EXTENDED`) and
     matches it against the message, which includes the `dnsmasq[pid]:` tag
@@ -902,18 +924,19 @@ dnsmasq would otherwise log nothing until its next restart. With
     L174-186);
   - `LOG_LINE_SIZE` is 1024 (`log/syslog.h`).
 
-  https://github.com/openwrt/ubox/tree/6f78fa496bf36c55864a41e353df7d13f04b1077/log
+  <https://github.com/openwrt/ubox/tree/6f78fa496bf36c55864a41e353df7d13f04b1077/log>
 - adblock-fast 1.2.4-r4 (openwrt-25.12 `net/adblock-fast`): `dns_modes` and
   sinkholes (`files/lib/adblock-fast/adblock-fast.uc` L35-78), triggers (L28,
   L1032), `enabled` check (L1075), rebuild allow removal (L2020), and
   `allow()` (L2661-2725). UCI schema in `files/etc/init.d/adblock-fast`
   `load_validate_config` —
-  https://github.com/openwrt/packages/tree/openwrt-25.12/net/adblock-fast/files
+  <https://github.com/openwrt/packages/tree/openwrt-25.12/net/adblock-fast/files>
 - BusyBox defaults (openwrt-25.12 `package/utils/busybox/Config-defaults.in`):
   `STAT n`, `TIMEOUT n`; `FLOCK`, `SETSID`, `KILL`, `GREP`, `AWK` and
   `NSLOOKUP` are `y`.
 
 ---
+
 - ubox `6f78fa4` logd (`log/logd.c` L86-93, L95-158, `log/syslog.c` L44,
   L209-214, `log/log.init` L28-39):
   - `log read {lines, stream, oneshot}` with `stream:false` replies
@@ -955,10 +978,15 @@ dnsmasq would otherwise log nothing until its next restart. With
 
 ## 13. Test obligations
 
-Every test must **execute** behaviour. Source-regex and doc-regex tests are
-not accepted.
+Every behavioural test must **execute** the behaviour it covers: a test of
+package behaviour that only matches source or documentation text with a
+regex is not accepted. Repository checks are a separate kind and are
+allowed: they check the repository itself (for example the docs
+self-check, `test/unit/docs-references.test.mjs`, that named paths and
+scripts exist), and they never count as evidence for a T-ID below.
 
 Environments:
+
 - **U**: a ucode interpreter built on the CI host at pin `85922056`, loading
   the real `abfm.*` modules (`npm run test:ucode`).
 - **S**: OpenWrt 25.12.6's BusyBox ash and `uci` in the host userland
@@ -975,23 +1003,23 @@ Environments:
 | T03 | §8.3 table and correlation | each table row → decision/source; local names; `duplicate` ignored; first terminal wins, CNAME chain adds answers (≤ 4); orphans ignored; 10 s log-time TTL → `no-answer`; reset on `started, version`; router rows flagged and hidden | N | `test/unit/querylog*.test.mjs` |
 | T04 | §8.1 cursor | `nextRequest` stays in 16..900, 900 first, never 0; adaptive N; gap → one refetch, remaining gap → `missed`; `lastId < cursor` → reset; ≤ 500 rows; `stats()` | N | `test/unit/querylog*.test.mjs` |
 | T05 | §8.3 port | one-time differential: api-1 ucode `logparse`+`stats` vs `querylog.js` over the dnsmasq fixtures, same decision per key | N | `test/fixtures/logread/differential/` |
-| T06 | D1, P1 | 0 package processes and no procd instance in every state: default, `query_logging` 0/1, settings save, restart, stop, after boot with `query_logging=1` | G | `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh`, `test/guest/perf-p1-disabled.sh` |
-| T07 | §3 migration | api-1 `enabled`/`manage_logging` → `query_logging`, daemon options removed, idempotent, v2 file untouched; through `apk upgrade` from the api-1 package | S+G | `test/shell/uci-defaults-migrate.test.sh`, `test/guest/package-upgrade.host.sh` |
-| T08 | §4, §5, P10 | drop-in set for enable/disable/instance filter/dhcp `logqueries`; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
+| T06 | D1, P1 | 0 package processes and no procd instance in every state: default, `query_logging` 0/1, settings save, restart, stop, after boot with `query_logging=1`; an `instance.update` firing costs one process | G | `test/guest/logging-lifecycle.sh`, `test/guest/logging-logd-restart.sh`, `test/guest/dataplane-boot.host.sh`, `test/guest/perf-p1-disabled.sh` |
+| T07 | §4 stale scope, loop guard | only procd dnsmasq instance pids and their jailed children are compared; one stale restart per logd socket; a foreign dnsmasq with a different `/dev/log` (own root) never restarts dnsmasq and causes no loop | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
+| T08 | §4, §5, P10 | drop-in set for reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
 | T09 | §8.1 live | with the drop-in, real queries from a LAN source appear in `log read` (query, blocked `config`/addnhosts, `reply`, `cached` lines) with consecutive ids; none with `query_logging=0` | G | `test/guest/dataplane-live.host.sh` |
 | T10 | §8.1 bound | `log_size=1024`, ~1000-byte lines: `log read` with `lines:900` succeeds through `/ubus` and the CLI, reply < 1 MiB, logd stays on ubus | G | `test/guest/logd-oversize.host.sh` |
-| T11 | §6.1 | `info` fields (`api` 2, `monitor`, `local_domains`, `logd`), warnings for `log_file`, `log_ip`, dhcp `logfacility`/`logqueries`; through LuCI sessions | G | `test/guest/actions-api.sh`, `test/guest/actions-session.host.sh` |
+| T11 | §6.1 | `info` fields (`api` 2, `monitor`, `local_domains`, `protected_suffixes`, `logd`), warnings for `log_file`, `log_ip`, dhcp `logfacility`/`logqueries`; through LuCI sessions | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-api.sh`, `test/guest/actions-session.host.sh` |
 | T12 | §6.4–6.5 | grammar, normalization, protected set (incl. heartbeat and list hosts), PSL guard lists (positive and negative), only `allow`/`block` | U | `test/ucode/actions/domain.test.uc` |
-| T13 | §6.6 | plan table, conflicts, `allow-overrides`, noop, mode selection, `unblock`/`unallow` rejected | U | `test/ucode/actions/plan.test.uc` |
-| T14 | §6.3 pipeline | each error code from a real `ubus call`; `dry_run` has no side effects; `pending-uci-changes`; P8 | G | `test/guest/actions-api.sh` |
+| T13 | §6.6 | plan table, conflicts, `allow-overrides`, noop, mode selection, ops other than `allow`/`block` rejected | U | `test/ucode/actions/plan.test.uc` |
+| T14 | §6.3 pipeline | each error code from a real `ubus call`, in step order (the first failing step wins); `dry_run` has no side effects; `pending-uci-changes`; a LuCI session's staged change is not committed; reply shapes; P8 | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-api.sh` |
 | T15 | §7 allow | allow of a listed name: UCI persisted, one dnsmasq restart, one adblock-fast run, DNS answer flips, job `applied` | G | `test/guest/actions-jobs.sh` |
 | T16 | §14.1 collateral | allow `ads.example.com` with `bads.example.com` listed: `ads` resolves, `bads` stays blocked; upstream `allow` defects recorded | G | `test/guest/actions-jobs.sh` |
-| T17 | §7 rebuild | block, allow of a manual block, block of a manual allow: one `dl` each, `queued→applying→verifying→applied`; reboot → UCI persists, `job` is `null` | G | `test/guest/actions-jobs.sh`, `test/guest/actions-reboot.host.sh` |
+| T17 | §7 rebuild, §7.2 verification | block, allow of a manual block, block of a manual allow: one `dl` each, `queued→applying→verifying→applied`; reboot → UCI persists, `job` is `null`; jobs in `dnsmasq.addnhosts` (exact names), `dnsmasq.ipset`/`dnsmasq.nftset` (`unverified`, `dns-mode-unsupported`); `parent-blocked`, `still-listed`, `not-blocked`, `dns-error` verdicts | U+G | `test/ucode/actions/plan.test.uc`, `test/guest/actions-jobs.sh`, `test/guest/actions-reboot.host.sh` |
 | T18 | §7.2 failure | list server down → `failed/rebuild-failed`, `persisted:true`; "Run rebuild" recovers | G | `test/guest/actions-jobs.sh` |
-| T19 | §7.3 | second apply → `busy`; `kill -9` of the job → `interrupted`; `start-timeout` | G | `test/guest/actions-jobs.sh` |
+| T19 | §7.2–7.3 | second apply → `busy`; a fresh queued job → `busy` with its id; the job waits while another adblock-fast CLI run is alive; `kill -9` of the job → `interrupted`; `start-timeout`; `lock-failed` | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-jobs.sh` |
 | T20 | §10 | a committed `allowed_domain` change picked up by `reload_config`, `reload` or `restart` leaves the name blocked; only `dl` rebuilds | G | `test/guest/actions-upstream-reload.sh` |
-| T21 | §9 | for a read+write app login and the read-only login: `log read`, `info`, `job`, `uci get` on both configs allowed; `log write` and `/ubus/subscribe/log` refused (root's subscription streams as a control); `apply` allowed for admins, denied read-only; `uci set` denied as granted | G | `test/guest/package-acl.host.sh`, `test/guest/actions-session.host.sh` |
-| T22 | §2 install | LuCI Software upload with the key added through LuCI (no `--allow-untrusted`) → methods work without a manual rpcd restart; removal removes drop-ins and files | B+G | `test/browser/install-luci.spec.mjs` (`scripts/release/verify-luci-install.sh`) |
+| T21 | §9 | for a read+write app login and the read-only login: `log read`, `info`, `job`, `uci get adblock-fast-monitor` allowed; `uci get adblock-fast` refused; `log write` and `/ubus/subscribe/log` refused (root's subscription streams as a control); `apply` allowed for admins, denied read-only; `uci set` denied as granted; a login without this app's ACL gets no menu entry and `-32002` on `info`, `job` and `log read` | G | `test/guest/package-acl.host.sh`, `test/guest/actions-session.host.sh` |
+| T22 | §2 install | LuCI Software upload with the key added through LuCI (no `--allow-untrusted`) → methods work without a manual rpcd restart; removal removes drop-ins (one dnsmasq restart), files, the `rc.d` link and the runtime state | B+G | `test/browser/install-luci.spec.mjs` (`scripts/release/verify-luci-install.sh`), `test/guest/package-remove.host.sh` |
 | T23 | §8.5 | each page state rendered from a real guest condition | B | `test/browser/` |
 | T24 | §8.4 | staging persists across reload; Allow/Block row buttons; one `apply` per batch; confirm modal for rebuild; job progress; failed items return to pending | B | `test/browser/` |
 | T25 | §8.4, §9 | a read-only user sees no write controls; Settings loads and saves for an admin | B | `test/browser/` |
@@ -999,8 +1027,8 @@ Environments:
 | T27 | §8.3 untrusted strings | a logged PTR answer like `<img/src=x/onerror=window.__x=1>` is shown as literal text, no `<img>` in the DOM, `window.__x` undefined | B | `test/browser/` |
 | T28 | §8.1, P2 | a hidden page makes 0 requests over 60 s; polling resumes when visible | B | `test/browser/` |
 | T29 | §8.1 gaps | under load the shown missed count equals the id gap; a `log` restart resets the cursor | B+G | `test/browser/` |
-| T30 | §2 upgrade | `apk upgrade` from the api-1 package over a signed feed: config migrated, daemon gone, drop-in kept, dnsmasq restarted at most once, caches cleared, rpcd reloaded | G | `scripts/release/verify-upgrade.sh` → `test/guest/package-upgrade.host.sh` |
-| T31 | §2 inventory | dependencies, modes, owners, conffile defaults, uci-defaults ran, no api-1 daemon files, sysupgrade keep list | G | `test/guest/package-files.host.sh` |
+| T30 | §2 upgrade | `apk upgrade` from an older api-2 package over a signed feed: changed conffile kept, drop-ins kept, 0 dnsmasq restarts, the last job still reported, caches cleared, rpcd reloaded, the `instance.update` trigger runs `logging.uc reconcile` | G | `scripts/release/verify-upgrade.sh` → `test/guest/package-upgrade.host.sh` |
+| T31 | §2 inventory | dependencies, modes, owners, conffile defaults, sysupgrade keep list | G | `test/guest/package-files.host.sh` |
 | T32 | §4 logd restart | `/etc/init.d/log restart` and a System → Logging save: with `query_logging=1` dnsmasq is restarted once and queries reach `log read` again, an unrelated service restart restarts nothing; with `query_logging=0` no trigger and no restart; `dnsmasq_log_stale` against a fake `/proc` | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
 
 ---
@@ -1062,16 +1090,7 @@ Environments:
 15. **A logd restart silences the jailed dnsmasq** (§4): the jail keeps the
     old `/dev/log` inode. Mitigated by the `instance.update` trigger, which
     costs one dnsmasq restart per logd restart while `query_logging=1` (P10
-    exception, §11; T32). Restarts of other services run a `logging.uc`
-    reconcile that changes nothing.
-
----
-
-## 15. Superseded documents and tests
-
-- `MONITORING_API.md`, `RULE_ACTION_API.md`, `INTEGRATION_CONTRACT.md` and
-  `RUNTIME_TEST_REQUIREMENTS.md` are one-line pointers to this file.
-- api 1's daemon tests (`test/ucode/dataplane/{logparse,stats,replay}.test.uc`,
-  `test/guest/dataplane-lifecycle.sh`, `test/guest/dataplane-rpc.host.sh`) were
-  deleted with the daemon; their T08/P10 and process checks moved to
-  `test/guest/logging-lifecycle.sh`.
+    exception, §11; T32). Restarts of other services run one short-lived
+    `logging.uc reconcile` that changes nothing. Only the procd dnsmasq
+    service is compared and restarted at most once per logd socket, so a
+    dnsmasq outside it (chroot, container) can't cause a restart loop (T07).

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Proves test:shell runs OpenWrt 25.12.6's BusyBox with only its default
 # applets: stat and timeout are absent on a stock router (review B4).
 . "$ABFM_TESTLIB/sh/testlib.sh"

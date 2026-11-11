@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Shared POSIX/BusyBox-ash test helpers for test/shell/*.sh (host userland
 # container) and test/guest/*.sh (inside the OpenWrt guest). Only uses
 # applets OpenWrt 25.12 enables by default; file metadata goes through ucode

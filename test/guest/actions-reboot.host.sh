@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # T17 reboot persistence (docs/CONTRACT.md §7.4): a rebuild job's UCI change
 # survives a guest reboot while job.json (tmpfs) does not, so `job` is null.
 # Host side because it reboots the guest; restores the harness files after.

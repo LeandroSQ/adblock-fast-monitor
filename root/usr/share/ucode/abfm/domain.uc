@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // abfm.domain: pure helpers for the actions backend (docs/CONTRACT.md
 // §6.4-6.6, §7.2). No I/O: callers pass in UCI values, file lines and DNS
 // answers, so every function runs under a bare ucode interpreter.
@@ -20,7 +21,9 @@ for (let s in split('github.io gitlab.io blogspot.com appspot.com herokuapp.com 
 	'fbcdn.net cdn.cloudflare.net r2.dev ngrok.io ngrok-free.app onrender.com fly.dev', ' '))
 	PRIVATE_SUFFIXES[s] = true;
 
-const BUILTIN_PROTECTED = [ 'localhost', 'arpa', 'local', 'internal', 'home.arpa' ];
+// §6.5: names that never get a block rule, equal or under. The same names the
+// page treats as local (§8.3), plus `internal`.
+const BUILTIN_PROTECTED = [ 'localhost', 'arpa', 'local', 'internal', 'invalid', 'onion', 'bind' ];
 
 // adblock-fast `dns` mode -> output file (§10).
 const DNSMASQ_MODES = {
@@ -173,7 +176,7 @@ function validate_batch(args, ctx) {
 const EXPECT = { allow: 'allowed', block: 'blocked' };
 
 // §6.6. state: { allowed, blocked, enabled, rebuild }.
-// Returns { items, mode, noop, may_escalate } or { error }.
+// Returns { items, mode, noop } or { error }.
 function plan(ops, state) {
 	let A = {}, B = {};
 	for (let d in state?.allowed ?? []) A[d] = true;
@@ -181,7 +184,7 @@ function plan(ops, state) {
 
 	let items = [], after_allow = { ...A }, changed = false;
 	for (let o in ops) {
-		let D = o.domain, eff = o.op, change = [];
+		let D = o.domain, change = [];
 		switch (o.op) {
 		case 'allow':
 			if (!A[D]) push(change, 'allow:add');
@@ -197,12 +200,12 @@ function plan(ops, state) {
 			if (c == 'allow:remove') delete after_allow[D];
 		}
 		if (length(change)) changed = true;
-		push(items, { op: o.op, domain: D, effective_op: eff, change, expect: EXPECT[o.op], index: o.index });
+		push(items, { op: o.op, domain: D, change, expect: EXPECT[o.op], index: o.index });
 	}
 
 	// The rebuild removes allowed names after it adds blocks (§6.3 step 5).
 	for (let it in items) {
-		if (it.effective_op != 'block')
+		if (it.op != 'block')
 			continue;
 		for (let s in suffixes(it.domain))
 			if (after_allow[s])
@@ -217,13 +220,12 @@ function plan(ops, state) {
 		items,
 		mode: state?.enabled ? 'rebuild' : 'persist-only',
 		noop: !changed && state?.rebuild !== true,
-		may_escalate: false,
 	};
 }
 
 // Public plan entries (§6.3 response).
 function plan_view(items) {
-	return map(items, (it) => ({ op: it.op, domain: it.domain, effective_op: it.effective_op, change: it.change }));
+	return map(items, (it) => ({ op: it.op, domain: it.domain, change: it.change }));
 }
 
 // grep -F patterns selecting every output line that can decide `listed` for
@@ -338,7 +340,7 @@ function observe(ans, listed_value) {
 function verdict(item, observed, ans, lst, dns) {
 	if (dns == 'dnsmasq.ipset' || dns == 'dnsmasq.nftset')
 		return { result: 'unverified', reason: 'dns-mode-unsupported' };
-	if (!length(item.change) || item.expect == 'any' || observed == item.expect)
+	if (!length(item.change) || observed == item.expect)
 		return { result: 'ok', reason: null };
 	if (observed == 'unknown')
 		return DNS_ERRORS[ans?.rcode]

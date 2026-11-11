@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Sends raw DNS queries over UDP (stdlib only) and prints the rcode and the
 answer count. Labels are given as Python string literals so tests can send
 names that dig refuses (spaces, control characters).

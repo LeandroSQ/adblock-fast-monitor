@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Minimal TAP test helpers for test/ucode/**/*.uc, loaded with
 //   let t = require("testlib");
 // (test/lib/ucode-runner and the suite runner put this directory on the

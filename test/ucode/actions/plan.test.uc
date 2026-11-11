@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T13 (docs/CONTRACT.md §6.6) plan table and mode selection, plus the pure
 // halves of §7.2 (listed, observed, verdict) that the job feeds with real
 // files and DNS answers.
@@ -14,7 +15,7 @@ function plan(ops, state) {
 
 function one(op, dom, A, B) {
 	let p = plan([ { op, domain: dom } ], { allowed: A, blocked: B, enabled: true });
-	return [ p.items[0].effective_op, p.items[0].change ];
+	return [ p.items[0].op, p.items[0].change ];
 }
 
 let D = 'x.example.com';
@@ -40,7 +41,8 @@ t.test('expectations per op', () => {
 	let p = plan([ { op: 'allow', domain: 'a.example.com' }, { op: 'block', domain: 'c.example.com' } ],
 		{ allowed: [], blocked: [ 'a.example.com' ], enabled: true });
 	t.eq(map(p.items, (i) => i.expect), [ 'allowed', 'blocked' ]);
-	t.eq(d.plan_view(p.items)[0], { op: 'allow', domain: 'a.example.com', effective_op: 'allow', change: [ 'allow:add', 'block:remove' ] });
+	t.eq(d.plan_view(p.items)[0], { op: 'allow', domain: 'a.example.com', change: [ 'allow:add', 'block:remove' ] });
+	t.eq(sort(keys(p)), [ 'items', 'mode', 'noop' ], 'no reserved fields');
 });
 
 t.test('allow-overrides: blocking under an allowed entry that stays', () => {
@@ -70,7 +72,7 @@ t.test('mode selection: persist-only when adblock-fast is disabled, otherwise on
 	t.eq(plan([ { op: 'allow', domain: D } ], { allowed: [], blocked: [], enabled: false }).mode, 'persist-only');
 	for (let op in [ 'allow', 'block' ]) {
 		let p = plan([ { op, domain: D } ], { allowed: [ D ], blocked: [ D ], enabled: true });
-		t.eq([ p.mode, p.may_escalate ], [ 'rebuild', false ], op);
+		t.eq(p.mode, 'rebuild', op);
 	}
 });
 
@@ -142,7 +144,6 @@ t.test('verdict: ok, mismatch reasons, unverified', () => {
 	t.eq(d.verdict(block, 'unknown', { rcode: 'NOERROR' }, null, 'dnsmasq.servers'), { result: 'mismatch', reason: null });
 	t.eq(d.verdict(block, 'allowed', nx, null, 'dnsmasq.nftset'), { result: 'unverified', reason: 'dns-mode-unsupported' });
 	t.eq(d.verdict({ ...block, change: [] }, 'allowed', nx, null, 'dnsmasq.servers'), { result: 'ok', reason: null }, 'noop');
-	t.eq(d.verdict({ ...block, expect: 'any' }, 'allowed', nx, null, 'dnsmasq.servers'), { result: 'ok', reason: null }, 'expect any (v1 jobs)');
 });
 
 t.done();

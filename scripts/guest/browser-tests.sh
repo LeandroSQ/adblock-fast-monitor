@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Host command for run-guest-tests.sh --host-cmd: runs the Playwright suite in
 # test/browser against the running guest's LuCI with the per-run credentials.
 set -euo pipefail

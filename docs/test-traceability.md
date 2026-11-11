@@ -46,7 +46,7 @@ the repository.
 | Settings (query logging toggle, note about luci-app-adblock-fast) | T25 `ui-acl.spec.mjs` admin settings | browser | pass |
 | Page states from real guest conditions: `healthy`, `logging-off`, `logging-unavailable` (dnsmasq stopped, logs to file, logging not active), `adblock-fast-missing` (no actions), `error` (logd stopped), log-stalled notice, dismissible warnings | T23 `ui-states.spec.mjs`, `ui-queries.spec.mjs`, `ui-acl.spec.mjs` | browser | pass (`confdir-invalid` not exercised: it needs a broken dnsmasq `confdir`) |
 | Installable from LuCI (key + Upload + feed), no `--allow-untrusted` | T22 | guest + browser | pass |
-| Upgrade from api 1 (config migrated, daemon gone) | T07 `test/shell/uci-defaults-migrate.test.sh`, T30 | BusyBox + guest | pass |
+| Upgrade api 2 → api 2 (config and drop-ins kept) | T30 | guest | pending final gate |
 | Package inventory, deps, modes, sysupgrade keep list | T31 `package-files.host.sh` | guest | pass |
 | Release signing pipeline (throwaway key: adbsign, mkndx, mandatory verify, tamper/foreign-key rejection) | `scripts/release/selftest.sh WORKDIR PKG.apk` in a linux/amd64 container on the release-candidate artifact | Linux x86_64 container | pass (all checks; the key is created and deleted in the work dir) |
 

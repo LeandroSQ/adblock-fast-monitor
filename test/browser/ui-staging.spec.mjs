@@ -60,7 +60,7 @@ const resetRules = () => {
   waitAdblockFast();
 };
 
-// The api-2 trims (no may_escalate, info.protected_suffixes, ...) come with
+// The api-2 trims (info.protected_suffixes, no removed fields) come with
 // the backend of unit C; an older backend is reported, not validated.
 let strictSchemas = false;
 const replies = new WeakMap();

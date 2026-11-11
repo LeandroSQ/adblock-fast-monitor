@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # T22 (§2 install): the end-user path through LuCI only, without
 # --allow-untrusted, on a guest that does NOT have the package yet. Run it with
 #

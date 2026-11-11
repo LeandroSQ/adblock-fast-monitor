@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # The rpcd ucode plugin through uhttpd's /ubus with real LuCI sessions
 # (docs/CONTRACT.md §6, §9): uhttpd injects `ubus_rpc_session` into every
 # call's arguments, and rpcd only accepts it because it is special-cased

@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
 // §3 option parsing and §5 query-logging drop-ins (abfm.system) against a
 // temporary UCI directory and real files. T08's unit half: drop-in set,
-// restart-once rule, /etc/config/dhcp never written.
+// restart-once rule, /etc/config/dhcp never written; T32's stale /dev/log
+// detection and its loop guard against a fake /proc.
 'use strict';
 
 push(REQUIRE_SEARCH_PATH, sourcepath(0, true) + '/../../../root/usr/share/ucode/*.uc');
@@ -88,18 +90,15 @@ function guest_dir() {
 	return sections[1].confdir;
 }
 
-t.test('§3: booleans, clamped uints, defaults and the instance list', () => {
+t.test('§3: query_logging parses like UCI booleans; other options are ignored', () => {
 	monitor({});
-	t.eq(sys.monitor_config(cur()), {
-		query_logging: false, exclude_router: true, poll_interval: 2, dnsmasq_instance: [ '*' ]
-	});
-	monitor({ query_logging: 'yes', exclude_router: 'maybe', poll_interval: '999',
-	          dnsmasq_instance: [ 'guest', 'main' ], enabled: '0', recent_size: '9' });
-	t.eq(sys.monitor_config(cur()), {
-		query_logging: true, exclude_router: true, poll_interval: 60, dnsmasq_instance: [ 'guest', 'main' ]
-	}, 'v1 options are ignored');
-	monitor({ query_logging: 'off', poll_interval: '-5' });
-	t.eq([ sys.monitor_config(cur()).query_logging, sys.monitor_config(cur()).poll_interval ], [ false, 2 ]);
+	t.eq(sys.monitor_config(cur()), { query_logging: false });
+	monitor({ query_logging: 'yes', exclude_router: '0', poll_interval: '9', dnsmasq_instance: [ 'guest' ], enabled: '1' });
+	t.eq(sys.monitor_config(cur()), { query_logging: true }, 'unknown options are ignored');
+	monitor({ query_logging: 'maybe' });
+	t.eq(sys.monitor_config(cur()), { query_logging: false }, 'unparsable -> default');
+	monitor({ query_logging: 'off' });
+	t.eq(sys.monitor_config(cur()).query_logging, false);
 	write('adblock-fast-monitor', '');
 	t.eq(sys.monitor_config(cur()).query_logging, false, 'missing section');
 });
@@ -112,7 +111,7 @@ t.test('§5: confdir defaults, comma suffix, relative paths are invalid', () => 
 	t.eq(sys.confdir_of('x', ''), null);
 });
 
-t.test('§5: sections use UCI names; targets honour disabled and dnsmasq_instance', () => {
+t.test('§5: sections use UCI names; every enabled section is a target', () => {
 	dhcp();
 	monitor({});
 	let s = sys.dnsmasq_sections(cur());
@@ -121,8 +120,6 @@ t.test('§5: sections use UCI names; targets honour disabled and dnsmasq_instanc
 	t.eq([ s[0].confdir, s[1].section, s[1].confdir, s[2].disabled ],
 		[ `${confdir_root}/main.d`, 'guest', '/tmp/dnsmasq.guest.d', true ]);
 	t.eq(map(sys.logging_targets(cur()), (x) => x.section), [ s[0].section, 'guest' ]);
-	monitor({ dnsmasq_instance: [ 'guest', 'off', 'nope' ] });
-	t.eq(map(sys.logging_targets(cur()), (x) => x.section), [ 'guest' ]);
 	t.eq(sys.local_domains(cur()), [ 'lan', 'guest.example' ]);
 });
 
@@ -169,24 +166,27 @@ t.test('§5 a damaged drop-in is rewritten without a restart', () => {
 	t.eq([ h.res.changed, h.restarts, fs.readfile(MAIN) ], [ false, 0, sys.DROPIN_CONTENT ]);
 });
 
-t.test('§5 narrowing dnsmasq_instance removes the other drop-in (one restart)', () => {
-	monitor({ dnsmasq_instance: 'guest' });
+t.test('§5 disabling an instance in dhcp removes its drop-in (one restart)', () => {
+	write('dhcp', replace(DHCP_BYTES, "config dnsmasq 'guest'\n", "config dnsmasq 'guest'\n\toption disabled '1'\n"));
 	let h = apply('enable');
-	t.eq([ h.res.changed, h.restarts, h.res.dropins ], [ true, 1, [ GUEST ] ]);
-	t.ok(!fs.lstat(MAIN));
+	t.eq([ h.res.changed, h.restarts, h.res.dropins ], [ true, 1, [ MAIN ] ]);
+	t.ok(!fs.lstat(GUEST));
+	write('dhcp', DHCP_BYTES);
+	h = apply('enable');
+	t.eq([ h.res.changed, h.restarts, sort(h.res.dropins) ], [ true, 1, [ GUEST, MAIN ] ], 'enabled again: drop-in back');
 });
 
 t.test('§5 an instance with logqueries=1 gets no drop-in', () => {
 	write('dhcp', replace(DHCP_BYTES, "config dnsmasq 'guest'\n", "config dnsmasq 'guest'\n\toption logqueries '1'\n"));
 	let h = apply('enable');
-	t.eq([ h.res.changed, h.restarts, h.res.dropins ], [ true, 1, [] ]);
+	t.eq([ h.res.changed, h.restarts, h.res.dropins ], [ true, 1, [ MAIN ] ]);
 	let st = sys.logging_status(cur(), null);
 	t.eq(st.instances[1], { section: 'guest', confdir: `${confdir_root}/guest.d`, dropin: false, uci_logqueries: true, running: false });
 	write('dhcp', DHCP_BYTES);
 });
 
 t.test('§5 changes while dnsmasq is not running never restart it (boot)', () => {
-	monitor({});
+	apply('disable');
 	let h = apply('enable', false);
 	t.eq([ h.res.changed, h.res.restarted, h.restarts ], [ true, false, 0 ]);
 	t.ok(fs.lstat(MAIN) && fs.lstat(GUEST));
@@ -228,12 +228,12 @@ t.test('§5 /etc/config/dhcp is never written', () => {
 	t.eq(fs.lsdir(`${base}/save`), [], 'no UCI delta saved');
 });
 
-t.test('service_state reads procd instances through ubus', () => {
+t.test('service_state reads procd instances and their pids through ubus', () => {
 	let fake = { call: (o, m, a) => (o == 'service' && m == 'list' && a.name == 'dnsmasq')
-		? { dnsmasq: { instances: { cfg01411c: { running: true, pid: 5 }, guest: { running: false } } } } : null };
-	t.eq(sys.service_state(fake, 'dnsmasq'), { running: true, instances: { cfg01411c: true, guest: false } });
-	t.eq(sys.service_state({ call: () => null }, 'dnsmasq'), { running: false, instances: {} });
-	t.eq(sys.service_state(null, 'dnsmasq'), { running: false, instances: {} });
+		? { dnsmasq: { instances: { cfg01411c: { running: true, pid: 5 }, guest: { running: false, pid: 9 } } } } : null };
+	t.eq(sys.service_state(fake, 'dnsmasq'), { running: true, instances: { cfg01411c: true, guest: false }, pids: [ 5 ] });
+	t.eq(sys.service_state({ call: () => null }, 'dnsmasq'), { running: false, instances: {}, pids: [] });
+	t.eq(sys.service_state(null, 'dnsmasq'), { running: false, instances: {}, pids: [] });
 });
 
 function stale_apply(mode, stale, running) {
@@ -260,33 +260,60 @@ t.test('§4 stale /dev/log is ignored without drop-ins (query_logging=0 or disab
 	t.eq([ h.res.stale, h.asked ?? false, h.restarts, h.why ], [ false, false, 1, 'changed' ], 'only the set change restarts');
 	h = stale_apply('disable', true);
 	t.eq([ h.res.changed, h.res.stale, h.restarts ], [ false, false, 0 ]);
-	monitor({ dnsmasq_instance: [ 'nonexistent' ] });
+	write('dhcp', replace(DHCP_BYTES, /config dnsmasq( '[a-z]+')?\n/g, (m) => m + "\toption disabled '1'\n"));
 	h = stale_apply('enable', true);
-	t.eq([ h.res.dropins, h.res.stale, h.restarts ], [ [], false, 0 ], 'no targeted instance: no drop-in, no restart');
+	t.eq([ h.res.dropins, h.res.stale, h.restarts ], [ [], false, 0 ], 'no enabled instance: no drop-in, no restart');
+	write('dhcp', DHCP_BYTES);
 });
 
-t.test('§4 dnsmasq_log_stale compares each dnsmasq root /dev/log with the current one', () => {
-	let r = `${base}/root`;
-	for (let d in [ r, `${r}/dev`, `${r}/proc` ])
+// Fake /proc: procd's dnsmasq instance is a ujail (pid 3360, comm dnsmasq,
+// host root) whose child 3361 is the jailed dnsmasq; 3400 is a dnsmasq with
+// the current socket; 4000 is a foreign dnsmasq in its own root (a chroot or
+// container) whose /dev/log is some other file forever; 12 is logd.
+let R = `${base}/root`;
+function fake_proc(pid, ppid, comm, log) {
+	for (let d in [ `${R}/proc/${pid}`, `${R}/proc/${pid}/root`, `${R}/proc/${pid}/root/dev` ])
 		fs.mkdir(d);
-	t.eq(sys.dnsmasq_log_stale(r), [], 'no /dev/log: nothing is stale');
-	fs.writefile(`${r}/dev/log`, 'current');
-	let proc = (pid, comm, log) => {
-		for (let d in [ `${r}/proc/${pid}`, `${r}/proc/${pid}/root`, `${r}/proc/${pid}/root/dev` ])
-			fs.mkdir(d);
-		fs.writefile(`${r}/proc/${pid}/comm`, comm + '\n');
-		if (log == 'same')
-			fs.symlink(`${r}/dev/log`, `${r}/proc/${pid}/root/dev/log`);
-		else if (log)
-			fs.writefile(`${r}/proc/${pid}/root/dev/log`, 'old');
-	};
-	proc(3361, 'dnsmasq', 'old');
-	proc(3400, 'dnsmasq', 'same');
-	proc(12, 'logd', 'old');
-	proc(3500, 'dnsmasq', null);
-	fs.mkdir(`${r}/proc/self`);
-	t.eq(sys.dnsmasq_log_stale(r), [ 3361 ]);
-	t.eq(sys.dnsmasq_log_stale(`${base}/missing`), []);
+	fs.writefile(`${R}/proc/${pid}/comm`, comm + '\n');
+	fs.writefile(`${R}/proc/${pid}/stat`, `${pid} (${comm}) S ${ppid} ${pid} ${pid} 0 -1\n`);
+	if (log == 'same')
+		fs.symlink(`${R}/dev/log`, `${R}/proc/${pid}/root/dev/log`);
+	else if (log)
+		fs.writefile(`${R}/proc/${pid}/root/dev/log`, log);
+}
+
+t.test('§4 dnsmasq_log_stale: only procd instance pids and their children count', () => {
+	for (let d in [ R, `${R}/dev`, `${R}/proc` ])
+		fs.mkdir(d);
+	t.eq(sys.dnsmasq_log_stale(R, [ 3360 ]), [], 'no /dev/log: nothing is stale');
+	fs.writefile(`${R}/dev/log`, 'current');
+	fake_proc(1, 0, 'procd', 'same');
+	fake_proc(3360, 1, 'dnsmasq', 'same');
+	fake_proc(3361, 3360, 'dnsmasq', 'old');
+	fake_proc(3400, 1, 'dnsmasq', 'same');
+	fake_proc(4000, 1, 'dnsmasq', 'foreign');
+	fake_proc(4001, 4000, 'dnsmasq', 'foreign');
+	fake_proc(12, 1, 'logd', 'old');
+	fs.mkdir(`${R}/proc/self`);
+	t.eq(sys.dnsmasq_log_stale(R, [ 3360 ]), [ 3361 ], 'the jailed child of the instance');
+	t.eq(sys.dnsmasq_log_stale(R, [ 3400 ]), [], 'an instance with the current socket');
+	t.eq(sys.dnsmasq_log_stale(R, []), [], 'no instance running: nothing to restart');
+	t.eq(sys.dnsmasq_log_stale(R, [ 3360, 3400 ]), [ 3361 ], 'the foreign dnsmasq is never a candidate');
+	t.eq(sys.dnsmasq_log_stale(`${base}/missing`, [ 3360 ]), []);
+});
+
+t.test('§4 loop guard: one stale restart per logd socket', () => {
+	let stamp = `${base}/stale-restart`;
+	t.eq(sys.dnsmasq_stale_restart(R, [ 3360 ], stamp), [ 3361 ], 'first time: restart');
+	t.eq(trim(fs.readfile(stamp)), sys.log_socket_id(R), 'the socket is recorded');
+	t.eq(sys.dnsmasq_stale_restart(R, [ 3360 ], stamp), [], 'still stale against the same socket: no second restart');
+	fs.unlink(`${R}/dev/log`);
+	fs.writefile(`${R}/dev/log`, 'new socket');
+	t.ok(sys.log_socket_id(R) != trim(fs.readfile(stamp)), 'logd restarted again (new inode)');
+	t.eq(sys.dnsmasq_stale_restart(R, [ 3360 ], stamp), [ 3361 ], 'a new logd socket allows a new restart');
+	fs.unlink(`${R}/proc/3361/root/dev/log`);
+	fs.symlink(`${R}/dev/log`, `${R}/proc/3361/root/dev/log`);
+	t.eq(sys.dnsmasq_stale_restart(R, [ 3360 ], stamp), [], 'fresh: nothing to do');
 });
 
 rm_rf(base);

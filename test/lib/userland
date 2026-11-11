@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Runs a command inside the OpenWrt 25.12.6 host userland container (real
 # BusyBox ash with OpenWrt's default applets, ucode, uci, ubus, jshn,
 # jsonfilter; nothing else). The repository is mounted read-only at /src and

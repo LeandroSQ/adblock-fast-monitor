@@ -1,4 +1,5 @@
 # shellcheck shell=sh
+# SPDX-License-Identifier: Apache-2.0
 # Guest-side helpers for the data-plane tests (BusyBox ash on OpenWrt).
 # Source after copying to the guest:  . /tmp/abfm-dp/guest.sh
 #

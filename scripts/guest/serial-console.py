@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Drive a booting OpenWrt guest over its QEMU serial socket.
 
 Waits for the console to come up (no fixed sleeps: it reacts to procd's

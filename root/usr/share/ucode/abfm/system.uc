@@ -17,12 +17,6 @@ const DROPIN_CONTENT = 'log-queries=extra\nlog-async=25\n';
 // ---------------------------------------------------------------------------
 // Package configuration (§3)
 
-const UINTS = {
-	poll_interval: [ 2, 2, 60 ]
-};
-const BOOLS = {
-	query_logging: false, exclude_router: true
-};
 const TRUE = { '1': true, 'on': true, 'true': true, 'yes': true, 'enabled': true };
 const FALSE = { '0': true, 'off': true, 'false': true, 'no': true, 'disabled': true };
 
@@ -34,34 +28,16 @@ function parse_bool(v, def) {
 	return TRUE[v] ? true : (FALSE[v] ? false : def);
 }
 
-// Values outside the range clamp to the nearest bound; unparsable values
-// fall back to the default.
-function parse_uint(v, spec) {
-	if (type(v) == 'int')
-		return v < spec[1] ? spec[1] : (v > spec[2] ? spec[2] : v);
-	if (type(v) != 'string' || !match(v, /^[ \t]*[0-9]+[ \t]*$/))
-		return spec[0];
-	return parse_uint(+trim(v), spec);
-}
-
 function as_list(v) {
 	if (v == null)
 		return [];
 	return type(v) == 'array' ? v : split(trim(`${v}`), /[ \t]+/);
 }
 
+// Unknown options (for example ones an older build wrote) are ignored.
 function monitor_config(cursor) {
 	let s = cursor.get_all('adblock-fast-monitor', 'config') ?? {};
-	let out = {};
-
-	for (let k, def in BOOLS)
-		out[k] = parse_bool(s[k], def);
-	for (let k, spec in UINTS)
-		out[k] = parse_uint(s[k], spec);
-
-	let inst = filter(as_list(s.dnsmasq_instance), (n) => n != '');
-	out.dnsmasq_instance = length(inst) ? inst : [ '*' ];
-	return out;
+	return { query_logging: parse_bool(s.query_logging, false) };
 }
 
 // ---------------------------------------------------------------------------
@@ -94,12 +70,9 @@ function dnsmasq_sections(cursor) {
 	return out;
 }
 
-// Sections that get a drop-in under the monitor's dnsmasq_instance filter.
-function logging_targets(cursor, cfg) {
-	cfg ??= monitor_config(cursor);
-	let all = index(cfg.dnsmasq_instance, '*') >= 0;
-	return filter(dnsmasq_sections(cursor),
-		(s) => !s.disabled && (all || index(cfg.dnsmasq_instance, s.section) >= 0));
+// Sections that get a drop-in: every dnsmasq section with disabled!=1.
+function logging_targets(cursor) {
+	return filter(dnsmasq_sections(cursor), (s) => !s.disabled);
 }
 
 function dropin_path(confdir) {
@@ -110,7 +83,7 @@ function dropin_exists(confdir) {
 	return confdir != null && fs.lstat(dropin_path(confdir))?.type == 'file';
 }
 
-// dhcp `domain` values and `local` values with slashes stripped (§4.4).
+// dhcp `domain` values and `local` values with slashes stripped (§6.1).
 function local_domains(cursor) {
 	let out = [];
 	let add = (v) => {
@@ -132,6 +105,15 @@ function logd_size_kib(cursor) {
 		?? pick(cursor.get_first('system', 'system', 'log_size')) ?? 64;
 }
 
+// §6.1 `logd-to-flash`: logd also writes the log to `log_file`, and that
+// file is not on tmpfs (/tmp, /var -> /tmp, /dev/shm), so every logged query
+// is written to flash.
+function log_file_persistent(path) {
+	if (type(path) != 'string' || path == '')
+		return false;
+	return !match(path, /^\/(tmp|var|dev\/shm)(\/|$)/);
+}
+
 // adblock-fast's `dns` mode, or null when adblock-fast has no config.
 function adblock_fast_dns(cursor) {
 	let s = cursor.get_all('adblock-fast', 'config');
@@ -143,15 +125,19 @@ function adblock_fast_dns(cursor) {
 // ---------------------------------------------------------------------------
 // procd service state
 
-// {running: bool, instances: {name: running}} for a procd service.
+// {running: bool, instances: {name: running}, pids: [pid of each running
+// instance]} for a procd service.
 function service_state(conn, name) {
 	let res = conn?.call('service', 'list', { name });
 	let inst = res?.[name]?.instances ?? {};
-	let out = { running: false, instances: {} };
+	let out = { running: false, instances: {}, pids: [] };
 	for (let k, v in inst) {
 		out.instances[k] = !!v?.running;
-		if (v?.running)
+		if (v?.running) {
 			out.running = true;
+			if (type(v.pid) == 'int' && v.pid > 0)
+				push(out.pids, v.pid);
+		}
 	}
 	return out;
 }
@@ -216,27 +202,63 @@ function remove_dropin(confdir) {
 	return true;
 }
 
-// pids of dnsmasq processes whose /dev/log is not the current logd socket.
-// procd jails dnsmasq (`procd_add_jail dnsmasq ubus log`) with /dev/log
-// bind-mounted at start; when logd restarts it creates a new socket inode,
-// the jail keeps the dead one, and dnsmasq's reconnect attempts never reach
-// logd again, so it logs nothing until it restarts (§4, §14). `root` is a
-// path prefix for tests ('' on the router). Empty when /dev/log is missing.
-function dnsmasq_log_stale(root) {
+function log_socket_id(root) {
+	let st = fs.stat(`${root ?? ''}/dev/log`);
+	return st ? sprintf('%d:%d:%d', st.dev?.major, st.dev?.minor, st.inode) : null;
+}
+
+function ppid_of(root, pid) {
+	// "pid (comm) state ppid ...": comm may hold spaces and parentheses.
+	let stat = fs.readfile(`${root}/proc/${pid}/stat`) ?? '';
+	let m = match(substr(stat, rindex(stat, ')') + 1), /^ [A-Za-z] ([0-9]+)/);
+	return m ? +m[1] : null;
+}
+
+// pids of the procd dnsmasq service's processes whose /dev/log is not the
+// current logd socket. procd jails dnsmasq (`procd_add_jail dnsmasq ubus
+// log`) with /dev/log bind-mounted at start; when logd restarts it creates a
+// new socket inode, the jail keeps the dead one, and dnsmasq's reconnect
+// attempts never reach logd again, so it logs nothing until it restarts (§4,
+// §14). Only the service's instance pids (`instances`, from `service list`)
+// and their direct children (the jailed dnsmasq ujail forks) are considered:
+// any other dnsmasq, for example one in its own chroot or container, is not
+// ours to restart and would otherwise look stale forever. `root` is a path
+// prefix for tests ('' on the router). Empty when /dev/log is missing.
+function dnsmasq_log_stale(root, instances) {
 	root ??= '';
-	let id = (st) => st ? sprintf('%d:%d:%d', st.dev?.major, st.dev?.minor, st.inode) : null;
-	let cur = id(fs.stat(`${root}/dev/log`));
-	if (!cur)
+	let cur = log_socket_id(root);
+	if (!cur || !length(instances))
 		return [];
+	let want = {};
+	for (let p in instances)
+		want[p] = true;
 	let out = [];
 	for (let pid in fs.lsdir(`${root}/proc`) ?? []) {
 		if (!match(pid, /^[0-9]+$/) || trim(fs.readfile(`${root}/proc/${pid}/comm`) ?? '') != 'dnsmasq')
 			continue;
-		let st = id(fs.stat(`${root}/proc/${pid}/root/dev/log`));
-		if (st && st != cur)
+		if (!want[pid] && !want[ppid_of(root, pid)])
+			continue;
+		let st = fs.stat(`${root}/proc/${pid}/root/dev/log`);
+		if (st && sprintf('%d:%d:%d', st.dev?.major, st.dev?.minor, st.inode) != cur)
 			push(out, +pid);
 	}
 	return sort(out);
+}
+
+// Loop guard for the stale restart (§4, P10): at most one restart per logd
+// socket. `stamp` records the socket a stale restart was made for; when
+// dnsmasq is still stale against that same socket, another restart would not
+// help, so none is made. Returns the stale pids that justify a restart (and
+// records the socket), or [].
+function dnsmasq_stale_restart(root, instances, stamp) {
+	let stale = dnsmasq_log_stale(root, instances);
+	if (!length(stale))
+		return [];
+	let cur = log_socket_id(root);
+	if (trim(fs.readfile(stamp) ?? '') == cur)
+		return [];
+	fs.writefile(stamp, cur + '\n');
+	return stale;
 }
 
 // mode 'enable' | 'disable'. opts: {cursor, running(): bool, restart(reason): void,
@@ -295,7 +317,7 @@ function logging_apply(mode, opts) {
 	return { changed, restarted, stale, errors, dropins: after };
 }
 
-// --- adblock-fast discovery (WU2) ---
+// ---------------------------------------------------------------------------
 // adblock-fast state for the rpcd plugin (docs/CONTRACT.md §6.1, §6.5, §10).
 // Reads go through the caller's cursor, which must use the plugin's private
 // savedir so nobody's uncommitted changes leak into the result.
@@ -357,12 +379,11 @@ function adblock_fast_protected(cursor, af) {
 }
 
 // §6.1 `dnsmasq`: logging_status() for every enabled section, plus whether
-// it logs to a file and whether dnsmasq_instance targets it.
+// it logs to a file.
 function dnsmasq_info(cursor, conn) {
 	let secs = {};
 	for (let s in dnsmasq_sections(cursor))
 		secs[s.section] = s;
-	let targeted = map(logging_targets(cursor), (s) => s.section);
 	let instances = [], running = false;
 	for (let e in logging_status(cursor, conn).instances) {
 		if (e.running)
@@ -371,7 +392,6 @@ function dnsmasq_info(cursor, conn) {
 		if (s.disabled)
 			continue;
 		e.logfacility_file = index(s.logfacility ?? '', '/') >= 0;
-		e.targeted = index(targeted, e.section) >= 0;
 		push(instances, e);
 	}
 	return { running, instances };
@@ -381,7 +401,6 @@ return {
 	DROPIN_NAME,
 	DROPIN_CONTENT,
 	parse_bool,
-	parse_uint,
 	monitor_config,
 	confdir_of,
 	dnsmasq_sections,
@@ -389,11 +408,14 @@ return {
 	dropin_path,
 	local_domains,
 	logd_size_kib,
+	log_file_persistent,
 	adblock_fast_dns,
 	service_state,
 	logging_status,
 	logging_apply,
+	log_socket_id,
 	dnsmasq_log_stale,
+	dnsmasq_stale_restart,
 	adblock_fast_pending,
 	adblock_fast_state,
 	adblock_fast_protected,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Proves test:ucode runs the interpreter OpenWrt 25.12.6 ships (ucode
 // 85922056 + OpenWrt patches), not a newer or mocked one.
 let t = require("testlib");

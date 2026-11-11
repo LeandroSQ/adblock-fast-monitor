@@ -6,7 +6,7 @@
 				"log": [ "read" ],
 				"luci.adblock-fast-monitor": [ "info", "job" ]
 			},
-			"uci": [ "adblock-fast-monitor", "adblock-fast" ]
+			"uci": [ "adblock-fast-monitor" ]
 		},
 		"write": {
 			"ubus": {

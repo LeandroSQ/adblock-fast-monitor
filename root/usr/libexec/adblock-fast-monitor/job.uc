@@ -1,4 +1,5 @@
 #!/usr/bin/ucode
+// SPDX-License-Identifier: Apache-2.0
 // Detached apply job (docs/CONTRACT.md §7). Started by the rpcd plugin as
 // `job.uc <job_id>`; runs the adblock-fast runtime step for the queued job,
 // then verifies every domain against real DNS answers from 127.0.0.1.

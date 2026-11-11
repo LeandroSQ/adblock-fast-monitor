@@ -9,15 +9,7 @@ USE_PROCD=1
 LOGGING=/usr/libexec/adblock-fast-monitor/logging.uc
 
 start_service() {
-	local query_logging
-	config_load adblock-fast-monitor
-	config_get_bool query_logging config query_logging 0
-
-	if [ "$query_logging" = 1 ]; then
-		"$LOGGING" enable
-	else
-		"$LOGGING" disable
-	fi
+	"$LOGGING" reconcile
 }
 
 stop_service() {
@@ -34,9 +26,10 @@ service_triggers() {
 	# A logd restart (LuCI System -> Logging save, `/etc/init.d/log restart`)
 	# leaves the jailed dnsmasq writing to a dead /dev/log. procd raises
 	# instance.update whenever any instance starts or stops; 3 s after the
-	# last one, reload, which restarts dnsmasq only if its /dev/log is stale
-	# (docs/CONTRACT.md §4, §11 P10 exception). Only while query logging is on.
+	# last one it runs logging.uc directly (one process, no shell), which
+	# restarts dnsmasq only if its /dev/log is stale (docs/CONTRACT.md §4,
+	# §11 P10 exception). Only while query logging is on.
 	[ "$query_logging" = 1 ] &&
-		procd_add_raw_trigger instance.update 3000 /etc/init.d/adblock-fast-monitor reload
+		procd_add_raw_trigger instance.update 3000 "$LOGGING" reconcile
 	return 0
 }

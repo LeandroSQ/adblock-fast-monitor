@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Host entry for the containerised suites.
 #
 #   test/lib/run-tests ucode [FILES...]   # default: test/ucode/**/*.uc

@@ -14,7 +14,7 @@ restore() {
 }
 trap restore EXIT
 guest_exec "uci set system.@system[0].log_size=1024; uci commit system; /etc/init.d/log restart; ubus -t 15 wait_for log" >/dev/null
-t_match 'logd runs with a 1 MiB ring' ' -S 1024( |$)' "$(guest_exec 'tr "\0" " " </proc/$(pidof logd)/cmdline')"
+t_match 'T10: logd runs with a 1 MiB ring' ' -S 1024( |$)' "$(guest_exec 'tr "\0" " " </proc/$(pidof logd)/cmdline')"
 
 guest_exec 'line=$(head -c 990 /dev/zero | tr "\0" x); i=0; while [ $i -lt 1000 ]; do logger -t abfm-big "$i $line"; i=$((i + 1)); done'
 
@@ -35,11 +35,11 @@ PY
 )"
 read -r status entries big minlen bytes <<<"$summary"
 t_diag "log read lines:900 -> status $status, $entries entries ($big of ~1000 bytes, shortest $minlen), reply $bytes bytes"
-t_eq 'log read lines:900 succeeds through /ubus' '0 900' "$status $entries"
-t_ok 'the reply is made of ~1000-byte entries' test "$big" -ge 890 -a "$minlen" -ge 990
-t_ok 'the reply is below the 1 MiB ubus cap' test "$bytes" -lt 1048576
-t_eq 'the ubus CLI gets the same 900 entries' 900 \
+t_eq 'T10: log read lines:900 succeeds through /ubus' '0 900' "$status $entries"
+t_ok 'T10: the reply is made of ~1000-byte entries' test "$big" -ge 890 -a "$minlen" -ge 990
+t_ok 'T10: the reply is below the 1 MiB ubus cap' test "$bytes" -lt 1048576
+t_eq 'T10: the ubus CLI gets the same 900 entries' 900 \
 	"$(guest_exec "ubus call log read '{\"lines\":900,\"stream\":false,\"oneshot\":true}' | jsonfilter -e '@.log[*].id' | wc -l")"
-t_ok 'logd is still registered on ubus' guest_exec 'ubus list log'
+t_ok 'T10: logd is still registered on ubus' guest_exec 'ubus list log'
 rm -f "$reply"
 t_done

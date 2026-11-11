@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Guest test helper: times one ubus call.
 //   ucode time-call.uc OBJECT METHOD '<JSON args>'
 // Prints {"ms":N,"reply":…}.

@@ -12,13 +12,20 @@
  *   create({max_rows=500 (<=500), pending_ttl_s=10, local_domains=[],
  *           hide_router=true}) -> state
  *   nextRequest(state) -> {lines}   900 first and after a gap or logd
- *       restart, else clamp(ceil(1.5 * last batch) + 16, 16, 900); never 0
- *   ingest(state, reply) -> {added, missed, reset, refetch}
+ *       restart, the resume size once after resume(), else
+ *       clamp(ceil(1.2 * last batch) + 16, 16, 900); never 0
+ *   resume(state, polls) -> the page skipped `polls` polls (hidden or
+ *       idle): the next request asks once for
+ *       clamp(ceil(1.2 * last batch * polls) + 16, 16, 900) lines, and a gap
+ *       that remains in that poll counts as `paused`, not `missed`.
+ *   ingest(state, reply) -> {added, missed, paused, reset, refetch}
  *       reply: the `log read` result {log:[{msg, id, time (ms), ...}]}.
  *       added: query lines accepted; missed: log ids skipped (gap left after
- *       the refetch); reset: logd restarted (ids went backwards), history
- *       kept; refetch: {lines} when a gap may be closed: nothing was taken
- *       from this reply, call `log read` once with these lines and ingest it.
+ *       the refetch); paused: the same for the first poll after resume();
+ *       reset: logd restarted (ids went backwards), rows kept, queries
+ *       still waiting for an answer become no-answer; refetch: {lines} when
+ *       a gap may be closed: nothing was taken from this reply, call
+ *       `log read` once with these lines and ingest it.
  *   rows(state, {show_router}) -> newest first, at most max_rows:
  *       {key, time (epoch s), domain, qtype, answers (<=4), decision,
  *        source, client, router}
@@ -28,7 +35,8 @@
  *       show_router defaults to !hide_router.
  *   stats(state, {show_router}) -> {kept, blocked, allowed, other,
  *       no_answer, pending, blocked_pct (null if blocked+allowed = 0),
- *       span_s, missed_total, dnsmasq_lost, rejected,
+ *       span_s, missed_total (gaps + dnsmasq_lost), dnsmasq_lost,
+ *       paused_total, rejected,
  *       since_open: {queries, blocked, allowed}}  (since_open excludes
  *       router clients when hide_router)
  *
@@ -162,11 +170,16 @@ function expire(st, timeMs) {
 	}
 }
 
-// dnsmasq restarted: serials start again, nothing pending will be answered.
-function restartDnsmasq(st) {
+// dnsmasq restarted (serials start again) or logd restarted (§8.1): nothing
+// pending will be answered.
+function dropPending(st) {
 	for (const e of st.pending.values())
 		e.decision = 'no-answer';
 	st.pending.clear();
+}
+
+function restartDnsmasq(st) {
+	dropPending(st);
 	st.epoch++;
 }
 
@@ -186,7 +199,14 @@ function answer(e, ev) {
 		addAnswer(e, ev.answer);
 }
 
+// logd always sends objects with numeric ids; anything else is skipped.
+function idOf(entry) {
+	return (entry !== null && typeof entry === 'object') ? +entry.id : NaN;
+}
+
 function line(st, entry) {
+	if (entry === null || typeof entry !== 'object')
+		return 0;
 	const timeMs = +entry.time;
 	if (timeMs === timeMs)
 		expire(st, timeMs);
@@ -195,7 +215,9 @@ function line(st, entry) {
 	if (ev === null)
 		return 0;
 	if (ev.lost !== undefined) {
+		// §8.3: dnsmasq's own lost lines are missed entries too.
 		st.dnsmasqLost += ev.lost;
+		st.missedTotal += ev.lost;
 		return 0;
 	}
 	if (ev.started) {
@@ -274,11 +296,12 @@ return baseclass.extend({
 			cursor: null,          // highest log id ingested
 			lastBatch: null,       // new entries in the last reply; null before the first
 			wantFull: false,       // ask for LINES_MAX after a gap or logd restart
+			resumeLines: null,     // size of the first request after resume()
 			refetching: false,     // the next reply answers a refetch
 			epoch: 0,
 			entries: new Map(),    // key -> entry, oldest first, at most maxRows
 			pending: new Map(),    // subset of entries without an answer, oldest first
-			missedTotal: 0, dnsmasqLost: 0, rejected: 0,
+			missedTotal: 0, dnsmasqLost: 0, pausedTotal: 0, rejected: 0,
 			sinceOpen: { queries: 0, blocked: 0, allowed: 0 }
 		};
 	},
@@ -286,28 +309,39 @@ return baseclass.extend({
 	nextRequest(st) {
 		if (st.lastBatch === null || st.wantFull)
 			return { lines: LINES_MAX };
-		return { lines: clampLines(Math.ceil(1.5 * st.lastBatch) + LINES_MIN) };
+		if (st.resumeLines !== null)
+			return { lines: st.resumeLines };
+		return { lines: clampLines(Math.ceil(1.2 * st.lastBatch) + LINES_MIN) };
+	},
+
+	resume(st, polls) {
+		const p = +polls > 1 ? +polls : 1;
+		const n = st.lastBatch === null ? LINES_MAX : Math.ceil(1.2 * st.lastBatch * p) + LINES_MIN;
+		st.resumeLines = clampLines(n === n ? n : LINES_MAX);
 	},
 
 	ingest(st, reply) {
 		const log = reply && Array.isArray(reply.log) ? reply.log : [];
-		const result = { added: 0, missed: 0, reset: false, refetch: null };
+		const result = { added: 0, missed: 0, paused: 0, reset: false, refetch: null };
 		const requested = st.refetching ? LINES_MAX : this.nextRequest(st).lines;
 		const wasRefetch = st.refetching;
+		const resuming = st.resumeLines !== null;
 		st.refetching = false;
 
 		if (log.length === 0) {
 			st.lastBatch = 0;
 			st.wantFull = false;
+			st.resumeLines = null;
 			return result;
 		}
 
-		const firstId = +log[0].id, lastId = +log[log.length - 1].id;
+		const firstId = idOf(log[0]), lastId = idOf(log[log.length - 1]);
 		let from = 0;
 
 		if (st.cursor !== null && lastId < st.cursor) {
 			// logd restarted (ids start again at 0): take the whole reply.
 			result.reset = true;
+			dropPending(st);
 		}
 		else if (st.cursor !== null) {
 			if (firstId > st.cursor + 1) {
@@ -316,19 +350,28 @@ return baseclass.extend({
 					result.refetch = { lines: Math.min(LINES_MAX, lastId - st.cursor + LINES_MIN) };
 					return result;
 				}
-				result.missed = firstId - st.cursor - 1;
-				st.missedTotal += result.missed;
+				const gap = firstId - st.cursor - 1;
+				if (resuming) {
+					result.paused = gap;
+					st.pausedTotal += gap;
+				}
+				else {
+					result.missed = gap;
+					st.missedTotal += gap;
+				}
 			}
-			while (from < log.length && +log[from].id <= st.cursor)
+			while (from < log.length && idOf(log[from]) <= st.cursor)
 				from++;
 		}
 
 		for (let i = from; i < log.length; i++)
 			result.added += line(st, log[i]);
 
-		st.cursor = lastId;
+		if (lastId === lastId)
+			st.cursor = lastId;
 		st.lastBatch = log.length - from;
 		st.wantFull = result.missed > 0 || result.reset;
+		st.resumeLines = null;
 		return result;
 	},
 
@@ -357,7 +400,8 @@ return baseclass.extend({
 		const s = {
 			kept: list.length, blocked: 0, allowed: 0, other: 0, no_answer: 0, pending: 0,
 			blocked_pct: null, span_s: 0,
-			missed_total: st.missedTotal, dnsmasq_lost: st.dnsmasqLost, rejected: st.rejected,
+			missed_total: st.missedTotal, dnsmasq_lost: st.dnsmasqLost, paused_total: st.pausedTotal,
+			rejected: st.rejected,
 			since_open: { queries: st.sinceOpen.queries, blocked: st.sinceOpen.blocked,
 			              allowed: st.sinceOpen.allowed }
 		};

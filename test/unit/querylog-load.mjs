@@ -6,14 +6,26 @@
 // that build `log read` replies. Not a test file.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
-const source = readFileSync(fileURLToPath(new URL(
-  '../../htdocs/luci-static/resources/adblock-fast-monitor/querylog.js', import.meta.url)), 'utf8');
-const baseclass = { extend(proto) { return function QueryLog() { Object.assign(this, proto); }; } };
-// eslint-disable-next-line no-new-func
-const Factory = new Function('window', 'document', 'L', 'baseclass', source);
-const Cls = Factory({}, {}, {}, baseclass);
-export const ql = new Cls();
+const repo = fileURLToPath(new URL('../../', import.meta.url));
+const baseclass = { extend(proto) { return function LuCIClass() { Object.assign(this, proto); }; } };
+
+/*
+ * Instantiates a LuCI resource module (relative to htdocs/luci-static/resources/)
+ * as luci.js does. vm.compileFunction keeps the real file name, so V8
+ * coverage (`npm run test:coverage`) attributes lines to the file.
+ * `_` is LuCI's translation function (identity here).
+ */
+export function loadLuci(name) {
+  const filename = `${repo}htdocs/luci-static/resources/${name}`;
+  const fn = vm.compileFunction(readFileSync(filename, 'utf8'),
+    ['window', 'document', 'L', 'baseclass', '_'], { filename });
+  const Cls = fn({}, {}, {}, baseclass, (s) => s);
+  return new Cls();
+}
+
+export const ql = loadLuci('adblock-fast-monitor/querylog.js');
 
 export const fixture = (name) => JSON.parse(readFileSync(fileURLToPath(new URL(
   `../fixtures/logread/${name}`, import.meta.url)), 'utf8'));

@@ -136,10 +136,18 @@ test('§4.3 spoofing and malformed lines are rejected', () => {
   assert.equal(row.decision, 'pending');
 });
 
-test('LOST lines add to dnsmasq_lost', () => {
+test('§8.3 LOST lines count as missed (shown), with dnsmasq_lost as the breakdown', () => {
   const st = ql.create();
   ql.ingest(st, reply(['dnsmasq[1]: overflow: 12 log entries lost', 'dnsmasq[1]: overflow: 3 log entries lost',
     'dnsmasq[1]: overflow: x log entries lost']));
+  assert.equal(ql.stats(st).dnsmasq_lost, 15);
+  assert.equal(ql.stats(st).missed_total, 15, 'the page shows missed_total');
+  // a later log-id gap adds to the same total; LOST does not force a full refetch
+  assert.equal(ql.nextRequest(st).lines, Math.ceil(1.2 * 3) + 16);
+  const far = reply(Array.from({ length: 900 }, () => 'kernel: b'), { id: 2000 });
+  assert.deepEqual(ql.ingest(st, far).refetch, { lines: 900 });
+  assert.equal(ql.ingest(st, far).missed, 2000 - 102 - 1);
+  assert.equal(ql.stats(st).missed_total, 15 + (2000 - 102 - 1));
   assert.equal(ql.stats(st).dnsmasq_lost, 15);
 });
 
@@ -171,7 +179,7 @@ test('CNAME chain: names replace <CNAME>, at most 4 answers, decision unchanged'
     { name: 'a.example.test' }).row.answers, ['192.0.2.1']);
 });
 
-test('nextRequest: 900 first, adaptive clamp(1.5*batch+16), never <16, >900 or 0', () => {
+test('nextRequest: 900 first, adaptive clamp(1.2*batch+16), never <16, >900 or 0', () => {
   const st = ql.create();
   assert.deepEqual(ql.nextRequest(st), { lines: 900 });
   assert.deepEqual(ql.nextRequest(st), { lines: 900 }, 'pure');
@@ -185,7 +193,7 @@ test('nextRequest: 900 first, adaptive clamp(1.5*batch+16), never <16, >900 or 0
     id += batch;
     const next = ql.nextRequest(st).lines;
     assert.ok(Number.isInteger(next) && next >= 16 && next <= 900, `${n} -> ${next}`);
-    assert.equal(next, Math.min(900, Math.max(16, Math.ceil(1.5 * batch) + 16)), `batch ${batch}`);
+    assert.equal(next, Math.min(900, Math.max(16, Math.ceil(1.2 * batch) + 16)), `batch ${batch}`);
   }
   for (let i = 0; i < 2000; i++) {
     const s = ql.create();
@@ -199,22 +207,22 @@ test('gap: one refetch of min(900, lastId-cursor+16), then the rest is missed', 
   const st = ql.create();
   const filler = (n) => Array.from({ length: n }, (_, i) => `kernel: ${i}`);
   ql.ingest(st, reply(filler(10), { id: 1 }));                 // cursor 10, batch 10
-  assert.equal(ql.nextRequest(st).lines, 31);
-  // 31 lines requested, ids 50..80 returned: 39 entries not seen
-  let r = ql.ingest(st, reply(filler(31), { id: 50 }));
-  assert.deepEqual(r, { added: 0, missed: 0, reset: false, refetch: { lines: 80 - 10 + 16 } });
+  assert.equal(ql.nextRequest(st).lines, 28);
+  // 28 lines requested, ids 50..77 returned: 39 entries not seen
+  let r = ql.ingest(st, reply(filler(28), { id: 50 }));
+  assert.deepEqual(r, { added: 0, missed: 0, paused: 0, reset: false, refetch: { lines: 77 - 10 + 16 } });
   assert.equal(ql.stats(st).missed_total, 0, 'nothing ingested from the gapped reply');
   // the refetch reaches back far enough: no gap
-  r = ql.ingest(st, reply(filler(86), { id: 1 }));
-  assert.deepEqual(r, { added: 0, missed: 0, reset: false, refetch: null });
-  assert.equal(st.cursor, 86);
+  r = ql.ingest(st, reply(filler(83), { id: 1 }));
+  assert.deepEqual(r, { added: 0, missed: 0, paused: 0, reset: false, refetch: null });
+  assert.equal(st.cursor, 83);
 
   // still a gap after the refetch: counted, no second refetch
-  ql.ingest(st, reply(filler(10), { id: 87 }));                 // cursor 96, batch 10
-  r = ql.ingest(st, reply(filler(31), { id: 200 }));
-  assert.deepEqual(r.refetch, { lines: 230 - 96 + 16 });
+  ql.ingest(st, reply(filler(13), { id: 84 }));                 // cursor 96, batch 13
+  r = ql.ingest(st, reply(filler(32), { id: 200 }));
+  assert.deepEqual(r.refetch, { lines: 231 - 96 + 16 });
   r = ql.ingest(st, reply(filler(146), { id: 150 }));
-  assert.deepEqual(r, { added: 0, missed: 150 - 96 - 1, reset: false, refetch: null });
+  assert.deepEqual(r, { added: 0, missed: 150 - 96 - 1, paused: 0, reset: false, refetch: null });
   assert.equal(ql.stats(st).missed_total, 53);
   assert.equal(ql.nextRequest(st).lines, 900, 'after a miss ask for the maximum');
 
@@ -305,7 +313,7 @@ test('stats: blocked_pct null without blocked+allowed, rounding, span, counts', 
   const st = ql.create();
   assert.deepEqual(ql.stats(st), {
     kept: 0, blocked: 0, allowed: 0, other: 0, no_answer: 0, pending: 0, blocked_pct: null, span_s: 0,
-    missed_total: 0, dnsmasq_lost: 0, rejected: 0, since_open: { queries: 0, blocked: 0, allowed: 0 }
+    missed_total: 0, dnsmasq_lost: 0, paused_total: 0, rejected: 0, since_open: { queries: 0, blocked: 0, allowed: 0 }
   });
   const h = (s) => `dnsmasq[1]: ${s} 192.0.2.10/${s} `;
   ql.ingest(st, reply([
@@ -360,4 +368,55 @@ test('rows are copies: mutating them does not change the state', () => {
   row.decision = 'blocked';
   assert.deepEqual(ql.rows(st)[0].answers, ['192.0.2.1']);
   assert.equal(ql.rows(st)[0].decision, 'allowed');
+});
+
+test('§8.1 logd restart drops the pending queries (they become no-answer), keeps answered rows', () => {
+  const st = ql.create();
+  const h = (s) => `dnsmasq[1]: ${s} ${C}/${s} `;
+  ql.ingest(st, reply([`${h(1)}query[A] answered.example.test from ${C}`, `${h(1)}reply answered.example.test is 192.0.2.1`,
+    `${h(2)}query[A] waiting.example.test from ${C}`], { id: 500 }));
+  assert.equal(ql.stats(st).pending, 1);
+  // ids go backwards: logd restarted; the answer to serial 2 that arrives now is ignored
+  const r = ql.ingest(st, reply([`${h(2)}reply waiting.example.test is 192.0.2.2`], { id: 0 }));
+  assert.equal(r.reset, true);
+  const rows = Object.fromEntries(ql.rows(st).map((x) => [x.domain, x.decision]));
+  assert.deepEqual(rows, { 'answered.example.test': 'allowed', 'waiting.example.test': 'no-answer' });
+  assert.equal(ql.stats(st).pending, 0);
+  assert.equal(st.pending.size, 0);
+});
+
+test('§8.1 resume after a hidden page: one right-sized request, a remaining gap is paused, not missed', () => {
+  const st = ql.create();
+  const filler = (n, id) => reply(Array.from({ length: n }, (_, i) => `kernel: ${i}`), { id });
+  ql.ingest(st, filler(10, 1));                                   // cursor 10, batch 10
+  // 30 polls skipped: ceil(1.2 * 10 * 30) + 16 = 376 lines, once
+  ql.resume(st, 30);
+  assert.equal(ql.nextRequest(st).lines, 376);
+  assert.equal(ql.nextRequest(st).lines, 376, 'pure');
+  // the ring moved 5000 entries meanwhile: the reply starts far beyond the cursor
+  let r = ql.ingest(st, filler(376, 5001));
+  assert.deepEqual(r.refetch, { lines: 900 });
+  r = ql.ingest(st, filler(900, 4477));
+  assert.deepEqual([r.missed, r.paused], [0, 4477 - 10 - 1]);
+  const s = ql.stats(st);
+  assert.deepEqual([s.missed_total, s.paused_total], [0, 4466]);
+  // back to normal sizing (the last batch was 900 new entries); the next gap is a real miss again
+  assert.equal(ql.nextRequest(st).lines, 900);
+  ql.ingest(st, filler(20, 5377));
+  assert.equal(ql.nextRequest(st).lines, Math.ceil(1.2 * 20) + 16);
+  ql.ingest(st, filler(40, 9000));
+  ql.ingest(st, filler(900, 9000));
+  assert.equal(ql.stats(st).missed_total, 9000 - 5396 - 1);
+  assert.equal(ql.stats(st).paused_total, 4466);
+  // resume before any read asks for the maximum; nothing to resume from
+  const fresh = ql.create();
+  ql.resume(fresh, 3);
+  assert.equal(ql.nextRequest(fresh).lines, 900);
+  // a resume that finds no gap leaves both totals alone; garbage counts as one poll
+  const q = ql.create();
+  ql.ingest(q, filler(4, 1));
+  ql.resume(q, 'x');
+  assert.equal(ql.nextRequest(q).lines, Math.ceil(1.2 * 4) + 16);
+  ql.ingest(q, filler(6, 1));
+  assert.deepEqual([ql.stats(q).missed_total, ql.stats(q).paused_total], [0, 0]);
 });

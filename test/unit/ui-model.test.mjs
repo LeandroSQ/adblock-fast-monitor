@@ -1,19 +1,12 @@
 // Executes the real LuCI resource htdocs/luci-static/resources/adblock-fast-monitor/model.js
 // the way luci.js loads it: the file is the body of a factory function
 // (window, document, L, ...requires) whose return value is a class that is
-// instantiated once. Only `baseclass.extend` is provided by the harness.
+// instantiated once. Only `baseclass.extend` and `_` are provided by the harness.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { loadLuci } from './querylog-load.mjs';
 
-const source = readFileSync(fileURLToPath(new URL(
-  '../../htdocs/luci-static/resources/adblock-fast-monitor/model.js', import.meta.url)), 'utf8');
-const baseclass = { extend(proto) { return function Model() { Object.assign(this, proto); }; } };
-// eslint-disable-next-line no-new-func
-const Factory = new Function('window', 'document', 'L', 'baseclass', source);
-const Cls = Factory({}, {}, {}, baseclass);
-const m = new Cls();
+const m = loadLuci('adblock-fast-monitor/model.js');
 
 const ok = (data) => m.settle(data);
 const err = (code) => m.failure(new Error(`RPC call to x/y failed with error ${code}: msg`));
@@ -70,13 +63,45 @@ test('§8.5 pageState: first matching state wins', () => {
   assert.deepEqual(st(null, null), ['loading', null]);
 });
 
-test('viewOptions: poll_interval clamped to 2..60 (default 2), router hidden unless exclude_router=false', () => {
-  const vo = (monitor) => m.viewOptions(ok(info({ monitor })));
-  assert.deepEqual(vo({ poll_interval: 5, exclude_router: true }), { interval: 5, hideRouter: true });
-  assert.deepEqual(vo({ poll_interval: 1 }), { interval: 2, hideRouter: true });
-  assert.deepEqual(vo({ poll_interval: 600, exclude_router: false }), { interval: 60, hideRouter: false });
-  assert.deepEqual(vo({ poll_interval: 'x' }), { interval: 2, hideRouter: true });
-  assert.deepEqual(m.viewOptions(err(-32002)), { interval: 2, hideRouter: true });
+test('poll interval is fixed at 2 s (§8.1)', () => {
+  assert.equal(m.POLL_INTERVAL, 2);
+});
+
+test('§6.5 protected names: builtin list, local domains and the server list from info', () => {
+  const p = m.protectedNames(ok(info({ local_domains: ['lan', 'Home.Example'], protected_suffixes: ['router-name', 'hb.example.net', 7],
+    protected_hosts: ['lists.example.org'] })));
+  for (const d of ['x.internal', 'internal', 'a.b.home.arpa', 'localhost', 'z.local', '1.0.0.10.in-addr.arpa',
+    'printer.lan', 'nas.home.example', 'router-name', 'hb.example.net', 'x.hb.example.net', 'lists.example.org']) {
+    assert.equal(m.isProtected(p, d), true, d);
+  }
+  for (const d of ['ads.example.test', 'internal.example.com', 'lan.example.com', 'sub.lists.example.org', 'notlan']) {
+    assert.equal(m.isProtected(p, d), false, d);
+  }
+  // without info only the builtin list applies; hostile shapes are ignored
+  const bare = m.protectedNames(err(-32002));
+  assert.equal(m.isProtected(bare, 'x.internal'), true);
+  assert.equal(m.isProtected(bare, 'printer.lan'), false);
+  assert.equal(m.isProtected(m.protectedNames(ok(info({ protected_suffixes: 'lan', protected_hosts: { a: 1 } }))), 'x.lan'), true);
+  assert.equal(m.isProtected(null, 'x.internal'), false);
+  assert.equal(m.isProtected(bare, '__proto__'), false);
+  // staging a block of a protected name is refused; allowing it is not
+  assert.equal(m.stage(m.emptyPending(), 'block', 'X.Internal.', 1, p).error, 'protected-domain');
+  assert.equal(m.stage(m.emptyPending(), 'allow', 'x.internal', 1, p).change, 'added');
+  assert.equal(m.stage(m.emptyPending(), 'block', 'x.internal', 1).change, 'added');   // no list: the server decides
+});
+
+test('dnsModeNote: firewall modes and other resolvers are explained', () => {
+  const mode = (dns) => m.dnsModeNote(ok(info({ adblock_fast: { installed: true, dns } })));
+  assert.equal(mode('dnsmasq.ipset'), 'firewall');
+  assert.equal(mode('dnsmasq.nftset'), 'firewall');
+  assert.equal(mode('smartdns.domainset'), 'unsupported');
+  assert.equal(mode('unbound.adb_list'), 'unsupported');
+  for (const dns of ['dnsmasq.servers', 'dnsmasq.conf', 'dnsmasq.addnhosts', null, 7]) assert.equal(mode(dns), null, String(dns));
+  assert.equal(m.dnsModeNote(err(-32002)), null);
+});
+
+test('backoffSkip: failed log reads wait 2^n polls, capped at 32 s', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 50, -1, 'x'].map(m.backoffSkip), [0, 1, 3, 7, 15, 15, 15, 0, 0]);
 });
 
 test('localDomains takes only non-empty strings from info.local_domains', () => {
@@ -191,14 +216,46 @@ test('§8.2 job settlement: ok/skipped leave, mismatch/unverified/failed return 
   assert.equal(marked.items[0].reason, 'protected-domain');
 });
 
+test('§8.4 in-flight batch is exactly the sent ops; items staged meanwhile stay pending', () => {
+  const A = 'a.example.com', B = 'b.example.com', C = 'c.example.com';
+  let s = m.stage(m.stage(m.emptyPending(), 'allow', A, 1).state, 'block', B, 2).state;
+  const ops = m.toOps(s);
+  // while the request runs: C staged (here or in another tab), B replaced by allow, A cancelled
+  s = m.stage(s, 'block', C, 3).state;
+  s = m.stage(s, 'allow', B, 4).state;
+  s = m.unstage(s, A);
+  const q = m.beginInflight(s, 'j1762747400-3f2a', ops);
+  assert.deepEqual(q.inflight.items, [{ op: 'allow', domain: A, ts: 0 }, { op: 'block', domain: B, ts: 0 }]);
+  assert.deepEqual(q.items.map((i) => [i.op, i.domain]), [['allow', B], ['block', C]]);
+  // the job ends applied with entries only for the sent items: C is still pending
+  const r = m.settleJob(q, { id: 'j1762747400-3f2a', state: 'applied', items: [{ domain: A, result: 'ok' }, { domain: B, result: 'ok' }] });
+  assert.deepEqual(r.done, [A, B]);
+  assert.deepEqual(r.state.items.map((i) => [i.op, i.domain]), [['allow', B], ['block', C]]);
+  // applied without per-item entries: the sent items leave, nothing else
+  const r2 = m.settleJob(m.beginInflight(m.stage(m.stage(m.emptyPending(), 'block', A, 1).state, 'block', C, 2).state,
+    'j1762747400-3f2a', [{ op: 'block', domain: A }]), { id: 'j1762747400-3f2a', state: 'applied', items: [] });
+  assert.deepEqual(r2.state.items.map((i) => i.domain), [C]);
+  // a noop reply removes only the sent items
+  const n = m.settleNoop(m.stage(s, 'allow', A, 5).state, ops);
+  assert.deepEqual(n.items.map((i) => [i.op, i.domain]), [['allow', B], ['block', C]]);
+  // without ops the whole list is the batch (resume path)
+  assert.deepEqual(m.beginInflight(s, 'j1762747400-3f2a').items, []);
+  assert.deepEqual(m.settleNoop(s).items, []);
+});
+
 test('applyPlan: confirmation needed for every rebuild, never for noop or persist-only', () => {
   assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['block:add'] }] }).needsConfirm, true);
   // allow-only batches are rebuilds too (v1 never uses fast-allow)
-  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', may_escalate: false, plan: [{ change: ['allow:add'] }] }).needsConfirm, true);
+  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['allow:add'] }] }).needsConfirm, true);
   assert.equal(m.applyPlan({ ok: true, mode: 'persist-only', plan: [{ change: ['allow:add'] }] }).needsConfirm, false);
   const noop = m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: [] }] });
   assert.deepEqual([noop.noop, noop.needsConfirm], [true, false]);
   assert.equal(m.applyPlan({ ok: true, noop: true, job_id: null, plan: [] }).noop, true);
+});
+
+test('fmt fills %s in order and keeps %%', () => {
+  assert.equal(m.fmt('%s of %s = %s %%', 1, 2, 50), '1 of 2 = 50 %');
+  assert.equal(m.fmt('none'), 'none');
 });
 
 test('formatting: counts, percentages, durations, local times', () => {

@@ -2,7 +2,8 @@
 # Guest-side helpers for the data-plane tests (BusyBox ash on OpenWrt).
 # Source after copying to the guest:  . /tmp/abfm-dp/guest.sh
 #
-#   dp_af_setup MODE LIST_URL   adblock-fast with one local fixture list, DNS
+#   dp_af_setup MODE LIST_URL   adblock-fast with one local fixture list (needs
+#                               dp_upstream_start for its heartbeat), DNS
 #                               mode MODE (dnsmasq.servers | dnsmasq.addnhosts),
 #                               started and verified (statusSuccess + output file)
 #   dp_upstream_start           fake upstream dnsmasq on 127.0.0.1:5300 for
@@ -48,7 +49,14 @@ dp_af_setup() {
 	uci set adblock-fast.config.enabled=1
 	uci set adblock-fast.config.dns="$mode"
 	uci set adblock-fast.config.config_update_enabled=0
+	# Self-contained: no state left by other tests (lists, external config)
+	# and a heartbeat the fake upstream answers, so no internet is needed.
+	uci -q delete adblock-fast.config.allowed_domain
+	uci -q delete adblock-fast.config.blocked_domain
+	uci -q delete adblock-fast.config.dnsmasq_config_file_url
+	uci set adblock-fast.config.heartbeat_domain=hb.up.example.test
 	uci commit adblock-fast
+	rm -f /tmp/.uci/adblock-fast
 	/etc/init.d/adblock-fast restart >/tmp/abfm-dp-af.log 2>&1
 	dp_wait 60 sh -c '[ "$(ubus call service list "{\"name\":\"adblock-fast\"}" | jsonfilter -e "@[\"adblock-fast\"].data.status")" = statusSuccess ]' ||
 		{ cat /tmp/abfm-dp-af.log >&2; return 1; }

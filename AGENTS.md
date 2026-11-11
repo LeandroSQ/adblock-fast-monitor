@@ -124,7 +124,7 @@ then sign with `scripts/release/sign-feed.sh` and publish). Maintainers only.
   (`test/shell/`), the QEMU guest (`test/guest/*.sh` runs inside the guest,
   `test/guest/*.host.sh` on the host with `guest_exec`), or Playwright against
   the guest's LuCI (`test/browser/*.spec.mjs`), or Node loading the real
-  LuCI modules (`test/unit/*.test.mjs`). The T01–T31 matrix is CONTRACT §13.
+  LuCI modules (`test/unit/*.test.mjs`). The T01–T32 matrix is CONTRACT §13.
 - **Forbidden:** tests that grep source or docs, re-implementations of the
   logic under test, stubs where a real backend is available, sleeps instead of
   readiness checks. Fix root causes, never loosen a test to pass.

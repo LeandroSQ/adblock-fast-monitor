@@ -33,7 +33,7 @@ humans and agents alike. The interface is frozen in
 
 - Subject: imperative, ≤ 72 characters, optionally prefixed with the area
   (`UI:`, `perf gate:`, `packaging:`, `docs:`). Body: what and why, wrapped
-  at ~72 columns, citing CONTRACT sections or test IDs (T01–T31, P1–P10).
+  at ~72 columns, citing CONTRACT sections or test IDs (T01–T32, P1–P10).
 - Coherent increments: each commit passes `npm run verify:host`.
 - Move or rename files with `git mv` so history follows them.
 - Commits made by an AI agent end with its trailer, e.g.

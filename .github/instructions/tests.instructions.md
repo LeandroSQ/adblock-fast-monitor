@@ -5,7 +5,7 @@ applyTo: "test/**"
 # Tests
 
 Adds to [AGENTS.md](../../AGENTS.md) → Testing obligations; matrix:
-`docs/CONTRACT.md` §13 (T01–T31). Harness details: README.md → Testing.
+`docs/CONTRACT.md` §13 (T01–T32). Harness details: README.md → Testing.
 
 - Execute the real code: ucode files via `require`, `model.js` via the
   LuCI factory wrapper, shell via BusyBox, services on the guest, UI with

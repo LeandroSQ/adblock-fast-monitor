@@ -115,11 +115,38 @@ guest_fetch() {
 # installed) uhttpd listen. Polls once a second; no fixed delays.
 GUEST_READY_CHECK='( i=0; until ifstatus lan 2>/dev/null | jsonfilter -e "@[\"ipv4-address\"][0].address" | grep -q "^10[.]0[.]2[.]" && pidof dnsmasq >/dev/null && netstat -ltn 2>/dev/null | grep -q ":22 " && { [ ! -x /etc/init.d/uhttpd ] || ! /etc/init.d/uhttpd enabled || netstat -ltn 2>/dev/null | grep -q ":80 "; }; do i=$((i+1)); [ $i -lt 180 ] || exit 1; sleep 1; done )'
 
+# QEMU's pid lives in $GUEST_RUN_DIR/qemu.pid: guest_reboot may start a new
+# QEMU from a test's own shell, and guest_stop in the runner must find it.
+guest__qemu_pid() { cat "$GUEST_RUN_DIR/qemu.pid" 2>/dev/null || echo "${GUEST_QEMU_PID:-}"; }
+guest__qemu_alive() { # PID: running, not a zombie
+	local pid="$1" state
+	[[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || return 1
+	state="$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)"
+	[[ "$state" != Z ]]
+}
+
+# Starts QEMU on the run's disk, ports and serial log (appended across
+# restarts) and records its pid.
+guest__launch_qemu() {
+	local accel
+	read -r -a accel <<<"$GUEST__ACCEL_ARGS"
+	rm -f "$GUEST_RUN_DIR/serial.sock"
+	qemu-system-x86_64 "${accel[@]}" -smp "${GUEST_CPUS:-2}" -m "${GUEST_MEMORY:-256}" \
+		-display none -nic none \
+		-chardev "socket,id=serial0,path=$GUEST_RUN_DIR/serial.sock,server=on,wait=off,logfile=$GUEST_RUN_DIR/serial.log,logappend=on" \
+		-serial chardev:serial0 \
+		-drive "file=$GUEST__DISK,format=qcow2,if=virtio" \
+		-netdev "user,id=lan,hostfwd=tcp:127.0.0.1:$GUEST_SSH_PORT-:22,hostfwd=tcp:127.0.0.1:$GUEST_HTTP_PORT-:80,hostfwd=udp:127.0.0.1:$GUEST_DNS_PORT-:53" \
+		-device virtio-net-pci,netdev=lan >>"$GUEST_RUN_DIR/qemu.log" 2>&1 &
+	GUEST_QEMU_PID=$!
+	echo "$GUEST_QEMU_PID" >"$GUEST_RUN_DIR/qemu.pid"
+}
+
 guest__wait_ssh() {
 	local deadline=$(($(date +%s) + ${1:-120}))
 	until guest_exec true 2>/dev/null; do
 		(($(date +%s) < deadline)) || return 1
-		kill -0 "$GUEST_QEMU_PID" 2>/dev/null || { guest__log 'QEMU exited'; return 1; }
+		guest__qemu_alive "$(guest__qemu_pid)" || { guest__log 'QEMU exited'; return 1; }
 		sleep 1
 	done
 	guest_exec "$GUEST_READY_CHECK"
@@ -179,14 +206,9 @@ guest_start() {
 	fi
 	local boot_timeout="${GUEST_BOOT_TIMEOUT:-$([[ $GUEST_ACCEL_USED == kvm ]] && echo 120 || echo 600)}"
 
-	qemu-system-x86_64 "${accel[@]}" -smp "${GUEST_CPUS:-2}" -m "${GUEST_MEMORY:-256}" \
-		-display none -nic none \
-		-chardev "socket,id=serial0,path=$GUEST_RUN_DIR/serial.sock,server=on,wait=off,logfile=$GUEST_RUN_DIR/serial.log" \
-		-serial chardev:serial0 \
-		-drive "file=$GUEST__DISK,format=qcow2,if=virtio" \
-		-netdev "user,id=lan,hostfwd=tcp:127.0.0.1:$GUEST_SSH_PORT-:22,hostfwd=tcp:127.0.0.1:$GUEST_HTTP_PORT-:80,hostfwd=udp:127.0.0.1:$GUEST_DNS_PORT-:53" \
-		-device virtio-net-pci,netdev=lan >"$GUEST_RUN_DIR/qemu.log" 2>&1 &
-	GUEST_QEMU_PID=$!
+	GUEST__ACCEL_ARGS="${accel[*]}"
+	rm -f "$GUEST_RUN_DIR/serial.log"
+	guest__launch_qemu
 
 	local root_hash readonly_hash feeds
 	# crypt(3) hashes use only [./0-9A-Za-z$], so they are safe inside single quotes.
@@ -215,7 +237,7 @@ guest_start() {
 	GUEST_FIXTURE_URL="$GUEST_HOST_URL/fixtures"
 	export GUEST_RUN_DIR GUEST_SSH_KEY GUEST_SSH_PORT GUEST_HTTP_PORT GUEST_DNS_PORT GUEST_HTTP_URL \
 		GUEST_HOST_URL GUEST_FIXTURE_URL GUEST_ROOT_PASSWORD GUEST_READONLY_USER GUEST_READONLY_PASSWORD \
-		GUEST_ACCEL_USED GUEST_BOOT_SECONDS GUEST_QEMU_PID GUEST_PROXY_PID
+		GUEST_ACCEL_USED GUEST_BOOT_SECONDS GUEST_QEMU_PID GUEST_PROXY_PID GUEST__DISK GUEST__ACCEL_ARGS
 	export OPENWRT_HOST=127.0.0.1 OPENWRT_SSH_PORT="$GUEST_SSH_PORT" OPENWRT_SSH_KEY="$GUEST_SSH_KEY" \
 		OPENWRT_DNS_PORT="$GUEST_DNS_PORT" OPENWRT_LUCI_BASE_URL="$GUEST_HTTP_URL" \
 		OPENWRT_PACKAGE_MIRROR_URL="$GUEST_HOST_URL" FIXTURE_LIST_URL="$GUEST_FIXTURE_URL/lists" \
@@ -225,26 +247,43 @@ guest_start() {
 	guest__log "ready in ${GUEST_BOOT_SECONDS}s ($GUEST_ACCEL_USED): ssh 127.0.0.1:$GUEST_SSH_PORT http $GUEST_HTTP_URL dns 127.0.0.1:$GUEST_DNS_PORT/udp run $GUEST_RUN_DIR"
 }
 
-# Reboots the guest and waits until it is ready again.
+# Reboots the guest and waits until it is ready again. A power cycle, not a
+# warm reset: under TCG (notably on arm64 hosts) a warm reset can stall for
+# minutes between GRUB's "Booting `OpenWrt'" and the kernel, while a cold
+# start of the same disk takes ~25 s. For the guest this is a reboot
+# (tmpfs gone, init scripts run in START order).
 guest_reboot() {
 	local timeout="${GUEST_BOOT_TIMEOUT:-$([[ $GUEST_ACCEL_USED == kvm ]] && echo 120 || echo 600)}"
-	local marks
+	local marks pid i
+	pid="$(guest__qemu_pid)"
+	guest_exec 'sync; poweroff' || true
+	for ((i = 0; i < 120; i++)); do guest__qemu_alive "$pid" || break; sleep 1; done
+	if guest__qemu_alive "$pid"; then
+		guest__log 'guest did not power off; killing QEMU'
+		kill "$pid" 2>/dev/null || true
+		for ((i = 0; i < 20; i++)); do guest__qemu_alive "$pid" || break; sleep 1; done
+	fi
 	marks=$(grep -c 'Please press Enter to activate this console' "$GUEST_RUN_DIR/serial.log" || true)
-	guest_exec 'sync; reboot' || true
+	guest__launch_qemu
 	local deadline=$(($(date +%s) + timeout))
 	until (($(grep -c 'Please press Enter to activate this console' "$GUEST_RUN_DIR/serial.log" || true) > marks)); do
 		(($(date +%s) < deadline)) || guest__die 'guest did not come back after reboot' || return 1
+		guest__qemu_alive "$GUEST_QEMU_PID" || guest__die 'QEMU exited during reboot' || return 1
 		sleep 1
 	done
 	guest__wait_ssh "$timeout"
 }
 
 guest_stop() {
-	if [[ -n "${GUEST_QEMU_PID:-}" ]]; then
-		kill "$GUEST_QEMU_PID" 2>/dev/null || true
-		wait "$GUEST_QEMU_PID" 2>/dev/null || true
-		GUEST_QEMU_PID=''
-	fi
+	local pid p i
+	pid="$(guest__qemu_pid)"
+	for p in $pid ${GUEST_QEMU_PID:-}; do
+		kill "$p" 2>/dev/null || true
+		wait "$p" 2>/dev/null || true
+		for ((i = 0; i < 20; i++)); do guest__qemu_alive "$p" || break; sleep 0.5; done
+	done
+	GUEST_QEMU_PID=''
+	rm -f "${GUEST_RUN_DIR:-/nonexistent}/qemu.pid"
 	if [[ -n "${GUEST_PROXY_PID:-}" ]]; then
 		kill "$GUEST_PROXY_PID" 2>/dev/null || true
 		wait "$GUEST_PROXY_PID" 2>/dev/null || true

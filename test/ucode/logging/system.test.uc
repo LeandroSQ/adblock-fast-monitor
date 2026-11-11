@@ -73,7 +73,7 @@ function rm_rf(path) {
 
 function harness(running) {
 	let h = { restarts: 0 };
-	h.opts = { cursor: cur(), running: () => running, restart: () => h.restarts++ };
+	h.opts = { cursor: cur(), running: () => running, restart: (why) => { h.restarts++; h.why = why; } };
 	return h;
 }
 
@@ -234,6 +234,59 @@ t.test('service_state reads procd instances through ubus', () => {
 	t.eq(sys.service_state(fake, 'dnsmasq'), { running: true, instances: { cfg01411c: true, guest: false } });
 	t.eq(sys.service_state({ call: () => null }, 'dnsmasq'), { running: false, instances: {} });
 	t.eq(sys.service_state(null, 'dnsmasq'), { running: false, instances: {} });
+});
+
+function stale_apply(mode, stale, running) {
+	let h = harness(running ?? true);
+	h.opts.stale = () => { h.asked = true; return stale; };
+	h.res = sys.logging_apply(mode, h.opts);
+	return h;
+}
+
+t.test('§4 stale /dev/log: enable with drop-ins in place restarts dnsmasq once', () => {
+	dhcp();
+	monitor({});
+	apply('enable');
+	let h = stale_apply('enable', true);
+	t.eq([ h.res.changed, h.res.stale, h.restarts, h.why ], [ false, true, 1, 'stale' ]);
+	h = stale_apply('enable', false);
+	t.eq([ h.res.changed, h.res.stale, h.restarts ], [ false, false, 0 ], 'fresh socket: no restart');
+	h = stale_apply('enable', true, false);
+	t.eq(h.restarts, 0, 'dnsmasq not running: nothing to restart');
+});
+
+t.test('§4 stale /dev/log is ignored without drop-ins (query_logging=0 or disable)', () => {
+	let h = stale_apply('disable', true);
+	t.eq([ h.res.stale, h.asked ?? false, h.restarts, h.why ], [ false, false, 1, 'changed' ], 'only the set change restarts');
+	h = stale_apply('disable', true);
+	t.eq([ h.res.changed, h.res.stale, h.restarts ], [ false, false, 0 ]);
+	monitor({ dnsmasq_instance: [ 'nonexistent' ] });
+	h = stale_apply('enable', true);
+	t.eq([ h.res.dropins, h.res.stale, h.restarts ], [ [], false, 0 ], 'no targeted instance: no drop-in, no restart');
+});
+
+t.test('§4 dnsmasq_log_stale compares each dnsmasq root /dev/log with the current one', () => {
+	let r = `${base}/root`;
+	for (let d in [ r, `${r}/dev`, `${r}/proc` ])
+		fs.mkdir(d);
+	t.eq(sys.dnsmasq_log_stale(r), [], 'no /dev/log: nothing is stale');
+	fs.writefile(`${r}/dev/log`, 'current');
+	let proc = (pid, comm, log) => {
+		for (let d in [ `${r}/proc/${pid}`, `${r}/proc/${pid}/root`, `${r}/proc/${pid}/root/dev` ])
+			fs.mkdir(d);
+		fs.writefile(`${r}/proc/${pid}/comm`, comm + '\n');
+		if (log == 'same')
+			fs.symlink(`${r}/dev/log`, `${r}/proc/${pid}/root/dev/log`);
+		else if (log)
+			fs.writefile(`${r}/proc/${pid}/root/dev/log`, 'old');
+	};
+	proc(3361, 'dnsmasq', 'old');
+	proc(3400, 'dnsmasq', 'same');
+	proc(12, 'logd', 'old');
+	proc(3500, 'dnsmasq', null);
+	fs.mkdir(`${r}/proc/self`);
+	t.eq(sys.dnsmasq_log_stale(r), [ 3361 ]);
+	t.eq(sys.dnsmasq_log_stale(`${base}/missing`), []);
 });
 
 rm_rf(base);

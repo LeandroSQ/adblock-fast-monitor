@@ -1,26 +1,26 @@
 # Documentation index
 
-| Document | What it is | Status |
-| --- | --- | --- |
-| [`AGENTS.md`](../AGENTS.md) | Rules, architecture map, commands and testing obligations for agents and humans | canonical |
-| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow, commit conventions, pre-commit checklist | canonical |
-| [`docs/CONTRACT.md`](CONTRACT.md) | Frozen interface (api 2, design B-min): architecture decisions, files, UCI, rpcd methods, `log read` usage, ACL, budgets, test matrix T01–T32 | frozen (change rule: AGENTS.md hard restriction 10) |
-| [`docs/performance.md`](performance.md) | P0 budget method, rationale and measured results (T26) | living |
-| [`docs/test-traceability.md`](test-traceability.md) | Feature-to-test ledger of **executed** evidence only | living |
-| [`docs/openwrt-25.12.6.md`](openwrt-25.12.6.md) | Target platform facts and pins | reference |
-| [`README.md`](../README.md) | Install, packaging, releasing; [Testing](../README.md#testing) is the harness reference | canonical for users |
-| [`keys/README.md`](../keys/README.md) | Signing-key custody, rotation and compromise | canonical |
-| [`scripts/perf/budgets.json`](../scripts/perf/budgets.json) | Machine-readable P0 budgets | canonical numbers |
+| Document | What it is |
+| --- | --- |
+| [`README.md`](../README.md) | Install, use, limitations, troubleshooting (for router admins) |
+| [`AGENTS.md`](../AGENTS.md) | Rules, architecture map, commands and testing obligations for humans and coding agents; owner of each fact |
+| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow and commit conventions |
+| [`docs/CONTRACT.md`](CONTRACT.md) | Frozen interface (api 2): decisions, files, UCI, rpcd methods, `log read` usage, ACL, budgets, test matrix T01–T32; changed only per AGENTS.md hard restriction 10 |
+| [`docs/testing.md`](testing.md) | How the host, guest, browser, install, upgrade and performance harnesses and CI work |
+| [`docs/releasing.md`](releasing.md) | Versioning, maintainer setup and release steps |
+| [`docs/performance.md`](performance.md) | P0 budget method, rationale and measured results (T26) |
+| [`docs/test-traceability.md`](test-traceability.md) | Feature-to-test ledger of **executed** evidence only |
+| [`keys/README.md`](../keys/README.md) | Signing-key custody, rotation and compromise |
+| [`scripts/perf/budgets.json`](../scripts/perf/budgets.json) | Machine-readable P0 budgets |
+| [`CHANGELOG.md`](../CHANGELOG.md) | Changes per release |
+| [`SECURITY.md`](../SECURITY.md) | Vulnerability reporting and scope |
+| [`LICENSE`](../LICENSE) | Apache License 2.0 |
 
-Tool pointers (no content of their own beyond tool-specific deltas):
+Tool pointers with only tool-specific deltas:
 [`.github/copilot-instructions.md`](../.github/copilot-instructions.md),
 [`CLAUDE.md`](../CLAUDE.md) and the path-specific
 `.github/instructions/*.instructions.md` files.
 
-`MONITORING_API.md`, `RULE_ACTION_API.md`, `INTEGRATION_CONTRACT.md` and
-`RUNTIME_TEST_REQUIREMENTS.md` at the repository root are superseded stubs that
-point to `docs/CONTRACT.md`.
-
-References in all of these files (repository paths, `npm run` scripts,
-`applyTo` globs) are checked by `test/unit/docs-references.test.mjs` as part
-of `npm run test:unit`.
+`test/unit/docs-references.test.mjs` (part of `npm run verify:host`) checks
+that every repository path, link and `npm run` script named in any Markdown
+file exists.

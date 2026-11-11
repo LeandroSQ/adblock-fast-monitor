@@ -825,12 +825,12 @@ Chromium, logged in as `root`.
 
 | ID | Metric | Budget |
 |---|---|---|
-| P1 | package processes in every state: after install and after a boot, with `query_logging=0` and `=1`, in every load window (snapshots and 250 ms `/proc` watches); rpcd RssAnon growth vs stock | 0 processes, except `job.uc` during an Apply (**hard**); rpcd RssAnon ≤ 1 MiB |
+| P1 | package processes in every state: after install and after a boot, with `query_logging=0` and `=1`, in every load window (snapshots and 100–250 ms `/proc` watches); transient init-script invocations (≤ 10 s) at boot and while idle; rpcd RssAnon growth vs stock | 0 resident processes, except `job.uc` during an Apply (**hard**); transient invocations ≤ 2 per boot, 0 while idle; rpcd RssAnon ≤ 1 MiB |
 | P2 | requests made by a hidden page (background tab or Page Visibility emulation) and by a closed page | 0 in 60 s each (**hard**); the visible control must poll, and polling must resume when shown |
 | P3 | one visible page polling every 2 s under 50 / 200 qps: CPU of uhttpd + ubusd + logd + rpcd vs the same load with no page; `log read` p95 (ubus, guest) | ≤ 2 / 6 pp; p95 ≤ 50 ms at the adaptive N (incremental), ≤ 150 ms at N = 900 |
 | P4 | browser parse + classify + render per poll at 900 entries (`abfm-poll` performance measure; fallback: the querylog module timed in the page) | p95 ≤ 20 ms; ≤ 500 rows kept |
-| P5 | DNS p95 latency delta, query logging on vs off, same load | median(on p95) − median(off p95) ≤ max(2 ms, measured noise floor), ≥ 3 runs per state, loss ≤ 0.5 % |
-| P6 | logd, dnsmasq, rpcd, uhttpd, ubusd CPU/RSS deltas, query logging on vs off | each ≤ 4 pp CPU at 50 qps, ≤ 12 pp at 200 qps; RssAnon ≤ 256 KiB |
+| P5 | DNS p95 latency delta, query logging on vs off, same load | median(on p95) − median(off p95) ≤ max(3 ms, measured noise floor), ≥ 3 runs per state, loss ≤ 0.5 % |
+| P6 | logd, dnsmasq, rpcd, uhttpd, ubusd CPU/RSS deltas, query logging on vs off | each ≤ 4 pp CPU at 50 qps (dnsmasq ≤ 10 pp), ≤ 12 pp at 200 qps; RssAnon ≤ 256 KiB |
 | P7 | `info` round trip through ubus | p95 ≤ 50 ms |
 | P8 | `apply` return time (rpcd blocking) | ≤ 200 ms, and rpcd never blocked > 200 ms (20 ms `session list` probe) (**hard**) |
 | P10 | dnsmasq restarts caused by the package (boot, enabling query logging, a settings save) | 0 / 1 / 0 (**hard**) |

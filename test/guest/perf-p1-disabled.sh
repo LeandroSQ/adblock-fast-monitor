@@ -11,7 +11,11 @@ CFG=adblock-fast-monitor.config.query_logging
 t_ok "the query_logging switch exists (contract api 2)" uci -q get "$CFG"
 orig=$(uci -q get "$CFG")
 
-pkg_procs() { ps w | grep '[a]dblock-fast-monitor' | grep -v 'perf-p1'; }
+# Resident = not a (transient) init-script invocation: the procd trigger may
+# run `/etc/init.d/adblock-fast-monitor reload` 3 s after dnsmasq restarts.
+INIT_RE='/etc/init.d/adblock-fast-monitor|/usr/libexec/adblock-fast-monitor/logging.uc'
+pkg_procs() { ps w | grep '[a]dblock-fast-monitor' | grep -v 'perf-p1' | grep -Ev "$INIT_RE"; }
+init_pids() { ps w | grep '[a]dblock-fast-monitor' | grep -E "$INIT_RE" | awk '{print $1}' | sort | tr '\n' ' '; }
 init_busy() { ps w | grep -q '[/]etc/init.d/adblock-fast-monitor'; }
 dropins() {
 	for d in /tmp/dnsmasq*.d; do
@@ -32,7 +36,7 @@ set_logging() {
 for v in 0 1; do
 	t_ok "query_logging=$v applies (drop-ins match, dnsmasq up)" set_logging $v
 	# Five samples over ~10 s, so a procd respawn loop is caught too.
-	pkg='' readers=''
+	pkg='' readers='' first_init=$(init_pids) last_init=''
 	i=0
 	while [ $i -lt 5 ]; do
 		pkg="$pkg$(pkg_procs)"
@@ -40,7 +44,11 @@ for v in 0 1; do
 		i=$((i + 1))
 		[ $i -lt 5 ] && sleep 2
 	done
-	t_eq "no package process runs with query_logging=$v" "" "$pkg"
+	last_init=$(init_pids)
+	stuck=''
+	for p in $first_init; do case " $last_init " in *" $p "*) stuck="$stuck $p" ;; esac; done
+	t_eq "no resident package process runs with query_logging=$v" "" "$pkg"
+	t_eq "no init-script invocation lives through the 8 s sample with query_logging=$v" "" "$stuck"
 	t_eq "no logread follower runs with query_logging=$v" "" "$readers"
 	t_not "no resident adblock-fast-monitor ubus object with query_logging=$v" ubus list adblock-fast-monitor
 done

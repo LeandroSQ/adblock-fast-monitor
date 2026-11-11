@@ -1,0 +1,46 @@
+# Reviewed 2026-11-11: dropbear "Pubkey auth succeeded ... key SHA256:<fp>" lines in
+# captured guest log fixtures; <fp> is the fingerprint of the test harness's
+# per-run ephemeral SSH public key (deleted after the run), not a secret.
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-before.json:generic-api-key:9
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-before.json:generic-api-key:12
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/addnhosts.json:generic-api-key:73
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/addnhosts.json:generic-api-key:86
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/addnhosts.json:generic-api-key:89
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/restart.json:generic-api-key:11
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/restart.json:generic-api-key:64
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/restart.json:generic-api-key:67
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/servers.json:generic-api-key:72
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/servers.json:generic-api-key:86
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/servers.json:generic-api-key:89
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:5
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:8
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:11
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:14
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:17
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:20
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:23
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:26
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:29
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:32
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:35
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:38
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:41
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:44
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:47
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:50
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:53
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:56
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:59
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:62
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:65
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:68
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:71
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:74
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:77
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:80
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:83
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:86
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:89
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:92
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:95
+13a81724879c2f1221872a4887a201be788a892f:test/fixtures/logread/logd-after.json:generic-api-key:98

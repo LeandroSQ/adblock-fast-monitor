@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Docker-free checks on the working tree (npm run verify:commit): lint with
+# the baseline, check-static without its container phase (reported SKIPPED)
+# and the docs self-check. BusyBox/ucode checks and the suites run in
+# `npm run verify:host` and CI. gitleaks scans the staged diff when installed.
+# Installed by `npm ci` (prepare) or `npm run hooks:install`.
+# Bypass once: git commit --no-verify
+[ -d node_modules/eslint ] || { echo 'pre-commit: run npm ci first (installs ESLint and markdownlint)' >&2; exit 1; }
+npm run --silent verify:commit || exit 1
+if command -v gitleaks >/dev/null 2>&1; then
+	gitleaks git --pre-commit --staged --redact --no-banner || exit 1
+else
+	echo 'pre-commit: SKIPPED gitleaks (not installed)'
+fi

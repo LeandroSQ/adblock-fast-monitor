@@ -45,5 +45,10 @@ for v in 0 1; do
 	t_not "no resident adblock-fast-monitor ubus object with query_logging=$v" ubus list adblock-fast-monitor
 done
 
-t_ok "query_logging restored to '$orig'" set_logging "${orig:-0}"
+if [ -n "$orig" ]; then
+	t_ok "query_logging restored to '$orig'" set_logging "$orig"
+else
+	uci -q delete "$CFG"; uci commit adblock-fast-monitor; reload_config
+	t_ok "query_logging restored to its default" abfm_wait_until 60 sh -c '! ps w | grep -q "[/]etc/init.d/adblock-fast-monitor"'
+fi
 t_done

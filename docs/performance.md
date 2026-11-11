@@ -27,6 +27,14 @@ directory prints `SKIP` and exits 0 (the CI host job has no guest); with
 `PERFORMANCE_REQUIRE_MEASURED=1` it evaluates the newest B-min run and fails
 if there is none. Runs recorded by the design A harness are refused.
 
+The B-min result comes from an APK built from `main` with the backend,
+querylog and UI work merged (`scripts/in-docker.sh --platform linux/amd64 --
+scripts/build-package.sh`). The harness expects from that package: the UCI
+switch `query_logging` (it falls back to `enabled` for older packages), the
+drop-in `adblock-fast-monitor.conf` in each dnsmasq confdir, `info` and
+`apply` on `luci.adblock-fast-monitor`, the overview page polling `log read`
+every 2 s while visible, and the `abfm-poll` measure (P4, below).
+
 Tuning (environment): `ABFM_PERF_REPEATS` (default and minimum 3),
 `ABFM_PERF_LOAD_SECONDS` (30), `ABFM_PERF_HIDDEN_SECONDS` (60, never less),
 `ABFM_PERF_QPS` (`"50 200"`), `ABFM_PERF_PAGE` (the LuCI page the browser
@@ -208,7 +216,36 @@ cache (not committed); re-run the gate on a directory to regenerate
 
 ### B-min harness self-test (design A APK, before BE/QL/UI landed)
 
-RESULTS_PLACEHOLDER
+Run `.local-validation/perf/20261111T000814Z-8256` (`npm run
+test:performance:measure`, 3 repeats × 30 s × {50, 200} qps per state, two
+power cycles; APK sha256 `973c6867…`, the design A package of `main`
+`d27b5d4`'s tree, because no B-min package existed yet). It proves the
+harness end to end against a real package and the current LuCI page; the
+verdict (**FAIL**: P1, P3, P4) describes design A, not B-min:
+
+| ID | Result | Reading |
+|---|---|---|
+| P1 | FAIL: 61 package-process samples (`monitord.uc` + `logread -f`) in the logging-on states, 0 with logging off; rpcd RssAnon +236 KiB (556 → 792) | Detects design A's daemon in every on-state snapshot, watch and load window; B-min must show 0. |
+| P2 | PASS: 0 requests hidden 60.3 s, 0 closed 60.4 s; visible control 4 requests in 12 s; resumed 7 ms after showing; router ticks uhttpd/rpcd/ubusd 0 while hidden | Hide method: Page Visibility emulation (headless Chromium keeps a background tab `visible`). |
+| P3 | NOT_MEASURED: design A's page polls every 5.3 s (its `poll_interval`), not 2 s. Measured anyway: CPU delta +0.40 pp at 50 qps, +1.43 pp at 200 qps (uhttpd +0.3, ubusd +0.13, rpcd +0.5 pp); `log read` p95 29.3 ms at N ≈ 391 (50 qps), 52.8–56.6 ms at N = 900 | `log read` of 900 entries (141 KB JSON) costs about 53 ms through ubus under TCG: well inside 150 ms. |
+| P4 | NOT_MEASURED: no `abfm-poll` marks and no `querylog.js` in that package | The module fallback was exercised separately on a dev guest with unit QL's work-in-progress `querylog.js` copied in: the module loaded through `L.require`, the page fetched a real reply and the timing loop ran. |
+| P5 | PASS: Δp95 −6.7 ms (allowed 7.4) at 50 qps, −1.0 ms (4.4) at 200 qps; p50 +0.8 / +0.7 ms; 0 loss | Off-state p95 spread 7.4 ms at 50 qps: host contention. |
+| P6 | PASS: max Δ 3.6 pp at 50 qps, 7.9 pp at 200 qps (both logd, which still served design A's `logread -f`); RssAnon +16 KiB dnsmasq | dnsmasq's off-state CPU varied 6–17 % at 50 qps (spread 10 pp). |
+| P7 | PASS: `info` p95 14.7 ms (ubus floor 1.3–1.4 ms) | |
+| P8 | PASS: dry run max 13.9 ms, real 56.4 ms; rpcd `session list` worst 58.3 ms | |
+| P10 | PASS: boot 0, enable [1, 1, 1, 1], save 0 (and 0 for the delete) | |
+
+**Noise (TCG, spread over 3 repeats):** P3 CPU 2.8 pp (page) / 1.7 pp (no
+page) at 50 qps, 0.2 / 1.3 pp at 200 qps; `log read` p95 10.4 / 9.8 ms
+(N ≈ 391 / 900) at 50 qps, 3.7 / 5.9 ms at 200 qps; P5 p95 7.4 ms (off) /
+1.4 ms (on) at 50 qps, 4.4 / 0.3 ms at 200 qps; P6 dnsmasq 10.2 / 6.0 pp.
+At 50 qps the P3 budget (2 pp) is of the order of the spread, so the
+integrator's run should be compared with these spreads before any budget
+is recalibrated.
+
+Earlier development run `.local-validation/perf/dev-perf2-1` (10 s
+windows, 50 qps, no boots) gave the same picture: P3 Δ +0.89 pp,
+`log read` p95 20 / 49 ms, P2 0 / 0 requests.
 
 ### Design A reference (superseded)
 

@@ -18,7 +18,8 @@ Adds to [AGENTS.md](../../AGENTS.md). What each file does and its interface:
   returns in milliseconds (P7–P9); long work goes to a child or a detached
   job that does not use fds inherited from rpcd. Replies carry `"api": 2`
   and only contract error codes.
-- Upstream pitfalls are listed in CONTRACT §12 and §14 (e.g. adblock-fast
+- Upstream pitfalls are listed in CONTRACT §10 and §14, with the verified
+  sources in `docs/design.md` (e.g. adblock-fast
   `reload` does not rebuild). Validate domains with `abfm.domain` first and
   spawn as AGENTS.md → Conventions says (argument arrays; command strings
   only with constants and `shell_quote`d validated values).

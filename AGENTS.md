@@ -177,6 +177,7 @@ and [`docs/releasing.md`](docs/releasing.md).
 | Fact | Owner |
 | --- | --- |
 | Interface, file roles, behaviour, test matrix | [`docs/CONTRACT.md`](docs/CONTRACT.md) |
+| History, design rationale, verified upstream facts | [`docs/design.md`](docs/design.md) |
 | P0 budget numbers | `scripts/perf/budgets.json` (method and results: [`docs/performance.md`](docs/performance.md)) |
 | Commands and their run times | this file, [Build and test](#build-and-test) |
 | Harness internals, CI jobs and triggers | [`docs/testing.md`](docs/testing.md) (the workflows are the source) |

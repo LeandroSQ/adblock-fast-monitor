@@ -244,6 +244,30 @@ test('T-IDs in tests are defined in CONTRACT §13 and each row\'s files name its
   assert.deepEqual(unnamed, [], 'CONTRACT §13 rows whose files do not name the ID');
 });
 
+// Files (by name, so a move keeps the entry) whose § references still use an
+// older section numbering. Shrink only.
+const staleSectionFiles = new Set(['querylog.js', 'querylog.test.mjs', 'ui-staging.spec.mjs']);
+
+test('every § reference names a CONTRACT section (or a §14 item)', () => {
+  const contract = read('docs/CONTRACT.md');
+  const sections = new Set([...contract.matchAll(/^#{2,3} (\d+(?:\.\d+)?)\.? /gm)].map((m) => m[1]));
+  const s14 = contract.slice(contract.search(/^## 14\. /m));
+  const items14 = [...s14.slice(0, s14.indexOf('\n## ', 1) >>> 0).matchAll(/^(\d+)\. /gm)].length;
+  assert.ok(sections.has('8.3') && items14 > 0, 'CONTRACT sections not found');
+  const valid = (r) => sections.has(r) || (/^14\.\d+$/.test(r) && Number(r.split('.')[1]) <= items14);
+  const bad = [];
+  const filesWithBad = new Set();
+  for (const f of tree) {
+    if (/^(test\/fixtures|po)\//.test(f) || !/\.(md|m?js|uc|sh|json)$|^[^.]+$/.test(f.split('/').pop())) continue;
+    const name = f.split('/').pop();
+    const refs = [...read(f).matchAll(/§ ?(\d+(?:\.\d+)?)/g)].map((m) => m[1]).filter((r) => !valid(r));
+    if (refs.length) filesWithBad.add(name);
+    if (refs.length && !staleSectionFiles.has(name)) bad.push(`${f}: §${[...new Set(refs)].join(', §')}`);
+  }
+  for (const name of staleSectionFiles) if (!filesWithBad.has(name)) bad.push(`${name}: fixed, remove it from staleSectionFiles`);
+  assert.deepEqual(bad, []);
+});
+
 test('glob matcher semantics', () => {
   const g = (p, s) => globToRegExp(p).test(s);
   assert.ok(g('root/www/**', 'root/www/a/b.js'));

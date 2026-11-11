@@ -6,6 +6,7 @@
 | [`AGENTS.md`](../AGENTS.md) | Rules, architecture map, commands and testing obligations for humans and coding agents; owner of each fact |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow and commit conventions |
 | [`docs/CONTRACT.md`](CONTRACT.md) | Frozen interface (api 2): decisions, files, UCI, rpcd methods, `log read` usage, ACL, budgets, test matrix T01–T32; changed only per AGENTS.md hard restriction 10 |
+| [`docs/design.md`](design.md) | Non-normative background to the contract: history, reasons for the decisions, verified upstream facts |
 | [`docs/testing.md`](testing.md) | How the host, guest, browser, install, upgrade and performance harnesses and CI work |
 | [`docs/releasing.md`](releasing.md) | Versioning, maintainer setup and release steps |
 | [`docs/performance.md`](performance.md) | P0 budget method, rationale and measured results (T26) |

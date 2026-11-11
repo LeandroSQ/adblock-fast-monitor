@@ -22,6 +22,9 @@ adblock-fast code and never patches it.
   the result with real DNS lookups.
 - **Blocked %** over the shown rows (with their count and time span) and
   counters since the page was opened.
+- **One setting.** Settings has a single option, **Log DNS queries**. What
+  the page shows (router queries, the client column, the filter) is chosen
+  on the page and is not saved on the router.
 - **No resident process.** The page reads the system log in your browser,
   like LuCI's System Log page does. On the router the package only turns on
   dnsmasq's query logging (a runtime drop-in; `/etc/config/dhcp` is never

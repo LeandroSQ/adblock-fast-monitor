@@ -9,8 +9,12 @@ Everything runs locally with Node.js and Docker; nothing needs secrets. An
 APK passed to a harness must be inside the worktree or `.local-validation/`
 (both are mounted into the containers). Build one with
 `scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh`.
-It prints the container path `/workspace/.local-validation/artifacts/<run>/package.apk`,
-which is `.local-validation/artifacts/<run>/package.apk` in your checkout.
+It packages the committed files (git `HEAD`) and refuses to build when
+packaged paths have uncommitted changes, so an APK always matches a commit;
+`ABFM_BUILD_FROM=worktree` builds the working tree instead (options at the
+top of `scripts/build-package.sh`). It prints the container path
+`/workspace/.local-validation/artifacts/<run>/package.apk`, which is
+`.local-validation/artifacts/<run>/package.apk` in your checkout.
 
 ## Host suites (`npm run verify:host`)
 
@@ -21,7 +25,7 @@ which is `.local-validation/artifacts/<run>/package.apk` in your checkout.
 | `npm run test:ucode` | `test/ucode/**/*.uc` | ucode at the OpenWrt 25.12.6 pin, with OpenWrt's patches |
 | `npm run test:shell` | `test/shell/**/*.sh` under `ash` | BusyBox 1.37.0 with only OpenWrt's default applets |
 
-`verify:host` also runs the linters. The ucode and shell suites run in
+`verify:host` starts with `npm run lint` (CONTRIBUTING.md → Tooling). The ucode and shell suites run in
 `abfm-openwrt-userland`, a scratch image built by
 `scripts/build-host-ucode.sh` from the sources OpenWrt v25.12.6 pins
 (`scripts/hosttools/pins.env`): BusyBox with OpenWrt's patches and
@@ -130,6 +134,9 @@ job timeouts:
 - only when code changed: `package` (SDK build and the signing self-test),
   `guest`, `browser` and `install` (T22), each on a fresh KVM guest;
 - `ci-ok` aggregates the result and is the check to require on `main`.
+
+The P0 measurement (T26) needs a long guest run and is not part of CI; it
+runs locally before a release ([`releasing.md`](releasing.md)).
 
 The unsigned developer APK (`luci-app-adblock-fast-monitor-unsigned-dev`) is
 uploaded only for pushes to `main`, never for pull requests. Releases:

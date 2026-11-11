@@ -84,7 +84,9 @@ Translations install as `luci-i18n-adblock-fast-monitor-<lang>`.
 ### Developer builds (unsigned)
 
 Build with Docker (`scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh`,
-see [`docs/testing.md`](docs/testing.md)) or download the
+which packages the committed `HEAD` and refuses uncommitted changes unless
+`ABFM_BUILD_FROM=worktree`; see [`docs/testing.md`](docs/testing.md)) or
+download the
 `luci-app-adblock-fast-monitor-unsigned-dev` artifact of a CI run on `main`
 (pull requests do not publish one). Install over SSH:
 

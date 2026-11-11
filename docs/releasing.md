@@ -29,11 +29,14 @@ release tag is `v` plus that string (for example `v0.2.0-r1`).
    [`keys/README.md`](../keys/README.md) describes; record the fingerprint
    there.
 3. Create the environment `release` with the secret `APK_SIGNING_KEY`,
-   restricted to tags `v*`.
+   restricted to tags `v*`, with the maintainer as required reviewer (the
+   `sign` job waits for approval).
 4. Pages: source **GitHub Actions**; allow tags `v*` in the `github-pages`
    environment's deployment rules.
 5. Protect `main` with a ruleset: pull requests required, required check
    `ci-ok`, review from code owners ([`CODEOWNERS`](../.github/CODEOWNERS)).
+6. Add a tag ruleset for `v*`: only maintainers may create tags, and nobody
+   may update or delete them.
 
 ## Cutting a release
 

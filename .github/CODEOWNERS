@@ -1,0 +1,15 @@
+# Changes to these paths need review by the maintainer (enable "Require
+# review from Code Owners" in the branch ruleset for main). Patterns are
+# checked by test/unit/docs-references.test.mjs.
+/AGENTS.md                              @LeandroSQ
+/SECURITY.md                            @LeandroSQ
+/LICENSE                                @LeandroSQ
+/.github/CODEOWNERS                     @LeandroSQ
+/.github/workflows/                     @LeandroSQ
+/.gitleaksignore                        @LeandroSQ
+/keys/                                  @LeandroSQ
+/scripts/release/                       @LeandroSQ
+/scripts/perf/budgets.json              @LeandroSQ
+/docs/CONTRACT.md                       @LeandroSQ
+/docs/test-traceability.md              @LeandroSQ
+/test/fixtures/logread/differential/    @LeandroSQ

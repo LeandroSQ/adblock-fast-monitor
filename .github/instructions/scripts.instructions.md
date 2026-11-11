@@ -23,4 +23,7 @@ Adds to [AGENTS.md](../../AGENTS.md).
 - Perf code changes need a fresh run of
   `npm run test:performance:measure -- PKG.apk`; budgets live only in
   `scripts/perf/budgets.json`.
-- Document usage in a header comment; keep README.md → Testing in sync.
+- Pin what scripts download (SHA-256 for files, digests for images) and
+  verify it before use (AGENTS.md hard restriction 8).
+- Document usage in a header comment; keep `docs/testing.md` or
+  `docs/releasing.md` in sync.

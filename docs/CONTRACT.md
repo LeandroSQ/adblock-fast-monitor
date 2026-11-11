@@ -919,28 +919,29 @@ write grant.
 
 ## 11. Performance budgets
 
-Measured by T26 (`node scripts/integration/measure-performance.mjs PKG.apk`)
-and judged by `scripts/performance-gate.mjs` against
-`scripts/perf/budgets.json`. Method, justification and measured data:
-[`docs/performance.md`](performance.md). CPU is percent of one CPU of the
-2-vCPU measurement guest; the gate records the accelerator (TCG or KVM).
-The OpenWrt x86/64 kernel has no `smaps`/`smaps_rollup`, so PSS cannot be
-read: memory budgets use RSS (own processes) and RssAnon (deltas of other
-daemons). Load is real queries from a LAN address (not `127.0.0.1`),
-answered by local fixtures: 50 % forwarded, 30 % cached, 20 % blocked.
+Design B-min: no resident process; the browser reads `log read` and does all
+parsing. Measured by T26 (`npm run test:performance:measure -- PKG.apk`) and
+judged by `scripts/performance-gate.mjs` against `scripts/perf/budgets.json`.
+Method, justification and measured data: [`docs/performance.md`](performance.md).
+CPU is percent of one CPU of the 2-vCPU measurement guest; the gate records
+the accelerator (TCG or KVM) and the run-to-run spread (noise) of every
+repeated number over ≥ 3 repeats. The OpenWrt x86/64 kernel has no
+`smaps`/`smaps_rollup`, so memory uses RssAnon. Load is real queries from a
+LAN address (not `127.0.0.1`), answered by local fixtures: 50 % forwarded,
+30 % cached, 20 % blocked. The page is the real LuCI page in headless
+Chromium, logged in as `root`.
 
 | ID | Metric | Budget |
 |---|---|---|
-| P1 | processes and RSS with `enabled=0`, after install and after a boot | 0 extra processes, also in a 250 ms `/proc` watch (**hard**); RssAnon growth of existing daemons (the rpcd plugin) ≤ 1 MiB |
-| P2 | daemon + logread RSS, idle and at the `recent_size=2000` cap (top 256, pending 512) | ≤ 4 MiB idle; ≤ 8 MiB at the cap |
-| P3 | idle wakeups of the daemon with no DNS traffic, over 60 s | 0 voluntary wakeups and no finite `epoll`/`poll` timeout in `/proc/<pid>/syscall` samples (**hard**); daemon + logread wakeups minus syslog lines ≤ 2 |
-| P4 | daemon + logread CPU at 50 and 200 qps of real queries | ≤ 8 % at 50 qps; ≤ 25 % at 200 qps |
-| P5 | DNS p95 latency delta, on vs off, same load | median(on p95) − median(off p95) ≤ max(2 ms, measured noise floor), ≥ 3 runs per state, loss ≤ 0.5 % |
-| P6 | logd, dnsmasq, rpcd, uhttpd, ubusd CPU/RSS deltas, on vs off | each ≤ 4 pp CPU at 50 qps, ≤ 12 pp at 200 qps; RssAnon ≤ 256 KiB |
-| P7 | `status` / `domains` handler time at full tables | p95 ≤ 50 ms / ≤ 100 ms (round trip through ubus) |
-| P8 | `apply` return time (rpcd blocking) | ≤ 200 ms (**hard**) |
-| P9 | `rules` time to the deferred reply on a 100k-line output file | ≤ 5 s cold; rpcd never blocked > 200 ms (**hard**, 20 ms `session list` probe) |
-| P10 | dnsmasq restarts caused by the monitor (boot, enable, settings save) | 0 / 1 / 0 (**hard**) |
+| P1 | package processes in every state: after install and after a boot, with `query_logging=0` and `=1`, in every load window (snapshots and 250 ms `/proc` watches); rpcd RssAnon growth vs stock | 0 processes, except `job.uc` during an Apply (**hard**); rpcd RssAnon ≤ 1 MiB |
+| P2 | requests made by a hidden page (background tab or Page Visibility emulation) and by a closed page | 0 in 60 s each (**hard**); the visible control must poll, and polling must resume when shown |
+| P3 | one visible page polling every 2 s under 50 / 200 qps: CPU of uhttpd + ubusd + logd + rpcd vs the same load with no page; `log read` p95 (ubus, guest) | ≤ 2 / 6 pp; p95 ≤ 50 ms at the adaptive N (incremental), ≤ 150 ms at N = 900 |
+| P4 | browser parse + classify + render per poll at 900 entries (`abfm-poll` performance measure; fallback: the querylog module timed in the page) | p95 ≤ 20 ms; ≤ 500 rows kept |
+| P5 | DNS p95 latency delta, query logging on vs off, same load | median(on p95) − median(off p95) ≤ max(2 ms, measured noise floor), ≥ 3 runs per state, loss ≤ 0.5 % |
+| P6 | logd, dnsmasq, rpcd, uhttpd, ubusd CPU/RSS deltas, query logging on vs off | each ≤ 4 pp CPU at 50 qps, ≤ 12 pp at 200 qps; RssAnon ≤ 256 KiB |
+| P7 | `info` round trip through ubus | p95 ≤ 50 ms |
+| P8 | `apply` return time (rpcd blocking) | ≤ 200 ms, and rpcd never blocked > 200 ms (20 ms `session list` probe) (**hard**) |
+| P10 | dnsmasq restarts caused by the package (boot, enabling query logging, a settings save) | 0 / 1 / 0 (**hard**) |
 
 ---
 

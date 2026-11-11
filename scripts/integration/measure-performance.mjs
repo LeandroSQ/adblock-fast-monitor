@@ -6,9 +6,10 @@
 //   (PACKAGE_APK=... also works; ABFM_PERF_* tune scripts/perf/run.sh)
 //
 // Boots the guest with scripts/verify-guest.sh (in Docker on non-Linux hosts)
-// without installing the APK, runs scripts/perf/run.sh as the host command,
-// writes raw JSON to .local-validation/perf/<run>/ and exits with the verdict
-// of scripts/performance-gate.mjs.
+// without installing the APK, runs scripts/perf/run.sh as the host command
+// (guest probes, DNS load, and the real LuCI page in headless Chromium via
+// scripts/perf/browser.mjs), writes raw JSON to .local-validation/perf/<run>/
+// and exits with the verdict of scripts/performance-gate.mjs (design B-min).
 import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';

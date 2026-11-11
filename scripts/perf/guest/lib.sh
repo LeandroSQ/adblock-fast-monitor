@@ -3,8 +3,14 @@
 # stderr. Only stock applets are used (no stat, no timeout, no pgrep).
 
 PERF_RESPONDER_PID=/var/run/abfm-perf-responder.pid
-PERF_AF_BAK=/tmp/abfm-perf/adblock-fast.config.bak
-PERF_SERVERS=/var/run/adblock-fast/dnsmasq.servers
+
+# The query-logging switch: `query_logging` (design B-min, contract api 2);
+# packages built before the rename (design A) call it `enabled`.
+perf_flag() {
+	if ! uci -q get adblock-fast-monitor.config.query_logging >/dev/null &&
+		uci -q get adblock-fast-monitor.config.enabled >/dev/null; then echo enabled
+	else echo query_logging; fi
+}
 
 perf_confdirs() { ls -d /tmp/dnsmasq*.d 2>/dev/null; }
 
@@ -26,6 +32,7 @@ perf_dnsmasq_pids() {
 }
 
 # package processes: the cmdline names the package; plus `logread -f` readers
+# (design B-min has neither; both must stay empty in every state, §11 P1)
 perf_pkg_procs() { ps w | grep '[a]dblock-fast-monitor' | grep -v 'lib\.sh' | sed 's/^ *//'; }
 perf_logread_procs() { ps w | grep '[l]ogread -f' | sed 's/^ *//'; }
 
@@ -37,8 +44,9 @@ perf_state_fields() {
 	_plg=false; ubus list luci.adblock-fast-monitor >/dev/null 2>&1 && _plg=true
 	_drop=''
 	for _d in $(perf_confdirs); do [ -e "$_d/adblock-fast-monitor.conf" ] && _drop="$_drop $_d/adblock-fast-monitor.conf"; done
-	printf '"enabled":%s,"package_procs":%s,"package_proc_count":%d,"logread_procs":%s,"logread_proc_count":%d,' \
-		"$(perf_json_str "$(uci -q get adblock-fast-monitor.config.enabled)")" \
+	_f=$(perf_flag)
+	printf '"flag":"%s","query_logging":%s,"package_procs":%s,"package_proc_count":%d,"logread_procs":%s,"logread_proc_count":%d,' \
+		"$_f" "$(perf_json_str "$(uci -q get "adblock-fast-monitor.config.$_f")")" \
 		"$(perf_json_str "$_pk")" "$(printf '%s' "$_pk" | grep -c .)" \
 		"$(perf_json_str "$_lr")" "$(printf '%s' "$_lr" | grep -c .)"
 	printf '"monitor_object":%s,"plugin_object":%s,"dropins":%s,"dnsmasq_pids":%s,"dnsmasq_starts_logged":%d,"uptime":%s' \
@@ -101,75 +109,29 @@ perf_apply_uci() {
 	_changes=$(uci changes adblock-fast-monitor | grep -c .)
 	uci commit adblock-fast-monitor
 	reload_config
-	if [ -e "$PERF_SELFTEST_FLAG" ]; then
-		case "$_what" in enabled=*) perf_selftest_apply enabled "${_what#enabled=}" ;; *) perf_selftest_apply save ;; esac
-	fi
 	_s=$(perf_settle)
 	printf '{"action":%s,"uci_changes":%d,"dnsmasq_restarts":%d,"dnsmasq_pids_before":%s,"settle_s":%d,' \
 		"$(perf_json_str "$_what")" "$_changes" "$(perf_starts_since "$_mk")" "$(perf_json_str "$_pb")" "$_s"
 	perf_state_fields; printf '}\n'
 }
 
-# Self-test (scripts/perf/run.sh with ABFM_PERF_SELFTEST=1): emulate the
-# contract's enable/disable/save with the stand-in daemon and a real
-# log-queries drop-in, so the daemon-side measurements run on real processes.
-PERF_SELFTEST_FLAG=/tmp/abfm-perf/selftest
-perf_selftest_stop() {
-	for _p in $(ps w | grep '[a]dblock-fast-monitor-standin' | awk '{print $1}'); do
-		for _c in $(grep -l "^PPid:[[:space:]]*$_p\$" /proc/[0-9]*/status 2>/dev/null | cut -d/ -f3); do kill "$_c"; done
-		kill "$_p"
-	done
-}
-perf_selftest_start() {
-	setsid ucode /tmp/abfm-perf/adblock-fast-monitor-standin.uc </dev/null >/dev/null 2>&1 &
-}
-perf_selftest_apply() { # enabled|save value
-	_changed=0
-	for _d in $(perf_confdirs); do
-		if [ "$1" = enabled ] && [ "$2" = 1 ]; then
-			[ -e "$_d/adblock-fast-monitor.conf" ] || { printf 'log-queries=extra\n' >"$_d/adblock-fast-monitor.conf"; _changed=1; }
-		elif [ "$1" = enabled ]; then
-			[ -e "$_d/adblock-fast-monitor.conf" ] && { rm -f "$_d/adblock-fast-monitor.conf"; _changed=1; }
-		fi
-	done
-	perf_selftest_stop
-	[ $_changed = 1 ] && /etc/init.d/dnsmasq restart >/dev/null 2>&1
-	[ "$(uci -q get adblock-fast-monitor.config.enabled)" = 1 ] && perf_selftest_start
-}
+# perf_set 0|1 : switch query logging the way LuCI's Save & Apply does.
+perf_set() { _f=$(perf_flag); perf_apply_uci "$_f=$1" "$_f=$1"; }
 
-perf_set() {
-	# v0 packages also need own_logqueries to log; v1 has no such option.
-	_extra=''
-	[ -n "$(uci -q get adblock-fast-monitor.config.own_logqueries)" ] && _extra="own_logqueries=$1"
-	perf_apply_uci "enabled=$1" "enabled=$1" $_extra
-}
-
+# perf_save KEY VALUE : a settings save that leaves query logging alone (P10).
 perf_save() { perf_apply_uci "$1=$2" "$1=$2"; }
+
+# Drops the option perf_save added, through the same commit + reload_config.
+perf_unsave() {
+	_mk=$(perf_mark unsave)
+	uci -q delete "adblock-fast-monitor.config.$1"; uci commit adblock-fast-monitor; reload_config
+	_s=$(perf_settle)
+	printf '{"action":"delete %s","dnsmasq_restarts":%d,"settle_s":%d}\n' "$1" "$(perf_starts_since "$_mk")" "$_s"
+}
 
 perf_boot_report() {
 	printf '{"boot":true,"dnsmasq_starts_since_boot":%d,' "$(perf_starts)"
 	perf_state_fields; printf '}\n'
-}
-
-perf_rules_fixture() {
-	case "$1" in
-	setup)
-		cp /etc/config/adblock-fast "$PERF_AF_BAK"
-		_existed=false
-		[ -e "$PERF_SERVERS" ] && { _existed=true; mv "$PERF_SERVERS" "$PERF_SERVERS.abfm-perf-bak"; }
-		mkdir -p "${PERF_SERVERS%/*}"
-		awk 'BEGIN { for (i = 0; i < 100000; i++) printf "server=/perf-list-%06d.example/\n", i }' >"$PERF_SERVERS"
-		printf '{"fixture":"setup","dns":%s,"output_file":"%s","lines":%d,"bytes":%d,"existed":%s}\n' \
-			"$(perf_json_str "$(uci -q get adblock-fast.config.dns)")" "$PERF_SERVERS" \
-			"$(wc -l <"$PERF_SERVERS")" "$(wc -c <"$PERF_SERVERS")" "$_existed"
-		;;
-	teardown)
-		rm -f "$PERF_SERVERS"
-		[ -e "$PERF_SERVERS.abfm-perf-bak" ] && mv "$PERF_SERVERS.abfm-perf-bak" "$PERF_SERVERS"
-		[ -e "$PERF_AF_BAK" ] && cp "$PERF_AF_BAK" /etc/config/adblock-fast
-		printf '{"fixture":"teardown"}\n'
-		;;
-	esac
 }
 
 perf_wait_job() {

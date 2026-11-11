@@ -1,20 +1,18 @@
 #!/usr/bin/ucode
 // Guest-side measurement probe for the P0 performance harness (docs/performance.md).
-// Uses only modules present on a stock OpenWrt 25.12.6 image (fs, ubus, uloop).
+// Uses only modules present on a stock OpenWrt 25.12.6 image (fs, ubus).
 // Every subcommand prints one JSON document on stdout.
 //
 //   probe.uc snapshot                    all userland processes + meminfo + /proc/stat
 //   probe.uc window SECONDS [TAG]        logger marker, snapshot, sleep, snapshot;
-//                                        samples the package processes'
-//                                        /proc/<pid>/syscall once a second and
 //                                        counts syslog lines after the marker
 //   probe.uc watch SECONDS               package processes seen in /proc every
 //                                        250 ms (catches procd respawn loops)
 //   probe.uc rpc OBJECT METHOD JSON N    N timed ubus calls (ms)
 //   probe.uc rpcprobe SECONDS INTERVAL_MS  repeated `session list` latencies (rpcd)
-//   probe.uc parsebench N                cost of the contract §4.3 regexes per line
-//   probe.uc memref RECENT TOP PENDING   RssAnon growth of a ucode process with
-//                                        ubus+uloop and tables of the given sizes
+//   probe.uc logbench CALLS INTERVAL_MS  `log read` latency at the browser's
+//                                        adaptive N for the current log rate
+//                                        and at N=900 (design B-min, §11 P3)
 
 import * as fs from 'fs';
 
@@ -22,7 +20,7 @@ const PKG = 'adblock-fast-monitor';
 
 function now_ms() {
 	let c = clock(true);
-	return c[0] * 1000 + c[1] / 1000000;
+	return c[0] * 1000 + c[1] / 1000000.0;
 }
 
 function status_kb(text, key) {
@@ -125,20 +123,12 @@ function window(seconds, tag) {
 	system(['logger', '-t', 'abfm-perf', marker]);
 	sleep(200);
 	let t0 = snapshot();
-	let pids = package_pids(t0.procs);
-	let samples = [];
 	let end = t0.wall_ms + seconds * 1000;
-	while (now_ms() < end - 5) {
-		let wait = min(1000, end - now_ms());
-		if (wait > 0) sleep(int(wait));
-		let s = { t_ms: int(now_ms() - t0.wall_ms), pids: {} };
-		for (let pid in pids)
-			s.pids[pid] = trim(fs.readfile(`/proc/${pid}/syscall`) ?? 'gone');
-		push(samples, s);
-	}
+	while (now_ms() < end - 5)
+		sleep(int(min(1000, end - now_ms())));
 	let t1 = snapshot();
-	return { tag: tag, seconds: seconds, marker: marker, package_pids: pids,
-		t0: t0, t1: t1, syscall_samples: samples, log: log_lines_after(marker) };
+	return { tag: tag, seconds: seconds, marker: marker, package_pids: package_pids(t1.procs),
+		t0: t0, t1: t1, log: log_lines_after(marker) };
 }
 
 function watch(seconds) {
@@ -215,57 +205,50 @@ function rpcprobe(seconds, interval) {
 	return { probe: 'session list', interval_ms: interval, errors: errors, stats: stats(times) };
 }
 
-// Contract §4.3 regexes, applied as the daemon must (PREFIX, then BODY).
-function parsebench(n) {
-	let PREFIX = /^[A-Z][a-z]{2} [A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4} [a-z0-9]+\.[a-z]+ dnsmasq\[([0-9]+)\]: (.*)$/;
-	let BODY = /^(TCP |UDP )?([0-9]+) ([^ \/]+)\/([0-9]+) ([^ ]+) ([a-z0-9_.-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$/;
-	let hdr = 'Tue Nov 10 01:09:19 2026 daemon.info dnsmasq[1234]: ';
-	let lines = map([
-		'41 192.168.1.10/53211 query[A] u-17-000123.perf.test from 192.168.1.10',
-		'41 192.168.1.10/53211 forwarded u-17-000123.perf.test to 127.0.0.1',
-		'41 192.168.1.10/53211 reply u-17-000123.perf.test is 192.0.2.1',
-		'42 192.168.1.10/53212 config b-17-000124.perf-block.test is NXDOMAIN',
-	], (b) => hdr + b);
-	let ok = 0, t = now_ms();
-	for (let i = 0; i < n; i++) {
-		let m = match(lines[i % 4], PREFIX);
-		if (m && match(m[2], BODY)) ok++;
-	}
-	let dt = now_ms() - t;
-	return { lines: n, matched: ok, total_ms: dt, us_per_line: dt * 1000 / n };
+// `log read` exactly as the B-min page calls it ({lines, stream:false,
+// oneshot:true}). The adaptive N is derived like the page does it: the ids
+// logged in 2 s (one poll interval) give the batch, N = clamp(1.5*batch+16,
+// 16, 900). Calls alternate between that N and the first-load N=900.
+function log_read(conn, n) {
+	let t = now_ms();
+	let r = conn.call('log', 'read', { lines: n, stream: false, oneshot: true });
+	return { ms: now_ms() - t, reply: r };
 }
 
-function self_kb(key) {
-	return status_kb(fs.readfile('/proc/self/status'), key);
+function last_id(r) {
+	let l = r?.log;
+	return (type(l) == 'array' && length(l)) ? l[length(l) - 1].id : null;
 }
 
-function memref(recent, top, pending) {
-	let uloop = require('uloop');
+function logbench(calls, interval) {
 	let ubus = require('ubus');
-	uloop.init();
-	let conn = ubus.connect();
-	let obj = conn ? conn.publish('abfm-perf-ref', { status: { args: {}, call: function(req) { return {}; } } }) : null;
-	let before = { rss_anon_kb: self_kb('RssAnon'), vm_rss_kb: self_kb('VmRSS') };
-	let rows = {}, order = [], tb = {}, ta = {}, pend = {};
-	for (let i = 0; i < recent; i++) {
-		let d = sprintf('host-%06d.some-tracker-domain.example.com', i);
-		rows[d] = { domain: d, decision: 'blocked', source: 'config', count: i, blocked: i, allowed: 0,
-			first_seen: 1762747000 + i, last_seen: 1762747000 + i, qtypes: ['A', 'AAAA', 'HTTPS'],
-			client: '192.168.1.10' };
-		push(order, d);
+	let conn = ubus.connect(null, 30);
+	if (!conn)
+		return { error: 'ubus-connect-failed' };
+	let a = log_read(conn, 1).reply;
+	sleep(2000);
+	let b = log_read(conn, 1).reply;
+	let batch = (last_id(a) != null && last_id(b) != null) ? last_id(b) - last_id(a) : null;
+	let n_incr = batch == null ? 16 : max(16, min(900, int(1.5 * batch) + 16));
+	let t_incr = [], t_full = [], e_incr = [], e_full = [], errors = 0, sample = null;
+	for (let i = 0; i < calls; i++) {
+		let x = log_read(conn, n_incr);
+		if (x.reply == null) errors++;
+		push(t_incr, x.ms); push(e_incr, length(x.reply?.log ?? []));
+		sleep(interval);
+		let y = log_read(conn, 900);
+		if (y.reply == null) errors++;
+		push(t_full, y.ms); push(e_full, length(y.reply?.log ?? []));
+		if (i == 0 && y.reply?.log) {
+			let l = y.reply.log;
+			sample = { keys: sort(keys(l[0] ?? {})), first_id: l[0]?.id, last_id: last_id(y.reply),
+				bytes: length(sprintf('%J', y.reply)) };
+		}
+		sleep(interval);
 	}
-	for (let i = 0; i < top; i++) {
-		tb[sprintf('blocked-%06d.example.com', i)] = { count: i, error: 0 };
-		ta[sprintf('allowed-%06d.example.com', i)] = { count: i, error: 0 };
-	}
-	for (let i = 0; i < pending; i++)
-		pend[sprintf('%d:%d', 1234, i)] = { name: sprintf('pending-%06d.example.com', i), qtype: 'A', client: '192.168.1.10', t: 1762747000 };
-	gc('collect');
-	let after = { rss_anon_kb: self_kb('RssAnon'), vm_rss_kb: self_kb('VmRSS') };
-	if (obj) obj.remove();
-	return { recent: recent, top: top, pending: pending, published: !!obj, before: before, after: after,
-		delta_anon_kb: after.rss_anon_kb - before.rss_anon_kb,
-		kept: length(order) + length(tb) + length(ta) + length(pend) + length(rows) };
+	return { lines_per_2s: batch, n_incremental: n_incr, calls: calls, interval_ms: interval, errors: errors,
+		error: errors ? ubus.error() : null, incremental: { times_ms: t_incr, entries: e_incr, stats: stats(t_incr) },
+		full: { lines: 900, times_ms: t_full, entries: e_full, stats: stats(t_full) }, sample: sample };
 }
 
 let cmd = ARGV[0];
@@ -275,7 +258,6 @@ else if (cmd == 'window') out = window(+ARGV[1], ARGV[2]);
 else if (cmd == 'watch') out = watch(+ARGV[1]);
 else if (cmd == 'rpc') out = rpc(ARGV[1], ARGV[2], ARGV[3], +(ARGV[4] ?? 1));
 else if (cmd == 'rpcprobe') out = rpcprobe(+ARGV[1], +(ARGV[2] ?? 20));
-else if (cmd == 'parsebench') out = parsebench(+(ARGV[1] ?? 2000));
-else if (cmd == 'memref') out = memref(+ARGV[1], +ARGV[2], +ARGV[3]);
-else { warn('usage: probe.uc snapshot|window|rpc|rpcprobe|parsebench|memref ...\n'); exit(2); }
+else if (cmd == 'logbench') out = logbench(+(ARGV[1] ?? 20), +(ARGV[2] ?? 250));
+else { warn('usage: probe.uc snapshot|window|watch|rpc|rpcprobe|logbench ...\n'); exit(2); }
 printf('%J\n', out);

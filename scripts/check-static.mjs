@@ -1,7 +1,7 @@
 // Syntax checks for every source language in the repository:
 //   - JSON: JSON.parse
 //   - JS/MJS outside LuCI: node --check
-//   - LuCI views/resources (root/www/**/*.js): compiled (not run) as a function
+//   - LuCI views/resources (htdocs/**/*.js): compiled (not run) as a function
 //     body, because LuCI evaluates them that way and they may `return` at top level
 //   - bash scripts (bash shebang or "# shellcheck shell=bash"): bash -n
 //   - POSIX sh scripts, including extensionless ones (#!/bin/sh): `ash -n` under
@@ -45,7 +45,7 @@ for (const path of files) {
 
   if (/\.(mjs|cjs|js)$/.test(base)) {
     checked++;
-    if (name.startsWith('root/www/')) {
+    if (name.startsWith('htdocs/')) {
       try {
         new vm.Script(`(function () {\n${await readFile(path, 'utf8')}\n})`, { filename: name, lineOffset: -1 });
       } catch (error) {

@@ -38,7 +38,7 @@ mkdir -p "$scratch/scripts"
 if [[ "$old_ref" == same ]]; then
 	src="$(dirname "$new")/source"
 	[[ -f "$src/Makefile" && -d "$src/root" ]] || src="$root"
-	tar -C "$src" -cf - Makefile root $([[ -d "$src/po" ]] && echo po) | tar -C "$scratch" -xf -
+	tar -C "$src" -cf - Makefile root $([[ -d "$src/htdocs" ]] && echo htdocs) $([[ -d "$src/po" ]] && echo po) | tar -C "$scratch" -xf -
 else
 	src="git $old_ref"
 	git -C "$root" archive "$old_ref" Makefile root po | tar -C "$scratch" -xf -

@@ -1,5 +1,5 @@
 ---
-applyTo: "root/www/**"
+applyTo: "htdocs/**"
 ---
 
 # LuCI JavaScript views
@@ -25,7 +25,7 @@ Adds to [AGENTS.md](../../AGENTS.md); contract: `docs/CONTRACT.md` §8–§9.
   `0` or omitted (§8.1); never `log write` or `/ubus/subscribe`. Parsing and
   classification live in the pure `querylog.js` (§8.2–8.3).
 - Keep logic that can be pure in
-  `root/www/luci-static/resources/adblock-fast-monitor/model.js` and test it
+  `htdocs/luci-static/resources/adblock-fast-monitor/model.js` and test it
   in `test/unit/` by executing the real file (`test/unit/ui-model.test.mjs`).
   Rendered behaviour is tested with Playwright in `test/browser/` against the
   guest (`npm run verify:guest -- --browser PKG.apk`).

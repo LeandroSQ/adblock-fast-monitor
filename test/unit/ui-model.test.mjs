@@ -1,4 +1,4 @@
-// Executes the real LuCI resource root/www/luci-static/resources/adblock-fast-monitor/model.js
+// Executes the real LuCI resource htdocs/luci-static/resources/adblock-fast-monitor/model.js
 // the way luci.js loads it: the file is the body of a factory function
 // (window, document, L, ...requires) whose return value is a class that is
 // instantiated once. Only `baseclass.extend` is provided by the harness.
@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const source = readFileSync(fileURLToPath(new URL(
-  '../../root/www/luci-static/resources/adblock-fast-monitor/model.js', import.meta.url)), 'utf8');
+  '../../htdocs/luci-static/resources/adblock-fast-monitor/model.js', import.meta.url)), 'utf8');
 const baseclass = { extend(proto) { return function Model() { Object.assign(this, proto); }; } };
 // eslint-disable-next-line no-new-func
 const Factory = new Function('window', 'document', 'L', 'baseclass', source);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Loads the real LuCI resource
-// root/www/luci-static/resources/adblock-fast-monitor/querylog.js the way
+// htdocs/luci-static/resources/adblock-fast-monitor/querylog.js the way
 // luci.js does (the file is the body of a factory whose return value is a
 // class instantiated once), like test/unit/ui-model.test.mjs, plus helpers
 // that build `log read` replies. Not a test file.
@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const source = readFileSync(fileURLToPath(new URL(
-  '../../root/www/luci-static/resources/adblock-fast-monitor/querylog.js', import.meta.url)), 'utf8');
+  '../../htdocs/luci-static/resources/adblock-fast-monitor/querylog.js', import.meta.url)), 'utf8');
 const baseclass = { extend(proto) { return function QueryLog() { Object.assign(this, proto); }; } };
 // eslint-disable-next-line no-new-func
 const Factory = new Function('window', 'document', 'L', 'baseclass', source);

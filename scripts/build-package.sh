@@ -46,7 +46,7 @@ fi
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 out="$cache/artifacts/$run_id"
 mkdir -p "$out/source"
-tar -C "$root" -cf - Makefile root $( [[ -d "$root/po" ]] && echo po) | tar -C "$out/source" -xf -
+tar -C "$root" -cf - Makefile root htdocs $( [[ -d "$root/po" ]] && echo po) | tar -C "$out/source" -xf -
 (cd "$out/source" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) >"$out/source.sha256"
 
 exec 9>"$sdk/.abfm-build.lock"

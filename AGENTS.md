@@ -74,8 +74,9 @@ under `root/`; do not restate them elsewhere.
 
 | Path | Holds |
 | --- | --- |
-| `root/` | everything installed by the APK (layout = target filesystem; roles: CONTRACT §2) |
-| `root/www/luci-static/resources/` | LuCI views and the pure UI modules (`model.js`, `querylog.js`; §8) |
+| `root/` | everything installed by the APK except web assets (layout = target filesystem; roles: CONTRACT §2) |
+| `htdocs/` | web assets installed under `/www` (luci.mk minifies them) |
+| `htdocs/luci-static/resources/` | LuCI views and the pure UI modules (`model.js`, `querylog.js`; §8) |
 | `root/usr/share/rpcd/` | rpcd ucode plugin and ACL (§6, §9) |
 | `root/usr/share/ucode/abfm/` | pure ucode modules, unit-tested on the host |
 | `Makefile`, `po/` | `luci.mk` package definition; translation template |

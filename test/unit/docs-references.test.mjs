@@ -133,7 +133,7 @@ test('tool pointer files defer to AGENTS.md', () => {
 
 test('glob matcher semantics', () => {
   const g = (p, s) => globToRegExp(p).test(s);
-  assert.ok(g('root/www/**', 'root/www/a/b.js'));
+  assert.ok(g('htdocs/**', 'htdocs/a/b.js'));
   assert.ok(g('test/ucode/**/*.test.uc', 'test/ucode/a.test.uc'));
   assert.ok(g('test/ucode/**/*.test.uc', 'test/ucode/x/y/a.test.uc'));
   assert.ok(!g('test/guest/*.sh', 'test/guest/lib/x.sh'));

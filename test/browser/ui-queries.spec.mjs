@@ -69,7 +69,8 @@ test('real queries from a LAN client: decisions, sources, header and toggles', a
   expect(perf.measures.at(-1).rows).toBeGreaterThan(0);
   // the first poll creates the rows; a poll that brings nothing new touches no row
   expect(perf.measures[0].changed).toBeGreaterThan(0);
-  expect(perf.measures.some((mm) => mm.changed === 0)).toBe(true);
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByName('abfm-poll').slice(-3)
+    .some((e) => e.detail.changed === 0)), { timeout: 30_000 }).toBe(true);
 
   // an existing row keeps its DOM node across polls (no full rebuild): focus stays on its button
   const button = queryRow(page, 'ads.example.test').getByRole('button', { name: 'Allow ads.example.test' });

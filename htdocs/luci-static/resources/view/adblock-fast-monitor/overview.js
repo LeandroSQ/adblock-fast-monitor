@@ -27,6 +27,8 @@ const callApply = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'ap
 const callJob = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'job', params: [ 'job_id' ], reject: true });
 
 const INFO_INTERVAL = 30;
+/* LuCI's poll runs a function when its tick count is a multiple of the interval: check often, call rarely. */
+const INFO_CHECK = 5;
 const JOB_INTERVAL = 2;
 const MAX_ROWS = 500;
 /* about 33 min of 2 s polls; then the old `abfm-poll` measures are dropped */
@@ -162,6 +164,7 @@ return view.extend({
 	render(infoResult) {
 		this.canWrite = L.hasViewPermission() === true;
 		this.infoResult = infoResult;
+		this.infoAt = Date.now();
 		this.protect = model.protectedNames(infoResult);
 		this.log = querylog.create({ max_rows: MAX_ROWS, pending_ttl_s: 10,
 			local_domains: model.localDomains(infoResult), hide_router: true });
@@ -250,7 +253,7 @@ return view.extend({
 			this.stoppedAt = null;
 		}
 		poll.add(this.ticks.log, model.POLL_INTERVAL);
-		poll.add(this.ticks.info, INFO_INTERVAL);
+		poll.add(this.ticks.info, INFO_CHECK);
 		if (this.watchedJob)
 			poll.add(this.ticks.job, JOB_INTERVAL);
 	},
@@ -382,12 +385,11 @@ return view.extend({
 		}, 0));
 	},
 
-	/* info at load and every 30 s while visible (§8.5); the first tick is the load itself */
+	/* info at load and every 30 s while visible (§8.5) */
 	pollInfo() {
-		if (!this.infoSkipped) {
-			this.infoSkipped = true;
+		if (Date.now() - this.infoAt < INFO_INTERVAL * 1000)
 			return Promise.resolve();
-		}
+		this.infoAt = Date.now();
 		return callInfo().then(model.settle, model.failure).then(res => {
 			this.infoResult = res;
 			if (res.ok) {

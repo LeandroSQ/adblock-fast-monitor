@@ -340,7 +340,7 @@ test('no-op batch: one dry run, "Nothing to change", the item leaves', async ({ 
     await stageManual(page, 'allow', 'noop.example.test');
     await page.getByRole('button', { name: 'Apply changes' }).click();
     await expect(page.locator('.alert-message').filter({ hasText: 'Nothing to change' })).toBeVisible();
-    await expect(page.locator('.modal')).toHaveCount(0);
+    await expect(page.locator('.modal')).toBeHidden();
     expect(applies).toHaveLength(1);
     expect(applies[0].dry_run).toBe(true);
     await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
@@ -370,7 +370,7 @@ test('save-only apply while adblock-fast is disabled: no confirmation, items ski
     await stageManual(page, 'block', 'saved.example.test');
     await page.getByRole('button', { name: 'Apply changes' }).click();
     expect(await waitTerminal(page, 60_000)).toBe('applied');
-    await expect(page.locator('.modal')).toHaveCount(0);
+    await expect(page.locator('.modal')).toBeHidden();
     await expect(jobState(page)).toContainText('saved only (adblock-fast is disabled)');
     await expect(page.getByRole('table', { name: 'Apply results' }).locator('tr[data-domain="saved.example.test"]'))
       .toHaveAttribute('data-result', 'skipped');

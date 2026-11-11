@@ -47,10 +47,11 @@ ro=$(luci_login "$GUEST_READONLY_USER" "$GUEST_READONLY_PASSWORD")
 for who in admin ro; do
 	sid=${!who}
 	check_eq "$who: info with the injected ubus_rpc_session" "0 true" "$(status "$(ubus "$sid" luci.adblock-fast-monitor info '{}')")"
-	r=$(ubus "$sid" luci.adblock-fast-monitor rules '{"domains":["ads.example.com"]}')
-	check_eq "$who: rules with the injected ubus_rpc_session" "0 true" "$(status "$r")"
-	check_eq "$who: rules answers for the asked name" ads.example.com \
-		"$(jq_ 'print(list(d["result"][1]["domains"].keys())[0])' <<<"$r")"
+	r=$(ubus "$sid" luci.adblock-fast-monitor info '{}')
+	check_eq "$who: info carries api 2 and local_domains" "2 True" \
+		"$(jq_ 'print(d["result"][1]["api"], isinstance(d["result"][1]["local_domains"], list))' <<<"$r")"
+	check_eq "$who: log read with the session (oneshot, bounded)" "0 True" \
+		"$(jq_ 'print(d["result"][0], isinstance(d["result"][1]["log"], list) and 0 < len(d["result"][1]["log"]) <= 16)' <<<"$(ubus "$sid" log read '{"lines":16,"stream":false,"oneshot":true}')")"
 	check_eq "$who: job with the injected ubus_rpc_session" "0 true" "$(status "$(ubus "$sid" luci.adblock-fast-monitor job '{}')")"
 	check_eq "$who: an undeclared field is still rejected (ubus INVALID_ARGUMENT)" "2 -" \
 		"$(status "$(ubus "$sid" luci.adblock-fast-monitor job '{"bogus":1}')")"

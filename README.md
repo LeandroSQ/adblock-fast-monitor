@@ -1,15 +1,49 @@
-# adblock-fast-monitor verification infrastructure
+# luci-app-adblock-fast-monitor
 
-This repository contains an OpenWrt package shell plus host-side CI and test
-infrastructure. All components are implemented against the frozen v1 interface
-contract in [`docs/CONTRACT.md`](docs/CONTRACT.md).
+A LuCI app for OpenWrt 25.12 that shows what
+[adblock-fast](https://github.com/openwrt/packages/tree/master/net/adblock-fast)
+does with your DNS queries and lets you allow or block a name in a click. It is
+a separate package that depends on adblock-fast; it never forks or patches it.
+The interface is frozen in [`docs/CONTRACT.md`](docs/CONTRACT.md) (api 2).
 Contributors and coding agents: start with [`AGENTS.md`](AGENTS.md) and
 [`CONTRIBUTING.md`](CONTRIBUTING.md); all docs: [`docs/README.md`](docs/README.md).
+
+## Features
+
+- **Recent queries** (Services → Adblock Fast Monitor): the last few hundred
+  DNS queries with time, name, type, answer and whether adblock-fast blocked
+  or allowed them (and why: list, cache, upstream, local, hosts…). The page
+  refreshes every 2 s while it is visible and stops when the tab is hidden.
+- **Allow / Block** buttons on each row. Changes are staged in the browser and
+  applied together with one **Apply**, which writes adblock-fast's
+  `allowed_domain`/`blocked_domain`, runs one adblock-fast rebuild and checks
+  the result with real DNS lookups.
+- **Blocked %** over the shown rows (with their count and time span) and
+  counters since the page was opened.
+- **No resident process.** The page reads the system log in the browser, like
+  LuCI's System Log page and luci-app-adblock-fast do; the router only keeps
+  dnsmasq's query logging on (Settings → *Query logging*, a tmpfs drop-in,
+  never an edit of `/etc/config/dhcp`). Nothing runs while you are not looking.
+
+**Admins only.** Viewing the dashboard requires read access to the **whole
+system log** (`log read`; kernel, auth and DHCP messages, every DNS client
+address), the same access luci-app-adblock-fast and System → System Log need.
+LuCI only has admin users; if you create extra rpcd logins, grant
+`luci-app-adblock-fast-monitor` only to people who may read the system log.
+
+**Privacy.** The package stores no client data on the router. The page keeps
+its rows in browser memory only; the client column is hidden by default, and
+so are the router's own queries.
+
+How much history you see depends on logd's ring buffer (System → System →
+Logging → *System log buffer size*, 128 KiB on a fresh install: roughly a few
+hundred queries). The page shows the span it covers and how many log entries
+it missed.
 
 ## Install
 
 Requires OpenWrt 25.12 (apk). The package depends on `luci-base`,
-`adblock-fast` and the `ucode-mod-io`, `-resolv` and `-uloop` modules, which
+`adblock-fast` and the `ucode-mod-io` and `ucode-mod-resolv` modules, which
 come from the official feeds.
 
 ### On a router (signed feed, LuCI only)
@@ -76,7 +110,7 @@ npm run verify:host                      # no guest; ~10 s (first run builds the
 npm run verify:guest -- path/to/pkg.apk  # boots a stock 25.12.6 guest, installs, runs test/guest
 npm run verify:guest -- --browser path/to/pkg.apk   # also Playwright against the guest's LuCI
 scripts/release/verify-luci-install.sh path/to/pkg.apk  # T22: install/remove through LuCI from a signed feed
-scripts/release/verify-upgrade.sh path/to/pkg.apk       # upgrade from an older build of the same source
+scripts/release/verify-upgrade.sh path/to/pkg.apk       # upgrade from the api-1 package (v1 -> v2 migration)
 ```
 
 The APK path must be inside the worktree or `.local-validation/` (both are
@@ -88,31 +122,33 @@ mounted into the container). Build one with
 with a throwaway key using the release script, serves it like GitHub Pages,
 boots a guest **without** the package and drives LuCI with Playwright: an
 unsigned upload is refused, the key is added on Repository Public Keys, the
-signed package installs with Upload Package… (objects and ACL work without
-restarting rpcd), removal through LuCI leaves no files, drop-ins or objects,
+signed package installs with Upload Package… (the plugin and ACL work
+without restarting rpcd), removal through LuCI leaves no files or drop-ins,
 and the package installs again from the feed via Configure apk. It runs on
 Linux x86_64 directly and on macOS through Docker (the key never leaves a
 throwaway container). In ordinary `verify:guest` runs this test is skipped.
 
-`verify-upgrade.sh` builds an older variant of the same source (PKG_VERSION
-0.0.9, from the APK's `source/` directory when it came from
-`build-package.sh`), signs it and the given APK as two consecutive feed
-releases with a throwaway key (outside the repo, deleted after signing), and
-on a fresh guest: installs the old one from the feed, enables monitoring,
-changes `recent_size`, applies one block rule, publishes the next release and
-runs `apk update && apk upgrade` (what LuCI's Update lists… / Upgrade… run).
-`test/guest/package-upgrade.host.sh` then checks that the modified conffile is
-kept, the daemon was restarted onto the new code with exactly one ucode and
-one logread and no orphans, the objects answer through `/ubus` without an
-rpcd restart, the drop-in is still there with at most one dnsmasq restart,
-the adblock-fast rule is intact, and LuCI's caches were cleared.
+`verify-upgrade.sh` builds the old package (PKG_VERSION 0.0.9) from the git
+ref `ABFM_OLD_REF` (default `d27b5d4`, the last api-1 source with the
+resident daemon; `ABFM_OLD_REF=same` uses the APK's own source), signs it and
+the given APK as two consecutive feed releases with a throwaway key (outside
+the repo, deleted after signing), and on a fresh guest: installs the old one
+from the feed, turns query logging on (api 1: `enabled=1`), changes
+`poll_interval`, applies one block rule, publishes the next release and runs
+`apk update && apk upgrade` (what LuCI's Update lists… / Upgrade… run).
+`test/guest/package-upgrade.host.sh` then checks that `enabled` was migrated
+to `query_logging` and the daemon-only options removed, no daemon or
+`logread -f` is left, `info`, `job` and `log read` answer through `/ubus`
+without an rpcd restart (also for the read-only login), the drop-in is still
+there with at most one dnsmasq restart, the adblock-fast rule is intact, and
+LuCI's caches were cleared.
 
 ### Host suites (`verify:host`)
 
 | Command | Runs | Against |
 | --- | --- | --- |
 | `npm run check:static` | JSON, JS (LuCI views compiled as function bodies), `bash -n`, `ash -n` for every POSIX sh script including extensionless ones, `ucode -c` | real OpenWrt BusyBox/ucode |
-| `npm run test:unit` | `node --test` on `test/unit` (real `model.js`) | Node |
+| `npm run test:unit` | `node --test` on `test/unit` (real LuCI modules, docs self-check) | Node |
 | `npm run test:ucode` | `test/ucode/**/*.uc` | ucode 85922056 + OpenWrt patches |
 | `npm run test:shell` | `test/shell/**/*.sh` under `ash` | BusyBox 1.37.0 with only OpenWrt's default applets |
 
@@ -181,11 +217,12 @@ set to the guest's LuCI.
 ### CI
 
 `.github/workflows/ci.yml` runs on pull requests to `main`, pushes to `main`
-(both skipped for docs-only changes) and manual dispatch with read-only
-permissions, no secrets, SHA-pinned actions and job timeouts: `host`
-(verify:host), `package` (SDK build, cached tarball, signing self-test,
-unsigned developer artifact), `guest` (KVM-backed run-guest-tests), `browser`
-(Playwright against a guest) and `install` (T22,
+and manual dispatch with read-only permissions, no secrets, SHA-pinned
+actions and job timeouts: `changes` (are there changes outside `docs/` and
+`*.md`?), `host` (verify:host, including the docs self-check; always runs),
+and only when `changes` found code: `package` (SDK build, cached tarball,
+signing self-test, unsigned developer artifact), `guest` (KVM-backed
+run-guest-tests), `browser` (Playwright against a guest) and `install` (T22,
 `scripts/release/verify-luci-install.sh`, see Testing). `release.yml` is
 described under Install → Releasing. Lint the workflows with
 `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest`.

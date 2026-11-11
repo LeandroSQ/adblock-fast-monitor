@@ -1,7 +1,7 @@
 #!/bin/sh
 # Actions backend API on a real guest (docs/CONTRACT.md §6): T11 info,
-# T14 apply pipeline errors through real `ubus call`s, P8 apply return time,
-# T20 rules for the servers and addnhosts fixtures with rpcd kept responsive.
+# T14 apply pipeline errors through real `ubus call`s, P8 apply return time.
+# `rules` no longer exists (api 2).
 . "$ABFM_TESTLIB/sh/testlib.sh"
 . "$ABFM_FIXTURES/actions/guest-lib.sh"
 
@@ -11,7 +11,7 @@ t_eq "unlisted domain resolves through the fake upstream" "$UPSTREAM_A" "$(dns_a
 
 # ---------------------------------------------------------------- T11 info
 info=$(call info)
-t_eq "info: api/ok" "1 true" "$(jget "$info" @.api) $(jget "$info" @.ok)"
+t_eq "info: api/ok" "2 true" "$(jget "$info" @.api) $(jget "$info" @.ok)"
 t_eq "info: adblock_fast installed/enabled/status/dns" "true true statusSuccess dnsmasq.servers" \
 	"$(jget "$info" @.adblock_fast.installed) $(jget "$info" @.adblock_fast.enabled) $(jget "$info" @.adblock_fast.status) $(jget "$info" @.adblock_fast.dns)"
 t_eq "info: output file of the dns mode exists" "/var/run/adblock-fast/dnsmasq.servers true" \
@@ -22,21 +22,28 @@ t_eq "info: no external config; size bookkeeping is not a pending change" "false
 sec=$(uci show dhcp.@dnsmasq[0] | sed -n '1s/^dhcp\.\([^=]*\)=dnsmasq$/\1/p')
 t_eq "info: dnsmasq running, instance section and default confdir" "true $sec /tmp/dnsmasq.$sec.d" \
 	"$(jget "$info" @.dnsmasq.running) $(jget "$info" @.dnsmasq.instances[0].section) $(jget "$info" @.dnsmasq.instances[0].confdir)"
-mon_enabled=false
-[ "$(uci -q get adblock-fast-monitor.config.enabled)" = 1 ] && mon_enabled=true
-t_eq "info: monitor enabled mirrors UCI" "$mon_enabled" "$(jget "$info" @.monitor.enabled)"
-mon_running=false
-ubus call service list '{"name":"adblock-fast-monitor"}' | grep -q '"running": true' && mon_running=true
-t_eq "info: monitor service state mirrors procd" "$mon_running" "$(jget "$info" @.monitor.service.running)"
-mon_object=false
-ubus list adblock-fast-monitor >/dev/null 2>&1 && mon_object=true
-t_eq "info: monitor object presence mirrors ubus" "$mon_object" "$(jget "$info" @.monitor.object)"
+ql=false
+[ "$(uci -q get adblock-fast-monitor.config.query_logging)" = 1 ] && ql=true
+t_eq "info: query_logging mirrors UCI" "$ql" "$(jget "$info" @.monitor.query_logging)"
+t_eq "info: monitor defaults (instances, exclude_router)" "* true" \
+	"$(jget "$info" '@.monitor.dnsmasq_instance[*]') $(jget "$info" @.monitor.exclude_router)"
+t_eq "info: no daemon fields remain" "" "$(jget "$info" @.monitor.service)$(jget "$info" @.monitor.object)$(jget "$info" @.monitor.enabled)"
+t_eq "info: local_domains are the dhcp domain/local values" "lan" "$(jget "$info" '@.local_domains[*]' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+cp /etc/config/dhcp /tmp/abfm-dhcp.bak
+uci set dhcp.@dnsmasq[0].local=/corp.example/
+uci set dhcp.@dnsmasq[0].domain=Home.Example
+uci commit dhcp
+t_eq "info: local_domains follow dhcp (lower-cased, slashes stripped)" "home.example corp.example" \
+	"$(echo $(jget "$(call info)" '@.local_domains[*]'))"
+cp /tmp/abfm-dhcp.bak /etc/config/dhcp && rm -f /tmp/abfm-dhcp.bak
+logsize=$(uci -q get system.@system[0].log_buffer_size || uci -q get system.@system[0].log_size || echo 64)
+t_eq "info: logd.size_kib is the ring size log.init uses" "$logsize" "$(jget "$info" @.logd.size_kib)"
 
 old_poll=$(uci -q get adblock-fast-monitor.config.poll_interval)
 uci set adblock-fast-monitor.config.poll_interval=999 && uci commit adblock-fast-monitor
 t_eq "info: poll_interval is clamped to 60" 60 "$(jget "$(call info)" @.monitor.poll_interval)"
 uci set adblock-fast-monitor.config.poll_interval=abc && uci commit adblock-fast-monitor
-t_eq "info: unparsable poll_interval falls back to 5" 5 "$(jget "$(call info)" @.monitor.poll_interval)"
+t_eq "info: unparsable poll_interval falls back to 2" 2 "$(jget "$(call info)" @.monitor.poll_interval)"
 if [ -n "$old_poll" ]; then uci set adblock-fast-monitor.config.poll_interval="$old_poll"; else uci delete adblock-fast-monitor.config.poll_interval; fi
 uci commit adblock-fast-monitor
 
@@ -86,7 +93,9 @@ t_eq "apply: invalid-domain carries index and domain" "invalid-domain 1 bad..exa
 t_eq "apply: IPv4 literal -> invalid-domain" invalid-domain "$(code '{"ops":[{"op":"block","domain":"10.0.2.2"}]}')"
 t_eq "apply: block of the heartbeat domain -> protected-domain" protected-domain "$(code '{"ops":[{"op":"block","domain":"Heartbeat.Example.com."}]}')"
 t_eq "apply: block under the dhcp local domain -> protected-domain" protected-domain "$(code '{"ops":[{"op":"block","domain":"router.lan"}]}')"
-t_eq "apply: unallow of home.arpa name -> protected-domain" protected-domain "$(code '{"ops":[{"op":"unallow","domain":"nas.home.arpa"}]}')"
+t_eq "apply: block of home.arpa name -> protected-domain" protected-domain "$(code '{"ops":[{"op":"block","domain":"nas.home.arpa"}]}')"
+t_eq "apply: v1 op unblock -> invalid-request" invalid-request "$(code '{"ops":[{"op":"unblock","domain":"a.example.com"}]}')"
+t_eq "apply: v1 op unallow -> invalid-request" invalid-request "$(code '{"ops":[{"op":"unallow","domain":"a.example.com"}]}')"
 t_eq "apply: block of the config_update_url host -> protected-domain" protected-domain "$(code '{"ops":[{"op":"block","domain":"cdn.jsdelivr.net"}]}')"
 uci set adblock-fast.extra=file_url
 uci set adblock-fast.extra.url='https://lists.example.org/hosts.txt'
@@ -135,12 +144,14 @@ t_not "rpcd rejects a wrongly typed field before the plugin" ubus call luci.adbl
 t_not "rpcd rejects an unknown field before the plugin" ubus call luci.adblock-fast-monitor apply '{"opz":[]}'
 
 before=$(md5sum /etc/config/adblock-fast | cut -d' ' -f1)
-r=$(call apply '{"ops":[{"op":"unblock","domain":"ads.example.com"},{"op":"block","domain":"new.example.com"}],"confirm_rebuild":true,"dry_run":true}')
-t_eq "apply: dry_run returns the plan (unblock of a listed name -> allow)" "true true rebuild allow allow:add" \
+r=$(call apply '{"ops":[{"op":"allow","domain":"ads.example.com"},{"op":"block","domain":"new.example.com"}],"confirm_rebuild":true,"dry_run":true}')
+t_eq "apply: dry_run returns the plan (allow of a listed name)" "true true rebuild allow allow:add" \
 	"$(jget "$r" @.ok) $(jget "$r" @.dry_run) $(jget "$r" @.mode) $(jget "$r" @.plan[0].effective_op) $(jget "$r" @.plan[0].change[0])"
 t_eq "apply: dry_run leaves /etc/config/adblock-fast untouched" "$before" "$(md5sum /etc/config/adblock-fast | cut -d' ' -f1)"
 t_not "apply: dry_run starts no job" test -e "$JOB_FILE"
-r=$(call apply '{"ops":[{"op":"unallow","domain":"never.example.com"}]}')
+uci add_list adblock-fast.config.allowed_domain=never.example.com && uci commit adblock-fast
+r=$(call apply '{"ops":[{"op":"allow","domain":"never.example.com"}]}')
+uci del_list adblock-fast.config.allowed_domain=never.example.com && uci commit adblock-fast
 t_eq "apply: all-noop batch -> noop, no job" "true true " "$(jget "$r" @.ok) $(jget "$r" @.noop) $(jget "$r" @.job_id)"
 t_not "apply: noop starts no job" test -e "$JOB_FILE"
 t_eq "job: null before any job ran" "true " "$(jget "$(call job)" @.ok) $(jget "$(call job)" @.job)"
@@ -179,71 +190,11 @@ uci del_list adblock-fast.config.blocked_domain=pblock.example.com
 uci set adblock-fast.config.enabled=1
 uci commit adblock-fast
 
-# ------------------------------------------------------------ T20 rules
-r=$(call rules '{"domains":["ads.example.com","x.parent.example.com","www.example.com","Bads.Example.com."]}')
-t_eq "rules (servers): listed name is blocked, offers allow" "true blocked allow" \
-	"$(jget "$r" '@.domains["ads.example.com"].listed') $(jget "$r" '@.domains["ads.example.com"].effective') $(jget "$r" '@.domains["ads.example.com"].actions[*]')"
-t_eq "rules (servers): subdomain of a listed parent is blocked" "true blocked" \
-	"$(jget "$r" '@.domains["x.parent.example.com"].listed') $(jget "$r" '@.domains["x.parent.example.com"].effective')"
-t_eq "rules (servers): unlisted name is allowed, offers block" "false allowed block" \
-	"$(jget "$r" '@.domains["www.example.com"].listed') $(jget "$r" '@.domains["www.example.com"].effective') $(jget "$r" '@.domains["www.example.com"].actions[*]')"
-t_eq "rules: domains are normalized" true "$(jget "$r" '@.domains["bads.example.com"].listed')"
-t_eq "rules: lists echoed, not truncated" "false" "$(jget "$r" @.truncated)"
-uci add_list adblock-fast.config.blocked_domain=parent.example.com
-uci add_list adblock-fast.config.allowed_domain=www.example.com
-uci commit adblock-fast
-r=$(call rules '{"domains":["parent.example.com","x.parent.example.com","www.example.com"]}')
-t_eq "rules: manual block offers allow and unblock" "block allow unblock" \
-	"$(jget "$r" '@.domains["parent.example.com"].manual') $(echo $(jget "$r" '@.domains["parent.example.com"].actions[*]'))"
-t_eq "rules: manual_parent is the nearest parent entry" "block parent.example.com" \
-	"$(jget "$r" '@.domains["x.parent.example.com"].manual_parent.list') $(jget "$r" '@.domains["x.parent.example.com"].manual_parent.domain')"
-t_eq "rules: manual allow offers block and unallow" "allow block unallow" \
-	"$(jget "$r" '@.domains["www.example.com"].manual') $(echo $(jget "$r" '@.domains["www.example.com"].actions[*]'))"
-t_match "rules: blocked_domain list echoed" 'parent\.example\.com' "$(jget "$r" '@.blocked_domain[*]')"
-uci del_list adblock-fast.config.blocked_domain=parent.example.com
-uci del_list adblock-fast.config.allowed_domain=www.example.com
-uci commit adblock-fast
-t_eq "rules: invalid name -> invalid-domain" invalid-domain "$(err_code "$(call rules '{"domains":["bad..name"]}')")"
-d51=$(awk 'BEGIN{printf "{\"domains\":["; for(i=0;i<51;i++) printf "%s\"d%d.example.com\"", (i?",":""), i; printf "]}"}')
-t_eq "rules: more than 50 names -> invalid-request" invalid-request "$(err_code "$(call rules "$d51")")"
-t_eq "rules: no names -> lists only" "true" "$(jget "$(call rules)" @.ok)"
-
-# rpcd stays responsive while rules scans a 100k-line output file.
-out=/var/run/adblock-fast/dnsmasq.servers
-cp "$out" /tmp/abfm-servers.bak
-awk 'BEGIN{for(i=0;i<100000;i++) printf "server=/big%d.example.com/\n", i}' >>"$out"
-d50=$(awk 'BEGIN{printf "{\"domains\":["; for(i=0;i<50;i++) printf "%s\"q%d.big%d.example.com\"", (i?",":""), i, i*1999; printf "]}"}')
-call rules "$d50" >/tmp/abfm-rules.out &
-bg=$!
-worst=0
-alive=0
-for n in 1 2 3 4 5; do
-	kill -0 "$bg" 2>/dev/null && alive=$((alive + 1))
-	ms=$(jget "$(ucode "$FX/time-call.uc" session list '{}')" @.ms)
-	[ "$ms" -gt "$worst" ] && worst=$ms
-done
-wait "$bg"
-t_diag "session list worst ${worst} ms while rules scanned (rules still running for $alive of 5 probes)"
-if [ "$alive" -ge 1 ]; then
-	t_ok "P9: rpcd answers other calls within 200 ms during the scan" [ "$worst" -le 200 ]
-else
-	t_skip "P9: rpcd answers other calls within 200 ms during the scan" "the scan finished before the first probe"
-fi
-r=$(cat /tmp/abfm-rules.out)
-t_eq "rules: deferred scan finds names under listed entries" "true blocked false" \
-	"$(jget "$r" '@.domains["q1.big1999.example.com"].listed') $(jget "$r" '@.domains["q1.big1999.example.com"].effective') $(jget "$r" '@.domains["q0.big0.example.com"].listed' | sed 's/true/false/')"
-t_eq "rules: cached result after the scan" true "$(jget "$(call rules '{"domains":["q1.big1999.example.com"]}')" '@.domains["q1.big1999.example.com"].listed')"
-cp /tmp/abfm-servers.bak "$out"
-rm -f /tmp/abfm-servers.bak /tmp/abfm-rules.out
-
 # addnhosts mode: exact names only.
 t_ok "real adblock-fast rebuilds the fixture list (dnsmasq.addnhosts)" actions_setup dnsmasq.addnhosts
 t_eq "addnhosts: listed name answers with a sinkhole" 127.0.0.1 "$(dns_a ads.example.com)"
-r=$(call rules '{"domains":["ads.example.com","x.parent.example.com","www.example.com"]}')
-t_eq "rules (addnhosts): exact entry is listed" "true blocked" \
-	"$(jget "$r" '@.domains["ads.example.com"].listed') $(jget "$r" '@.domains["ads.example.com"].effective')"
-t_eq "rules (addnhosts): a subdomain of a listed name is not listed" "false allowed" \
-	"$(jget "$r" '@.domains["x.parent.example.com"].listed') $(jget "$r" '@.domains["x.parent.example.com"].effective')"
+t_eq "info (addnhosts): dns mode and output file" "dnsmasq.addnhosts /var/run/adblock-fast/dnsmasq.addnhosts true" \
+	"$(i=$(call info); echo $(jget "$i" @.adblock_fast.dns) $(jget "$i" @.adblock_fast.output_file) $(jget "$i" @.adblock_fast.output_exists))"
 t_eq "addnhosts: unlisted subdomain resolves" "$UPSTREAM_A" "$(dns_a x.parent.example.com)"
 
 actions_teardown

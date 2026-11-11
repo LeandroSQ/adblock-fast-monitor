@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | [`AGENTS.md`](../AGENTS.md) | Rules, architecture map, commands and testing obligations for agents and humans | canonical |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow, commit conventions, pre-commit checklist | canonical |
-| [`docs/CONTRACT.md`](CONTRACT.md) | Frozen v1 interface: architecture decisions, files, UCI, ubus/rpcd methods, ACL, budgets, test matrix T01–T26 | frozen (change rule: AGENTS.md hard restriction 10) |
+| [`docs/CONTRACT.md`](CONTRACT.md) | Frozen interface (api 2, design B-min): architecture decisions, files, UCI, rpcd methods, `log read` usage, ACL, budgets, test matrix T01–T31 | frozen (change rule: AGENTS.md hard restriction 10) |
 | [`docs/performance.md`](performance.md) | P0 budget method, rationale and measured results (T26) | living |
 | [`docs/test-traceability.md`](test-traceability.md) | Feature-to-test ledger of **executed** evidence only | living |
 | [`docs/openwrt-25.12.6.md`](openwrt-25.12.6.md) | Target platform facts and pins | reference |

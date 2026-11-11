@@ -1,14 +1,13 @@
 name: CI
 
+# No paths-ignore: a docs-only change still runs `changes` and `host` (which
+# includes the docs self-check, test/unit/docs-references.test.mjs); the
+# `changes` job skips the package and QEMU jobs for it.
 on:
   pull_request:
     branches: [main]
-    paths-ignore: &docs-only
-      - "docs/**"
-      - "**.md"
   push:
     branches: [main]
-    paths-ignore: *docs-only
   workflow_dispatch:
 
 permissions:
@@ -22,6 +21,33 @@ env:
   NODE_VERSION: "22"
 
 jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        name: Anything besides docs/** and *.md?
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          code=true
+          if [[ "$EVENT" != workflow_dispatch && -n "$BASE" && ! "$BASE" =~ ^0+$ ]] &&
+            files="$(git diff --name-only "$BASE" "$HEAD")"; then
+            if [[ -n "$files" ]] && ! grep -Evq '^docs/|\.md$' <<<"$files"; then code=false; fi
+          fi
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+          echo "non-docs changes: $code"
+
   host:
     name: Host (static, unit, ucode, shell)
     runs-on: ubuntu-24.04
@@ -49,6 +75,8 @@ jobs:
 
   package:
     name: Package (OpenWrt 25.12.6 SDK)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

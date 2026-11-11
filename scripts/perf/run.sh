@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# P0 performance measurement driver for design B-min (T26, docs/performance.md,
-# CONTRACT §11). Runs on the host with a guest already booted by
+# P0 performance measurement driver (T26, docs/performance.md, CONTRACT §11).
+# Runs on the host with a guest already booted, either by
 # scripts/guest/run-guest-tests.sh (--no-install --no-tests --host-cmd
-# scripts/perf/run.sh PACKAGE.apk): the APK is at /tmp/abfm-test/package.apk
-# in the guest but not yet installed, so the stock system is measured first.
+# scripts/perf/run.sh PACKAGE.apk; x86/64, KVM or TCG) or by
+# scripts/perf/armsr/run-guest.sh (armsr-armv8 under hvf; ABFM_PERF_GUEST=armsr-hvf):
+# the APK is at /tmp/abfm-test/package.apk in the guest but not yet
+# installed, so the stock system is measured first.
 #
 # Environment:
 #   ABFM_PERF_OUT        output directory (default .local-validation/perf/<UTC>-<rand>)
@@ -15,6 +17,10 @@
 #   ABFM_PERF_PAGE       LuCI page polled by the browser (default the overview)
 #   ABFM_PERF_SKIP_BOOT=1     skip the two power cycles (P10 boot, P1 after boot)
 #   ABFM_PERF_SKIP_BROWSER=1  skip the Playwright phases (P2, P3 page, P4)
+#   ABFM_PERF_SETTLE_AGE  seconds from the dnsmasq restart that starts every
+#                        alternation state to its first window (default 20)
+#   ABFM_PERF_GUEST      x86 (default) or armsr-hvf: which guest library the
+#                        power cycles use (set by the entrypoints)
 # Raw JSON lands in $ABFM_PERF_OUT/raw; run.json indexes it. Every phase
 # records its own errors and the run continues. The verdict comes from
 # scripts/performance-gate.mjs.
@@ -32,6 +38,9 @@ load_s="${ABFM_PERF_LOAD_SECONDS:-30}"
 hidden_s="${ABFM_PERF_HIDDEN_SECONDS:-60}"
 ((hidden_s >= 60)) || hidden_s=60
 rates="${ABFM_PERF_QPS:-50 200}"
+settle_age="${ABFM_PERF_SETTLE_AGE:-20}"
+guest_lib=scripts/guest/lib.sh
+[[ "${ABFM_PERF_GUEST:-x86}" == armsr-hvf ]] && guest_lib=scripts/perf/armsr/lib.sh
 G=/tmp/abfm-perf
 P="ucode $G/probe.uc"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -117,8 +126,9 @@ cat >"$raw/meta-host.json" <<-EOF
 	 "host_uname":"$(uname -srm)","guest_cpus":${GUEST_CPUS:-2},"guest_memory_mib":${GUEST_MEMORY:-256},
 	 "package_sha256":"${PACKAGE_SHA256:-}","package_file":"$(basename "${PACKAGE_APK:-unknown}")",
 	 "repeats":$repeats,"load_seconds":$load_s,"hidden_seconds":$hidden_s,"rates":[${rates// /,}],
+	 "guest":"${ABFM_PERF_GUEST:-x86}","guest_target":"${GUEST_TARGET:-x86-64}","settle_age_s":$settle_age,
 	 "browser":$( ((browser_ok)) && echo true || echo false),"page":"${ABFM_PERF_PAGE:-/cgi-bin/luci/admin/services/adblock-fast-monitor/overview}",
-	 "guest_run_dir":"${GUEST_RUN_DIR:-}","design":"B-min"}
+	 "guest_run_dir":"${GUEST_RUN_DIR:-}"}
 EOF
 
 # --- fixtures: local responder, no WAN, quiet log --------------------------
@@ -146,6 +156,7 @@ set_logging p1-ensure-off 0
 probe p1-installed-off-watch watch 15
 for i in 1 2 3; do probe "p1-installed-off-$i" snapshot; sleep 5; done
 set_logging toggle-on-r0 1
+gsh ". $G/lib.sh; perf_capture_dropin" >"$raw/dropin-captured.json" 2>&1 || err 'cannot capture the package drop-in'
 probe p1-installed-on-watch watch 15
 for i in 1 2 3; do probe "p1-installed-on-$i" snapshot; sleep 5; done
 gsh ". $G/lib.sh; perf_state" >"$raw/p1-state.json" 2>&1
@@ -154,33 +165,60 @@ gsh ". $G/lib.sh; perf_state" >"$raw/p1-state.json" 2>&1
 probe calib-rpc-system-board rpc system board '{}' 20
 probe calib-rpc-session-list rpc session list '{}' 20
 
-# --- alternation: logging off / on (no page) / on + one visible page --------
-# P5/P6 compare off with on; P3 compares on with page under the same load.
-# Alternating inside every repeat spreads host drift evenly over the states.
-for ((r = 1; r <= repeats; r++)); do
-	log "repeat $r: query logging off"
-	set_logging "toggle-off-r$r" 0
-	for q in $rates; do load_window off "$q" "$r"; done
-	log "repeat $r: query logging on, no page"
-	set_logging "toggle-on-r$r" 1
-	for q in $rates; do load_window on "$q" "$r"; done
-	if ((browser_ok)); then
-		log "repeat $r: query logging on, one visible page polling"
-		if browser_hold "page-r$r"; then
-			for q in $rates; do load_window page "$q" "$r"; done
-		fi
-		browser_release "page-r$r"
+# --- alternation: off / manual / on (no page) / on + one visible page -------
+# P5/P6 compare on with off and with manual (query logging off, the package's
+# drop-in written by hand: dnsmasq's own logging without the package); P3
+# compares page with on under the same load. Every state starts with a
+# dnsmasq restart and waits until dnsmasq is the same age (settle_age) before
+# its first window, and the order rotates every repeat, so neither restart
+# age nor host drift favours a state.
+logging_now=1
+# set_state STATE R : query logging and the manual drop-in for STATE, then
+# the equal-age restart.
+set_state() {
+	local want=0 manual=0
+	[[ $1 == on || $1 == page ]] && want=1
+	[[ $1 == manual ]] && manual=1
+	if [[ "$logging_now" != "$want" ]]; then
+		set_logging "toggle-$([[ $want == 1 ]] && echo on || echo off)-r$2" "$want"
+		logging_now=$want
 	fi
-	log "repeat $r: log read latency under load"
+	gsh ". $G/lib.sh; perf_manual $manual && perf_restart $settle_age" >"$raw/restart-$1-r$2.json" 2>"$raw/restart-$1-r$2.err" ||
+		err "state $1 r$2: restart failed: $(head -c 300 "$raw/restart-$1-r$2.err")"
+	[[ -s "$raw/restart-$1-r$2.err" ]] || rm -f "$raw/restart-$1-r$2.err"
+}
+logbench() { # r : log read latency under load (query logging on)
+	local q wpid
 	for q in $rates; do
-		dnsload "warm-lr-$q-$r" "$q" 3 '' >/dev/null 2>&1 || true
-		guest_exec "$P logbench 20 250" >"$raw/logbench-$q-r$r.json" 2>"$raw/logbench-$q-r$r.err" &
+		dnsload "warm-lr-$q-$1" "$q" 3 '' >/dev/null 2>&1 || true
+		guest_exec "$P logbench 20 250" >"$raw/logbench-$q-r$1.json" 2>"$raw/logbench-$q-r$1.err" &
 		wpid=$!
-		dnsload "lr-$q-$r" "$q" 16 '' >/dev/null 2>&1 || err "log read load $q r$r failed"
-		wait "$wpid" || err "logbench $q r$r failed"
-		[[ -s "$raw/logbench-$q-r$r.err" ]] || rm -f "$raw/logbench-$q-r$r.err"
+		dnsload "lr-$q-$1" "$q" 16 '' >/dev/null 2>&1 || err "log read load $q r$1 failed"
+		wait "$wpid" || err "logbench $q r$1 failed"
+		[[ -s "$raw/logbench-$q-r$1.err" ]] || rm -f "$raw/logbench-$q-r$1.err"
+	done
+}
+states=(off manual on)
+((browser_ok)) && states+=(page)
+for ((r = 1; r <= repeats; r++)); do
+	n=${#states[@]}
+	for ((k = 0; k < n; k++)); do
+		state=${states[$(((k + r - 1) % n))]}
+		log "repeat $r: state $state"
+		set_state "$state" "$r"
+		if [[ $state == page ]]; then
+			if browser_hold "page-r$r"; then
+				for q in $rates; do load_window page "$q" "$r"; done
+			fi
+			browser_release "page-r$r"
+		else
+			for q in $rates; do load_window "$state" "$q" "$r"; done
+			[[ $state == on ]] && logbench "$r"
+		fi
 	done
 done
+# The page phases and P7/P8 run with query logging on and no manual drop-in.
+set_state on $((repeats + 1))
 
 # --- P2: hidden and closed page --------------------------------------------
 if ((browser_ok)); then
@@ -222,7 +260,7 @@ cold_boot() { # n
 own_guest=0
 if [[ "${ABFM_PERF_SKIP_BOOT:-0}" != 1 ]]; then
 	# shellcheck source=scripts/guest/lib.sh
-	source "$root/scripts/guest/lib.sh"
+	source "$root/$guest_lib"
 	n=0
 	for state in on off; do
 		value=$([[ $state == on ]] && echo 1 || echo 0)
@@ -251,7 +289,7 @@ python3 - "$out" "$started_at" "$finished_at" "${errors[@]+"${errors[@]}"}" <<-'
 	import json, os, sys
 	out, started, finished, errors = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 	files = sorted(os.listdir(os.path.join(out, 'raw')))
-	json.dump({'harness': 'scripts/perf/run.sh', 'design': 'B-min', 'started_at': started, 'finished_at': finished,
+	json.dump({'harness': 'scripts/perf/run.sh', 'started_at': started, 'finished_at': finished,
 	           'errors': errors, 'raw_files': files}, open(os.path.join(out, 'run.json'), 'w'), indent=1)
 EOF
 log "done: $out (${#errors[@]} harness error(s))"

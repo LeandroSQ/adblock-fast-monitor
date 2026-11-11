@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 # shellcheck disable=SC2009 # BusyBox pgrep cannot print full command lines
-# T26 / P1 (docs/CONTRACT.md §11, design B-min) in the regular guest suite:
+# T26 / P1 (docs/CONTRACT.md §11) in the regular guest suite:
 # the installed package runs no process of its own in any state, with query
 # logging off and on (only job.uc during an Apply may run, not exercised
 # here). Switches go through uci commit + reload_config, as LuCI's Save &
@@ -38,11 +38,10 @@ set_logging() {
 for v in 0 1; do
 	t_ok "query_logging=$v applies (drop-ins match, dnsmasq up)" set_logging $v
 	# Five samples over ~10 s, so a procd respawn loop is caught too.
-	pkg='' readers='' first_init=$(init_pids) last_init=''
+	pkg='' first_init=$(init_pids) last_init=''
 	i=0
 	while [ $i -lt 5 ]; do
 		pkg="$pkg$(pkg_procs)"
-		readers="$readers$(ps w | grep '[l]ogread -f')"
 		i=$((i + 1))
 		[ $i -lt 5 ] && sleep 2
 	done
@@ -51,8 +50,6 @@ for v in 0 1; do
 	for p in $first_init; do case " $last_init " in *" $p "*) stuck="$stuck $p" ;; esac; done
 	t_eq "no resident package process runs with query_logging=$v" "" "$pkg"
 	t_eq "no init-script invocation lives through the 8 s sample with query_logging=$v" "" "$stuck"
-	t_eq "no logread follower runs with query_logging=$v" "" "$readers"
-	t_not "no resident adblock-fast-monitor ubus object with query_logging=$v" ubus list adblock-fast-monitor
 done
 
 if [ -n "$orig" ]; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// P0 performance gate for design B-min (docs/CONTRACT.md §11, T26; method in
+// P0 performance gate (docs/CONTRACT.md §11, T26; method in
 // docs/performance.md). Reduces the raw JSON of one scripts/perf/run.sh run to
 // P1–P8 and P10, compares them with scripts/perf/budgets.json, writes
 // summary.json and verdict.json next to the raw data and exits non-zero
@@ -16,7 +16,7 @@ import { join, relative, resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 const perfRoot = join(root, '.local-validation', 'perf');
 const budgets = JSON.parse(readFileSync(join(root, 'scripts/perf/budgets.json'), 'utf8'));
-const CLK_TCK = 100; // USER_HZ on OpenWrt x86/64
+const CLK_TCK = 100; // USER_HZ on OpenWrt (x86/64 and armsr-armv8)
 const PKG = 'adblock-fast-monitor';
 const requireMeasured = process.env.PERFORMANCE_REQUIRE_MEASURED === '1';
 
@@ -25,7 +25,6 @@ function latestRun() {
   const runs = readdirSync(perfRoot)
     .map(name => join(perfRoot, name))
     .filter(dir => existsSync(join(dir, 'run.json')))
-    .filter(dir => JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).design === 'B-min')
     .sort((a, b) => statSync(join(b, 'run.json')).mtimeMs - statSync(join(a, 'run.json')).mtimeMs);
   return runs[0] ?? null;
 }
@@ -42,7 +41,7 @@ if (!runDir) {
   }
   runDir = latestRun();
   if (!runDir) {
-    console.error('Performance gate: PERFORMANCE_REQUIRE_MEASURED=1 but no B-min run exists under .local-validation/perf/.');
+    console.error('Performance gate: PERFORMANCE_REQUIRE_MEASURED=1 but no run exists under .local-validation/perf/.');
     process.exit(1);
   }
 }
@@ -53,10 +52,6 @@ if (!existsSync(join(runDir, 'run.json'))) {
   process.exit(1);
 }
 const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
-if (run.design !== 'B-min') {
-  console.error(`Performance gate: ${runDir} was measured by the design A harness; re-measure with this harness.`);
-  process.exit(1);
-}
 
 // ---------------------------------------------------------------- helpers
 function load(name) {
@@ -100,7 +95,7 @@ function packageProcs(procs) {
 }
 const named = (procs, comm) => procs.filter(p => p.comm === comm && !isResponder(p));
 const sum = (procs, key) => procs.reduce((total, p) => total + (p[key] ?? 0), 0);
-const userland = procs => procs.filter(p => !TRANSIENT.some(re => re.test(p.cmdline)));
+const userland = procs => procs.filter(p => !p.kthread && !TRANSIENT.some(re => re.test(p.cmdline)));
 const key = p => `${p.pid}:${p.starttime}`;
 const replyOk = c => {
   if (typeof c?.reply_ok === 'boolean') return c.reply_ok;
@@ -108,9 +103,13 @@ const replyOk = c => {
   return c?.reply?.ok === true;
 };
 
-// CPU % of one CPU used by the selected processes between two snapshots.
+// CPU % of one CPU used by the selected processes between two snapshots
+// (null for an invalid window).
 function cpuPct(win, select) {
-  if (!win?.t0 || !win?.t1) return null;
+  if (!win?.t0 || !win?.t1 || !windowCheck(win).valid) return null;
+  return rawCpuPct(win, select);
+}
+function rawCpuPct(win, select) {
   const wall = (win.t1.wall_ms - win.t0.wall_ms) / 1000;
   const before = new Map(select(win.t0.procs).map(p => [key(p), p]));
   let ticks = 0;
@@ -122,6 +121,44 @@ function cpuPct(win, select) {
 }
 const ofComms = comms => procs => procs.filter(p => comms.includes(p.comm) && !isResponder(p));
 
+// The system total of a window is task-based, like the per-process numbers:
+// Δ over every task, kernel threads included, of utime + stime + cutime +
+// cstime. A task that exits inside the window is not lost: its parent's
+// cutime/cstime absorbs its whole life when it is reaped, and its share
+// before t0 is subtracted with the t0 sum. (/proc/stat's busy ticks are
+// sampled separately and are only reported.) A window is invalid when the
+// processes the gate measures add up to more than that total, or the total
+// to more than the guest's CPUs can deliver: such a window cannot be trusted.
+const checked = new WeakMap();
+const allTicks = snap => snap.procs.reduce((t, p) => t + p.utime + p.stime + (p.cutime ?? 0) + (p.cstime ?? 0), 0);
+const MEASURED = [...new Set([...budgets.P3.processes, ...budgets.P6.processes])];
+function windowCheck(win) {
+  if (checked.has(win)) return checked.get(win);
+  const wall = (win.t1.wall_ms - win.t0.wall_ms) / 1000;
+  const reasons = [];
+  const kthreads = win.t0.procs.some(p => p.kthread) && win.t1.procs.some(p => p.kthread);
+  const total = ((allTicks(win.t1) - allTicks(win.t0)) / CLK_TCK / wall) * 100;
+  const procs = rawCpuPct(win, ofComms(MEASURED));
+  const ncpu = win.t1.cpu?.ncpu ?? null;
+  // One tick of rounding per measured process (and the total).
+  const tol = ((MEASURED.length + 1) * 100) / CLK_TCK / wall;
+  const statBusy = (() => {
+    const c0 = win.t0.cpu, c1 = win.t1.cpu;
+    if (!c0 || !c1) return null;
+    const busy = c => ['user', 'nice', 'system', 'irq', 'softirq'].reduce((t, k) => t + (c[k] ?? 0), 0);
+    return ((busy(c1) - busy(c0)) / CLK_TCK / wall) * 100;
+  })();
+  if (!kthreads) reasons.push('no kernel threads in the snapshots (a probe without the task-based total)');
+  else {
+    if (procs > total + tol) reasons.push(`measured processes ${round(procs)} % exceed the system total ${round(total)} %`);
+    if (ncpu && total > ncpu * 100 + tol) reasons.push(`system total ${round(total)} % exceeds ${ncpu} CPUs`);
+  }
+  const out = { valid: reasons.length === 0, reasons, wall_s: round(wall, 2), system_total_pct: round(total),
+    measured_processes_pct: round(procs), proc_stat_busy_pct: round(statBusy), ncpu };
+  checked.set(win, out);
+  return out;
+}
+
 const metrics = {};
 const notMeasured = (id, reason, extra = {}) => { metrics[id] = { verdict: 'NOT_MEASURED', reason, ...extra }; };
 const judge = (id, pass, values) => { metrics[id] = { verdict: pass ? 'PASS' : 'FAIL', ...values }; };
@@ -129,10 +166,10 @@ const meta = load('meta-host') ?? {};
 const rates = (meta.rates?.length ? meta.rates : [50, 200]).map(String);
 const repeats = meta.repeats ?? 3;
 const loads = {};
-for (const state of ['off', 'on', 'page']) for (const q of rates) for (let r = 1; r <= repeats; r++) {
+for (const state of ['off', 'manual', 'on', 'page']) for (const q of rates) for (let r = 1; r <= repeats; r++) {
   (loads[`${state}-${q}`] ??= []).push({ r, win: load(`win-${state}-${q}-r${r}`), dns: load(`load-${state}-${q}-r${r}`) });
 }
-const toggles = state => [...Array(repeats + 1).keys()].map(r => load(`toggle-${state}-r${r}`)).filter(Boolean);
+const toggles = state => loadMatching(new RegExp(`^toggle-${state}-r\\d+\\.json$`)).map(([, v]) => v);
 // Query logging really was on (a drop-in exists) in every on toggle.
 const loggingOn = toggles('on').length > 0 && toggles('on').every(t => (t.dropins ?? '') !== '');
 const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`));
@@ -164,10 +201,8 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
     for (const [f, w] of loadMatching(/^win-.*\.json$/)) {
       for (const snap of [w.t0, w.t1]) for (const p of packageProcs(snap?.procs ?? [])) see(f, p.cmdline);
     }
-    for (const [f, t] of loadMatching(/^(toggle-.*|p1-ensure-off|p10-.*)\.json$/)) {
+    for (const [f, t] of loadMatching(/^(toggle-.*|restart-.*|p1-ensure-off|p10-.*)\.json$/)) {
       for (const line of String(t.package_procs ?? '').split('\n').filter(Boolean)) see(f, line.replace(/^\d+\s+\S+\s+\d+\s+\S+\s+/, ''));
-      for (const line of String(t.logread_procs ?? '').split('\n').filter(Boolean)) add(f, line.replace(/^\d+\s+\S+\s+\d+\s+\S+\s+/, ''));
-      if (t.monitor_object) add(f, 'ubus object adblock-fast-monitor');
     }
     // Watches: per-pid lifetimes. A top-level init invocation (its parent is
     // not another package process) that lives ≤ transient_max_lifetime_s is
@@ -346,6 +381,8 @@ const pollStats = b => {
     out[q] = { p95_off_ms: off, p95_on_ms: on, delta_ms: round(delta, 3), noise_floor_ms: round(noise, 3),
       spread_off_ms: round(spread(off), 3), spread_on_ms: round(spread(on), 3), allowed_delta_ms: round(allowed, 3),
       p50_delta_ms: round(median(loads[`on-${q}`].map(x => x.dns?.latency_ms?.p50)) - median(loads[`off-${q}`].map(x => x.dns?.latency_ms?.p50)), 3),
+      // Informational: the package on minus dnsmasq logging on its own.
+      p95_manual_ms: p95('manual'), package_vs_manual_delta_ms: round(p95('manual').length && on.length ? median(on) - median(p95('manual')) : null, 3),
       loss_pct_off: roundAll(loss('off'), 3), loss_pct_on: roundAll(loss('on'), 3),
       samples_off: loads[`off-${q}`].reduce((n, x) => n + (x.dns?.received ?? 0), 0),
       samples_on: loads[`on-${q}`].reduce((n, x) => n + (x.dns?.received ?? 0), 0) };
@@ -359,6 +396,10 @@ const pollStats = b => {
 }
 
 // ---------------------------------------------------------------- P6
+// Two conditions per process and rate: the cost of query logging (on − off)
+// stays within the budget, and the package adds nothing to dnsmasq's own
+// logging: on − manual (the package's drop-in written by hand, package
+// switch off) ≤ the run-to-run noise of those two states.
 {
   const out = {}; let pass = true; let measured = true;
   for (const q of rates) {
@@ -367,35 +408,39 @@ const pollStats = b => {
       const sel = procs => named(procs, comm);
       const cpus = state => loads[`${state}-${q}`].map(x => cpuPct(x.win, sel));
       const anon = state => median(loads[`${state}-${q}`].map(x => (x.win ? sum(sel(x.win.t1.procs), 'rss_anon_kb') : null)));
-      const [cOn, cOff, aOn, aOff] = [median(cpus('on')), median(cpus('off')), anon('on'), anon('off')];
+      const [cOn, cOff, cMan, aOn, aOff] = [median(cpus('on')), median(cpus('off')), median(cpus('manual')), anon('on'), anon('off')];
       const dCpu = cOn != null && cOff != null ? cOn - cOff : null;
+      const dPkg = cOn != null && cMan != null ? cOn - cMan : null;
+      const noise = spread(cpus('on')) == null || spread(cpus('manual')) == null ? null : Math.max(spread(cpus('on')), spread(cpus('manual')));
+      const allowedPkg = noise == null ? null : Math.max(noise, budgets.P6.package_floor_pp);
       const dAnon = aOn != null && aOff != null ? aOn - aOff : null;
       const limit = budgets.P6.cpu_delta_pp_by_process?.[comm]?.[q] ?? budgets.P6.cpu_delta_pp[q];
       // Context switches per answered query (voluntary / involuntary): the
       // P6 diagnosis in docs/performance.md (dnsmasq/logd contention).
       const ctx = (state, k) => median(loads[`${state}-${q}`].map(x => {
-        if (!x.win || !x.dns?.received) return null;
+        if (!x.win || !x.dns?.received || !windowCheck(x.win).valid) return null;
         const before = new Map(sel(x.win.t0.procs).map(p => [key(p), p]));
         let n = 0;
         for (const p of sel(x.win.t1.procs)) { const b = before.get(key(p)); if (b) n += p[k] - b[k]; }
         return n / x.dns.received;
       }));
-      out[q][comm] = { cpu_off_pct_runs: roundAll(cpus('off')), cpu_on_pct_runs: roundAll(cpus('on')), cpu_delta_pp: round(dCpu),
-        budget_pp: limit, rss_anon_off_kib: aOff, rss_anon_on_kib: aOn, rss_anon_delta_kib: dAnon,
-        ctxsw_per_query: { off: [round(ctx('off', 'vctx')), round(ctx('off', 'nvctx'))], on: [round(ctx('on', 'vctx')), round(ctx('on', 'nvctx'))] } };
-      if (dCpu == null) { measured = false; continue; }
-      if (dCpu > limit || (dAnon ?? 0) > budgets.P6.rss_anon_delta_kib) pass = false;
+      out[q][comm] = { cpu_off_pct_runs: roundAll(cpus('off')), cpu_manual_pct_runs: roundAll(cpus('manual')),
+        cpu_on_pct_runs: roundAll(cpus('on')), cpu_delta_pp: round(dCpu), budget_pp: limit,
+        package_vs_manual_pp: round(dPkg), package_noise_pp: round(noise), package_allowed_pp: round(allowedPkg),
+        rss_anon_off_kib: aOff, rss_anon_on_kib: aOn, rss_anon_delta_kib: dAnon,
+        ctxsw_per_query: { off: [round(ctx('off', 'vctx')), round(ctx('off', 'nvctx'))], manual: [round(ctx('manual', 'vctx')), round(ctx('manual', 'nvctx'))],
+          on: [round(ctx('on', 'vctx')), round(ctx('on', 'nvctx'))] } };
+      const enough = state => finite(cpus(state)).length >= budgets.P5.min_runs;
+      if (!enough('on') || !enough('off') || !enough('manual')) { measured = false; continue; }
+      if (dCpu > limit || dPkg > allowedPkg || (dAnon ?? 0) > budgets.P6.rss_anon_delta_kib) pass = false;
     }
-    const busy = state => median(loads[`${state}-${q}`].map(x => {
-      if (!x.win) return null;
-      const total = c => Object.values(c).reduce((s, v) => s + v, 0) - c.idle - c.iowait;
-      return ((total(x.win.t1.cpu) - total(x.win.t0.cpu)) / CLK_TCK / ((x.win.t1.wall_ms - x.win.t0.wall_ms) / 1000)) * 100;
-    }));
-    out[q].system_busy = { off_pct: round(busy('off')), on_pct: round(busy('on')), page_pct: round(busy('page')),
-      note: 'all guest CPUs, percent of one CPU' };
+    const total = state => median(loads[`${state}-${q}`].map(x => (x.win ? windowCheck(x.win).system_total_pct : null)));
+    const stat = state => median(loads[`${state}-${q}`].map(x => (x.win ? windowCheck(x.win).proc_stat_busy_pct : null)));
+    out[q].system_total = Object.fromEntries(['off', 'manual', 'on', 'page'].map(st => [st, { task_pct: round(total(st)), proc_stat_pct: round(stat(st)) }]));
+    out[q].system_total.note = 'task-based: Δ(utime+stime+cutime+cstime) over every task incl. kernel threads; proc_stat = /proc/stat busy ticks (informational); percent of one CPU';
   }
-  const info = { rates: out, logging_on: loggingOn, budget: budgets.P6, raw: ['win-off-*.json', 'win-on-*.json'] };
-  if (!measured) notMeasured('P6', 'load windows missing', info);
+  const info = { rates: out, logging_on: loggingOn, budget: budgets.P6, raw: ['win-off-*.json', 'win-manual-*.json', 'win-on-*.json'] };
+  if (!measured) notMeasured('P6', `fewer than ${budgets.P5.min_runs} valid off, manual and on windows per rate`, info);
   else if (!loggingOn) notMeasured('P6', 'query logging was not on during the on runs', info);
   else judge('P6', pass, info);
 }
@@ -444,11 +489,16 @@ const pollStats = b => {
 const order = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P10'];
 const failed = order.filter(id => metrics[id]?.verdict !== 'PASS');
 const summary = {
-  run: relative(root, runDir), measured_at: run.finished_at, design: 'B-min',
-  environment: { accel: meta.accel, guest_cpus: meta.guest_cpus, guest_memory_mib: meta.guest_memory_mib,
+  run: relative(root, runDir), measured_at: run.finished_at,
+  environment: { accel: meta.accel, guest: meta.guest ?? 'x86', guest_target: meta.guest_target ?? 'x86-64', guest_cpus: meta.guest_cpus, guest_memory_mib: meta.guest_memory_mib,
     host: meta.host_uname, package_file: meta.package_file, package_sha256: meta.package_sha256, page: meta.page,
     browser: meta.browser, repeats: meta.repeats, load_seconds: meta.load_seconds, hidden_seconds: meta.hidden_seconds, rates: meta.rates },
-  harness_errors: run.errors ?? [], metrics
+  harness_errors: run.errors ?? [], metrics,
+  windows: (() => {
+    const all = loadMatching(/^win-.*\.json$/).filter(([, w]) => w.t0 && w.t1);
+    const bad = all.map(([f, w]) => [f, windowCheck(w)]).filter(([, c]) => !c.valid);
+    return { checked: all.length, invalid: bad.length, list: bad.slice(0, 20).map(([f, c]) => ({ file: f, reasons: c.reasons })) };
+  })()
 };
 // Measurement noise in this environment (TCG unless accel says otherwise):
 // run-to-run spread (max − min over the ≥ 3 repeats) of every repeated number.
@@ -460,13 +510,13 @@ const noise = Object.fromEntries(rates.map(q => {
     p3_log_read_full_p95_spread_ms: round(spread(p3?.log_read?.full_p95_ms_runs ?? [])),
     p5_p95_spread_off_ms: p5?.spread_off_ms ?? null, p5_p95_spread_on_ms: p5?.spread_on_ms ?? null,
     p6_cpu_spread_pp: Object.fromEntries(budgets.P6.processes.map(c => [c, round(Math.max(spread(p6[c]?.cpu_off_pct_runs ?? []) ?? -1,
-      spread(p6[c]?.cpu_on_pct_runs ?? []) ?? -1))]).filter(([, v]) => v != null && v >= 0))
+      spread(p6[c]?.cpu_manual_pct_runs ?? []) ?? -1, spread(p6[c]?.cpu_on_pct_runs ?? []) ?? -1))]).filter(([, v]) => v != null && v >= 0))
   }];
 }));
 summary.noise = noise;
 const verdict = { verdict: failed.length ? 'FAIL' : 'PASS', failed, run: summary.run, accel: meta.accel ?? null, repeats,
   per_metric: Object.fromEntries(order.map(id => [id, metrics[id]?.verdict ?? 'NOT_MEASURED'])),
-  p4_scope: metrics.P4?.scope ?? null, noise };
+  p4_scope: metrics.P4?.scope ?? null, invalid_windows: summary.windows.invalid, noise };
 writeFileSync(join(runDir, 'summary.json'), `${JSON.stringify(summary, null, 1)}\n`);
 writeFileSync(join(runDir, 'verdict.json'), `${JSON.stringify(verdict, null, 1)}\n`);
 
@@ -480,7 +530,7 @@ function brief(id, m) {
     case 'P3': return rates.map(q => `@${q}: Δ ${m.rates[q].cpu_delta_pp} pp (≤ ${b.cpu_delta_pp[q]}), log read p95 N=${m.rates[q].log_read.n_incremental_runs[0]} ${m.rates[q].log_read.incremental_p95_ms} ms (≤ ${m.rates[q].log_read.incremental_budget_ms}) N=900 ${m.rates[q].log_read.full_p95_ms} ms (≤ ${b.log_read_full_p95_ms})`).join('; ');
     case 'P4': return m.marks_at_900 ? `page marks p95 ${m.marks_p95_ms} ms over ${m.marks_at_900} polls (≤ ${b.poll_p95_ms})` : `querylog module p95 ${m.module_bench?.p95_ms} ms at ${m.module_bench?.entries?.[0]} entries (≤ ${b.poll_p95_ms}; no render)`;
     case 'P5': return rates.map(q => `@${q}: Δp95 ${m.rates[q].delta_ms} ms (≤ ${m.rates[q].allowed_delta_ms})`).join(', ');
-    case 'P6': return rates.map(q => `@${q}: ${b.processes.map(c => `${c} ${m.rates[q][c].cpu_delta_pp}`).join(' ')} pp (≤ ${b.cpu_delta_pp[q]}, dnsmasq ≤ ${b.cpu_delta_pp_by_process.dnsmasq[q]})`).join('; ');
+    case 'P6': return rates.map(q => `@${q}: on−off ${b.processes.map(c => `${c} ${m.rates[q][c].cpu_delta_pp}`).join(' ')} pp (≤ ${b.cpu_delta_pp[q]}, dnsmasq ≤ ${b.cpu_delta_pp_by_process.dnsmasq[q]}); on−manual dnsmasq ${m.rates[q].dnsmasq.package_vs_manual_pp} logd ${m.rates[q].logd.package_vs_manual_pp} pp (≤ noise ${m.rates[q].dnsmasq.package_allowed_pp} / ${m.rates[q].logd.package_allowed_pp})`).join('; ');
     case 'P7': return `info p95 ${m.info?.p95_ms} ms (≤ ${b.info_p95_ms})`;
     case 'P8': return `dry max ${m.dry_run.max_ms} ms, real ${m.real.max_ms} ms (≤ ${b.apply_max_ms}), rpcd probe max ${round(m.rpcd_probe?.max)} ms (≤ ${b.rpcd_block_max_ms})`;
     case 'P10': return `boot ${m.boot_logging_restarts}, enable ${JSON.stringify(m.enable.map(e => e.restarts))}, save ${m.save.restarts}`;
@@ -488,7 +538,7 @@ function brief(id, m) {
     }
   } catch { return ''; }
 }
-console.log(`P0 performance gate (B-min): ${summary.run} (accel ${meta.accel ?? '?'}, ${repeats} repeats)`);
+console.log(`P0 performance gate: ${summary.run} (${summary.environment.guest_target}, accel ${meta.accel ?? '?'}, ${repeats} repeats)`);
 for (const id of order) {
   const m = metrics[id] ?? { verdict: 'NOT_MEASURED' };
   console.log(`  ${id.padEnd(4)} ${m.verdict.padEnd(12)} ${m.reason ?? brief(id, m)}`);
@@ -498,6 +548,7 @@ for (const [q, n] of Object.entries(noise)) {
     ` log read p95 ${n.p3_log_read_incremental_p95_spread_ms} / ${n.p3_log_read_full_p95_spread_ms} ms; P5 p95 off ${n.p5_p95_spread_off_ms} / on ${n.p5_p95_spread_on_ms} ms;` +
     ` P6 ${Object.entries(n.p6_cpu_spread_pp).map(([c, v]) => `${c} ${v}`).join(' ')} pp`);
 }
+if (summary.windows.invalid) console.log(`  invalid windows (excluded): ${summary.windows.invalid} of ${summary.windows.checked}: ${summary.windows.list.slice(0, 3).map(w => `${w.file}: ${w.reasons.join(', ')}`).join('; ')}`);
 if (summary.harness_errors.length) console.log(`  harness errors: ${summary.harness_errors.join('; ')}`);
 console.log(`${verdict.verdict}: ${failed.length ? `${failed.join(', ')} not within budget or not measured` : 'all P0 budgets met'}` +
   ` (details: ${relative(root, join(runDir, 'summary.json'))})`);

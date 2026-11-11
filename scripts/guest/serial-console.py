@@ -39,14 +39,18 @@ conn.settimeout(0.5)
 buffer = b""
 
 
-def read_until(pattern, what):
+def read_until(pattern, what, within=None):
+    """Waits for PATTERN; with WITHIN seconds, raises TimeoutError after them."""
     global buffer
     regex = re.compile(pattern)
+    give_up = time.monotonic() + within if within else None
     while True:
         found = regex.search(buffer)
         if found:
             buffer = buffer[found.end():]
             return found
+        if give_up is not None and time.monotonic() >= give_up and time.monotonic() < deadline:
+            raise TimeoutError(what)
         if time.monotonic() >= deadline:
             fail("timed out waiting for %s; last output: %r" % (what, buffer[-400:]))
         try:
@@ -61,7 +65,37 @@ def read_until(pattern, what):
 read_until(rb"Please press Enter to activate this console", "console")
 conn.sendall(b"\n")
 read_until(rb"root@[^\r\n]*# ", "shell prompt")
-conn.sendall(b"stty -echo 2>/dev/null; export PS1='# '\n")
+# Input typed while early boot is still loading modules and bringing up the
+# LAN can be lost (seen on armsr-armv8 under hvf, where the prompt appears
+# before the hostname is set). Wait for the console to fall silent, then
+# repeat a round trip until the guest answers.
+def wait_quiet(seconds):
+    global buffer
+    last = time.monotonic()
+    while time.monotonic() - last < seconds:
+        if time.monotonic() >= deadline:
+            fail("console never fell silent; last output: %r" % buffer[-400:])
+        try:
+            chunk = conn.recv(65536)
+        except socket.timeout:
+            continue
+        if not chunk:
+            fail("serial console closed during boot")
+        buffer += chunk
+        last = time.monotonic()
+
+
+wait_quiet(3)
+attempt = 0
+while True:
+    attempt += 1
+    tag = "ABFMSYNC%d" % attempt
+    conn.sendall(("stty -echo 2>/dev/null; export PS1='# '; printf '%%s_%%s\\n' %s ok\n" % tag).encode())
+    try:
+        read_until(re.escape(tag).encode() + rb"_ok", "console round trip", 5)
+        break
+    except TimeoutError:
+        sys.stderr.write("serial-console: console input lost (attempt %d), retrying\n" % attempt)
 read_until(rb"# ", "quiet prompt")
 
 for index, command in enumerate(commands):

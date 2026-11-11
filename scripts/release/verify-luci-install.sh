@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # T22 in one command: the end-user install path through LuCI only (no
 # --allow-untrusted) on a fresh guest that does not have the package:
 #
@@ -34,6 +35,7 @@ fi
 feed=.ci-work/luci-install-feed
 rm -rf "$feed"
 mkdir -p .ci-work
+# shellcheck disable=SC2016 # expanded by the bash -c
 scripts/in-docker.sh --platform linux/amd64 -- bash -c '
 	set -euo pipefail
 	(umask 077 && mkdir -p /root/feed-key && openssl ecparam -name prime256v1 -genkey -noout -out /root/feed-key/key.pem)

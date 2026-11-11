@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Package upgrade check in one command:
 #
 #   scripts/release/verify-upgrade.sh NEW.apk
 #
 # 1. Builds the old package with PKG_VERSION lowered to $ABFM_OLD_PKG_VERSION
 #    (default 0.0.9), through scripts/build-package.sh in a scratch copy
-#    (.ci-work/upgrade-old). Its source is the git ref $ABFM_OLD_REF (default
-#    d27b5d4, the last api-1 source with the resident daemon, so the test
-#    covers the v1 -> v2 migration); ABFM_OLD_REF=same uses the source of
-#    NEW.apk instead (its build-package.sh source/ directory when present,
-#    else this worktree).
+#    (.ci-work/upgrade-old). Its source is the source of NEW.apk (its
+#    build-package.sh source/ directory when present, else this worktree):
+#    api 1 was never released, so every real upgrade is api 2 -> api 2.
+#    ABFM_OLD_REF=<git ref> builds the old package from that ref instead.
 # 2. Signs old and new into one feed with a throwaway ECDSA key that never
 #    touches this repository: on Linux x86_64 it lives in a mktemp directory,
 #    elsewhere only inside a disposable linux/amd64 container; it is deleted
@@ -25,7 +25,7 @@ cd "$root"
 new="${1:?usage: scripts/release/verify-upgrade.sh NEW.apk}"
 [[ -f "$new" ]] || { echo "not found: $new" >&2; exit 2; }
 old_pkg_version="${ABFM_OLD_PKG_VERSION:-0.0.9}"
-old_ref="${ABFM_OLD_REF:-d27b5d4}"
+old_ref="${ABFM_OLD_REF:-same}"
 log() { printf 'verify-upgrade: %s\n' "$*" >&2; }
 linux_x86=0
 [[ "$(uname -s)-$(uname -m)" == Linux-x86_64 ]] && linux_x86=1
@@ -38,10 +38,13 @@ mkdir -p "$scratch/scripts"
 if [[ "$old_ref" == same ]]; then
 	src="$(dirname "$new")/source"
 	[[ -f "$src/Makefile" && -d "$src/root" ]] || src="$root"
-	tar -C "$src" -cf - Makefile root $([[ -d "$src/htdocs" ]] && echo htdocs) $([[ -d "$src/po" ]] && echo po) | tar -C "$scratch" -xf -
+	paths=()
+	for p in Makefile root htdocs po LICENSE; do [[ ! -e "$src/$p" ]] || paths+=("$p"); done
+	tar -C "$src" -cf - "${paths[@]}" | tar -C "$scratch" -xf -
 else
 	src="git $old_ref"
-	git -C "$root" archive "$old_ref" Makefile root po | tar -C "$scratch" -xf -
+	mapfile -t paths < <(git -C "$root" ls-tree --name-only "$old_ref" -- Makefile root htdocs po LICENSE)
+	git -C "$root" archive "$old_ref" -- "${paths[@]}" | tar -C "$scratch" -xf -
 fi
 # api 1 shipped the resident daemon (docs/CONTRACT.md §3 migration).
 old_api=2
@@ -52,7 +55,7 @@ ln -s ../../.local-validation "$scratch/.local-validation"
 sed -i.bak -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$old_pkg_version/" -e 's/^PKG_RELEASE:=.*/PKG_RELEASE:=1/' "$scratch/Makefile"
 rm -f "$scratch/Makefile.bak"
 log "building $old_pkg_version-r1 from $src"
-old="$(amd64 "$scratch/scripts/build-package.sh" | tail -n 1)"
+old="$(ABFM_BUILD_FROM=worktree amd64 "$scratch/scripts/build-package.sh" | tail -n 1)"
 # scripts/in-docker.sh mounts the checkout at /workspace.
 old="${old/#\/workspace\//$root/}"
 [[ -f "$old" ]] || { log "old build failed"; exit 1; }
@@ -63,6 +66,7 @@ cp "$new" "$scratch/new.apk"
 #    like two consecutive releases
 feed=.ci-work/upgrade-feed
 rm -rf "$feed"
+# shellcheck disable=SC2016 # expanded by the bash -c below
 sign='set -euo pipefail
 	k="$1"; shift
 	(umask 077 && mkdir -p "$k/secret" && openssl ecparam -name prime256v1 -genkey -noout -out "$k/secret/key.pem")

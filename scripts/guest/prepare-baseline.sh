@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Builds the guest baseline: stock OpenWrt 25.12.6 x86/64 + adblock-fast (and
-# any GUEST_BASELINE_PACKAGES), LAN on DHCP for QEMU user networking, no
+# SPDX-License-Identifier: Apache-2.0
+# Builds the guest baseline: stock OpenWrt 25.12.6 x86/64 + adblock-fast
+# 1.2.4-r4 (the version the package is tested against; the build fails if the
+# feed no longer offers it) and the other GUEST_BASELINE_PACKAGES, LAN on DHCP for QEMU user networking, no
 # credentials, stock feed URLs. The baseline is a qcow2 overlay whose backing
 # file is the verified stock image referenced by a relative path, so it works
 # at any mount point. Tests never write to it: every run gets its own COW
@@ -15,7 +17,7 @@ source "$root/scripts/guest/lib.sh"
 
 cache="${GUEST_CACHE:-$root/.local-validation/qemu}"
 baseline="${GUEST_BASELINE:-$cache/abfm-baseline-25.12.6.qcow2}"
-packages="${GUEST_BASELINE_PACKAGES:-adblock-fast luci-app-package-manager luci-ssl}"
+packages="${GUEST_BASELINE_PACKAGES:-adblock-fast=1.2.4-r4 luci-app-package-manager luci-ssl}"
 
 mkdir -p "$(dirname "$baseline")"
 exec 9>"$baseline.lock"
@@ -34,7 +36,14 @@ qemu-img create -q -f qcow2 -F raw -b "$backing" "$partial"
 
 trap guest_stop EXIT
 GUEST_DISK="$partial" GUEST_RUN_DIR="$cache/runs/baseline-$(date -u +%Y%m%dT%H%M%SZ)-$$" guest_start
-guest_exec "set -e; apk update; apk add $packages; apk info -v | sort" >"$GUEST_RUN_DIR/baseline-packages.txt"
+# Retried: the package cache proxy fetches misses from downloads.openwrt.org.
+guest_exec "set -e
+	retry() { n=1; until \"\$@\"; do [ \$n -lt 3 ] || return 1; n=\$((n + 1)); sleep 10; done; }
+	retry apk update >&2
+	retry apk add $packages >&2
+	apk info -v | sort" >"$GUEST_RUN_DIR/baseline-packages.txt"
+grep -qx 'adblock-fast-1.2.4-r4' "$GUEST_RUN_DIR/baseline-packages.txt" ||
+	{ echo 'prepare-baseline: adblock-fast 1.2.4-r4 is not installed' >&2; exit 1; }
 guest_exec 'set -e
 	sed -i -E "s#http://10[.]0[.]2[.]2:[0-9]+#https://downloads.openwrt.org#" /etc/apk/repositories.d/distfeeds.list
 	sed -i "s|^root:[^:]*:|root::|" /etc/shadow

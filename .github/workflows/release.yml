@@ -1,8 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
 name: Release
 
 # Tag vX.Y.Z-rN (must equal PKG_VERSION-rPKG_RELEASE in the Makefile).
 # build and test run without secrets; only `sign` (environment `release`,
-# required reviewer, tag rule v*) sees APK_SIGNING_KEY. See keys/README.md.
+# required reviewer, tag rule v*) sees APK_SIGNING_KEY. `deploy` needs the
+# `github-pages` environment to allow tags v*. Maintainer checklist:
+# keys/README.md.
+#
+# Trust boundary: `build` and `sign` restore no caches (an actions/cache tar
+# can write outside its declared paths, and a tag run may fall back to
+# main-branch caches); the SDK is extracted fresh from its sha256-checked
+# tarball and the host apk is checked against its own pinned sha256. `test`
+# only restores caches (read-only) and feeds nothing into the signed output.
+# `sign` takes the APK by artifact id and checks it against the sha256 that
+# `build` computed. The GitHub release stays a draft until `smoke` has
+# installed the exact version from the published feed; `publish` then makes
+# it visible. Re-runs overwrite the draft's assets.
 on:
   push:
     tags: ["v*"]
@@ -20,17 +33,26 @@ env:
 
 jobs:
   build:
-    name: Build (unsigned) and signing self-test
+    name: Host checks, build (unsigned) and signing self-test
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      apk_sha256: ${{ steps.build.outputs.apk_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - &public-key
+        name: A committed public key is required
+        run: |
+          if [[ ! -s keys/adblock-fast-monitor.pem ]]; then
+            echo "::error::keys/adblock-fast-monitor.pem is missing; see keys/README.md"
+            exit 1
+          fi
       - name: The tag must equal the Makefile version
         id: version
         run: |
@@ -41,21 +63,43 @@ jobs:
             exit 1
           fi
           echo "version=$ver" >>"$GITHUB_OUTPUT"
-      - &sdk-cache
-        name: Restore SDK tarball cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          path: .local-validation/openwrt-sdk-25.12.6-1864152619092e78.tar.zst
-          key: openwrt-sdk-25.12.6-x86-64-1864152619092e78
-      - name: Build the APK with the pinned SDK
+          node-version: ${{ env.NODE_VERSION }}
+      - name: OpenWrt SDK host prerequisites (gawk, ncurses)
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends gawk libncurses-dev
+      - run: npm ci --no-audit --no-fund
+      - name: Pinned ShellCheck and actionlint (sha256-checked downloads)
+        run: scripts/lint/fetch-tools.sh
+      - name: Build the ucode/BusyBox userland (OpenWrt 25.12.6 pins, no cache)
+        run: scripts/build-host-ucode.sh
+      - name: Lint, static checks, unit, contract, ucode and BusyBox shell suites
+        run: npm run verify:host
+      - name: Build the APK in a fresh SDK extracted from the verified tarball
+        id: build
+        env:
+          ABFM_BUILD_OUT: ${{ github.workspace }}/.ci-work/build
+          ABFM_SDK_FRESH: "1"
         run: |
           set -euo pipefail
-          apk="$(scripts/build-package.sh)"
+          scripts/build-package.sh
           mkdir -p .ci-work/apk
-          cp "$apk" "$(dirname "$apk")/package.sha256" "$(dirname "$apk")/source.sha256" .ci-work/apk/
+          cp .ci-work/build/package.apk .ci-work/build/package.sha256 .ci-work/build/source.sha256 .ci-work/apk/
+          echo "apk_sha256=$(sha256sum .ci-work/apk/package.apk | cut -c1-64)" >>"$GITHUB_OUTPUT"
+      - name: Upload the build log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-log
+          path: .ci-work/build/build.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Signing pipeline self-test (throwaway keys, deleted afterwards)
         run: scripts/release/selftest.sh "$RUNNER_TEMP/release-selftest" .ci-work/apk/package.apk
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-apk
           path: .ci-work/apk/
@@ -69,8 +113,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-    env:
-      GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,7 +120,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
@@ -87,26 +128,43 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Install QEMU
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends qemu-system-x86 qemu-utils dnsutils
-      - name: Restore stock image, baseline and package cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends qemu-system-x86 qemu-utils dnsutils
+      # Read-only: restore, never save. Keep path and key equal to ci.yml.
+      - name: Restore stock image, baseline and package mirror
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .local-validation/qemu/openwrt.img.gz
             .local-validation/qemu/abfm-baseline-25.12.6.qcow2
             .local-validation/qemu/abfm-baseline-25.12.6.qcow2.manifest
             .local-validation/openwrt-package-mirror
+            !.local-validation/openwrt-package-mirror/**/*.adb
           key: guest-25.12.6-${{ hashFiles('scripts/guest/prepare-baseline.sh', 'scripts/guest/lib.sh') }}
-      - *sdk-cache
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - name: Restore the SDK tarball (host apk for T22; sha256-checked before use)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: unsigned-apk
+          path: .local-validation/openwrt-sdk-25.12.6-1864152619092e78.tar.zst
+          key: openwrt-sdk-25.12.6-x86-64-1864152619092e78
+      - &download-apk
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: .ci-work/apk
+      - &check-apk
+        name: The APK is the one the build job produced
+        env:
+          APK_SHA256: ${{ needs.build.outputs.apk_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$APK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "$APK_SHA256  .ci-work/apk/package.apk" | sha256sum --check
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - name: Guest tests and Playwright against the installed APK
         run: scripts/guest/run-guest-tests.sh --host-cmd scripts/guest/browser-tests.sh .ci-work/apk/package.apk
+        env:
+          GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run
       - name: LuCI install from a throwaway-key feed (T22)
         run: scripts/release/verify-luci-install.sh .ci-work/apk/package.apk
         env:
@@ -116,19 +174,23 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-test-logs
+          # Literal paths: upload-artifact skips hidden directories (.ci-work)
+          # met while expanding a glob.
           path: |
             playwright-report/
             test-results/
-            .ci-work/guest-run*/results/
-            .ci-work/guest-run*/serial.log
+            .ci-work/guest-run/results/
+            .ci-work/guest-run/serial.log
+            .ci-work/guest-run-install/results/
+            .ci-work/guest-run-install/serial.log
           if-no-files-found: ignore
           retention-days: 7
 
   sign:
-    name: Sign, verify, attest and publish the release
+    name: Sign, verify, attest and stage the release (draft)
     needs: [build, test]
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment: release
     permissions:
       contents: write
@@ -140,30 +202,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: A committed public key is required
+      - *public-key
+      - *download-apk
+      - *check-apk
+      - name: Host apk 3.0.5 from the sha256-pinned SDK tarball (no cache)
         run: |
-          if [[ ! -s keys/adblock-fast-monitor.pem ]]; then
-            echo "::error::keys/adblock-fast-monitor.pem is missing; see keys/README.md"
-            exit 1
-          fi
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: unsigned-apk
-          path: .ci-work/apk
-      - name: The artifact is the one the build job produced
-        working-directory: .ci-work/apk
-        run: sha256sum --check package.sha256
-      - *sdk-cache
-      - name: Host apk 3.0.5 from the sha256-pinned SDK
-        run: echo "APK_TOOL=$(scripts/release/apk-tool.sh)" >>"$GITHUB_ENV"
-      - name: Previous signed packages (last 2 releases) stay in the feed
+          set -euo pipefail
+          apk_tool="$(scripts/release/apk-tool.sh)"
+          echo "APK_TOOL=$apk_tool" >>"$GITHUB_ENV"
+      - name: Previous signed packages (last 2 published releases) stay in the feed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p .ci-work/previous
           gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 10 \
-              --json tagName --jq '.[].tagName' | grep -vx "$GITHUB_REF_NAME" | head -n 2 |
+              --json tagName --jq '.[].tagName' | { grep -vxF -- "$GITHUB_REF_NAME" || true; } | head -n 2 |
             while read -r tag; do
               gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir .ci-work/previous --pattern "$PKG-*.apk"
             done
@@ -194,7 +248,7 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: site/apk/${{ env.PKG }}-${{ env.VERSION }}.apk
-      - name: GitHub release with the signed package
+      - name: Draft GitHub release with the signed package (assets replaced on re-runs)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -208,9 +262,13 @@ jobs:
           Key fingerprint and SHA-256 sums: see the page above and SHA256SUMS.
           EOF
           grep "  $PKG-$VERSION.apk\$" site/apk/SHA256SUMS >"$RUNNER_TEMP/SHA256SUMS"
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "$PKG $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
-            "site/apk/$PKG-$VERSION.apk" "$RUNNER_TEMP/SHA256SUMS" keys/adblock-fast-monitor.pem
+          assets=("site/apk/$PKG-$VERSION.apk" "$RUNNER_TEMP/SHA256SUMS" keys/adblock-fast-monitor.pem)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "$PKG $VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${assets[@]}"
+          fi
       - name: Upload the Pages site (signed feed)
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
@@ -224,6 +282,7 @@ jobs:
     permissions:
       pages: write
       id-token: write
+    # The github-pages environment must allow tags v* (keys/README.md).
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -235,9 +294,9 @@ jobs:
 
   smoke:
     name: Router smoke test against the published feed
-    needs: deploy
+    needs: [build, deploy]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -245,10 +304,31 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: scripts/release
-      - name: Stock OpenWrt 25.12.6 rootfs trusts the feed and resolves the package
+      - name: Pages serves the URL baked into the feed page and the release notes
         env:
           PAGE_URL: ${{ needs.deploy.outputs.page_url }}
         run: |
+          if [[ "${PAGE_URL%/}" != "${PAGES_URL%/}" ]]; then
+            echo "::error::Pages URL '$PAGE_URL' differs from PAGES_URL '$PAGES_URL'"
+            exit 1
+          fi
+      - name: Stock OpenWrt 25.12.6 rootfs trusts the feed and installs exactly this version
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
           docker run --rm -v "$PWD/scripts/release:/r:ro" \
             openwrt/rootfs@sha256:14401c04218c2e0da0448f099710ada2460636a92395f353351cc616cf3f67af \
-            sh /r/smoke-feed.sh "${PAGE_URL:-$PAGES_URL}"
+            sh /r/smoke-feed.sh "$PAGES_URL" "$VERSION"
+
+  publish:
+    name: Publish the release
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Undraft the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

@@ -19,8 +19,9 @@ Adds to [AGENTS.md](../../AGENTS.md). What each file does and its interface:
   job that does not use fds inherited from rpcd. Replies carry `"api": 2`
   and only contract error codes.
 - Upstream pitfalls are listed in CONTRACT §12 and §14 (e.g. adblock-fast
-  `reload` does not rebuild). Spawn with an argument array, never a shell string built
-  from input; validate domains with `abfm.domain` first.
+  `reload` does not rebuild). Validate domains with `abfm.domain` first and
+  spawn as AGENTS.md → Conventions says (argument arrays; command strings
+  only with constants and `shell_quote`d validated values).
 - Never call adblock-fast's `allow`; never write its generated files; write
   only `/etc/config/adblock-fast`, through `apply`.
 - Tests: `test/ucode/**/*.test.uc` with `require("testlib")`

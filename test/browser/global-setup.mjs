@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Prepares the guest once for the browser suite:
 // - points adblock-fast at the deterministic local fixture list;
 // - turns on query logging and starts a fake upstream for *.up.example.test.

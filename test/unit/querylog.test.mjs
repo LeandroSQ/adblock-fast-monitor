@@ -28,7 +28,7 @@ const outcome = (tail, o) => {
   return [row.decision, row.source];
 };
 
-test('§4.4 classification table: config answers', () => {
+test('T03: §4.4 classification table: config answers', () => {
   for (const a of ['NXDOMAIN', 'NODATA', 'NODATA-IPv4', 'NODATA-IPv6', '0.0.0.0', '::', '127.0.0.1'])
     assert.deepEqual(outcome(`config ads.example.test is ${a}`), ['blocked', 'config'], a);
   assert.deepEqual(outcome('config ads.example.test is 198.51.100.7'), ['other', 'config'], 'address=');
@@ -136,7 +136,7 @@ test('§4.3 spoofing and malformed lines are rejected', () => {
   assert.equal(row.decision, 'pending');
 });
 
-test('§8.3 LOST lines count as missed (shown), with dnsmasq_lost as the breakdown', () => {
+test('T01: §8.3 LOST lines count as missed (shown), with dnsmasq_lost as the breakdown', () => {
   const st = ql.create();
   ql.ingest(st, reply(['dnsmasq[1]: overflow: 12 log entries lost', 'dnsmasq[1]: overflow: 3 log entries lost',
     'dnsmasq[1]: overflow: x log entries lost']));
@@ -151,7 +151,7 @@ test('§8.3 LOST lines count as missed (shown), with dnsmasq_lost as the breakdo
   assert.equal(ql.stats(st).dnsmasq_lost, 15);
 });
 
-test('raw strings: an HTML payload in a PTR answer is kept verbatim', () => {
+test('T02: raw strings: an HTML payload in a PTR answer is kept verbatim', () => {
   const payload = '<img/src=x/onerror=window.__x=1>';
   const { row } = decide(`reply 203.0.113.5 is ${payload}`, { name: '5.113.0.203.in-addr.arpa', qtype: 'PTR' });
   assert.deepEqual(row.answers, [payload]);
@@ -179,7 +179,7 @@ test('CNAME chain: names replace <CNAME>, at most 4 answers, decision unchanged'
     { name: 'a.example.test' }).row.answers, ['192.0.2.1']);
 });
 
-test('nextRequest: 900 first, adaptive clamp(1.2*batch+16), never <16, >900 or 0', () => {
+test('T04: nextRequest: 900 first, adaptive clamp(1.2*batch+16), never <16, >900 or 0', () => {
   const st = ql.create();
   assert.deepEqual(ql.nextRequest(st), { lines: 900 });
   assert.deepEqual(ql.nextRequest(st), { lines: 900 }, 'pure');

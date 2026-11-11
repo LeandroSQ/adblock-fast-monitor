@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Shared helpers for the LuCI browser suite (docs/CONTRACT.md §13 T23–T25).
 // Runs on the host next to a guest started by scripts/guest/run-guest-tests.sh
 // (GUEST_* exported). Guest conditions are created with real commands over SSH.
@@ -37,7 +38,7 @@ export function guest(command, { input, allowFail = false } = {}) {
     ], { encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: 600_000 });
   } catch (error) {
     if (allowFail) return error.stdout ?? '';
-    throw new Error(`guest command failed (${error.status}): ${command}\n${error.stderr ?? ''}${error.stdout ?? ''}`);
+    throw new Error(`guest command failed (${error.status}): ${command}\n${error.stderr ?? ''}${error.stdout ?? ''}`, { cause: error });
   }
 }
 
@@ -92,7 +93,7 @@ export function isUbus(url) {
 /** The ubus calls ([object, method, args]) in one JSON-RPC request. */
 export function ubusCalls(request) {
   if (!isUbus(new URL(request.url()))) return [];
-  let body = null;
+  let body;
   try { body = request.postDataJSON(); } catch { return []; }
   return (Array.isArray(body) ? body : [body])
     .filter((c) => c?.method === 'call' && Array.isArray(c.params))

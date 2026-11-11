@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T23 (docs/CONTRACT.md §8.5): each dashboard state rendered from a real
 // guest condition created over SSH, and restored afterwards. `healthy`,
 // `logging-off` and the query-logging-active note are covered in
@@ -40,7 +41,7 @@ test('logging-unavailable(dnsmasq-not-running): dnsmasq stopped', async ({ page 
 
 test('logging-unavailable(dnsmasq-logs-to-file): dhcp logfacility is a file', async ({ page }) => {
   try {
-    guest("uci set dhcp.@dnsmasq[0].logfacility=/tmp/abfm-dnsmasq.log; uci commit dhcp; /etc/init.d/dnsmasq restart");
+    guest('uci set dhcp.@dnsmasq[0].logfacility=/tmp/abfm-dnsmasq.log; uci commit dhcp; /etc/init.d/dnsmasq restart');
     await login(page, admin);
     await expectState(page, 'logging-unavailable', 'dnsmasq-logs-to-file');
     await expect(state(page)).toContainText('writes its log to a file');
@@ -152,7 +153,7 @@ test('log-stalled notice: logd restarted, dnsmasq silent since, recovered by a d
 
 test('warnings from info are shown and dismissible (log_file, log_ip)', async ({ page }) => {
   try {
-    guest("uci set system.@system[0].log_file=/root/abfm-test-syslog; uci set system.@system[0].log_ip=192.0.2.1; uci commit system");
+    guest('uci set system.@system[0].log_file=/root/abfm-test-syslog; uci set system.@system[0].log_ip=192.0.2.1; uci commit system');
     await login(page, admin);
     for (const w of ['logd-to-flash', 'logd-remote']) {
       const note = page.locator(`[data-warning="${w}"]`);

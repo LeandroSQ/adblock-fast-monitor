@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1
+# SPDX-License-Identifier: Apache-2.0
 # Linux toolbox for the parts of validation that need Linux: the OpenWrt SDK
 # package build (x86_64 binaries: run with --platform linux/amd64) and QEMU
 # guests (any platform; native is fastest under TCG). Used by scripts/in-docker.sh.
-FROM node:22-bookworm
+# node:22-bookworm, pinned by digest (multi-arch index); bump deliberately.
+FROM node:22-bookworm@sha256:7702d8aa4d5910871692af4480eb3ba86f23047a6417a44d857d06c95d060d3f
 
-RUN apt-get update && apt-get install --yes --no-install-recommends \
-    bzip2 ca-certificates curl dnsutils file gawk git make openssh-client \
+# gawk and libncurses-dev: OpenWrt SDK prerequisites (prereq-build.mk).
+RUN apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install --yes --no-install-recommends \
+    bzip2 ca-certificates curl dnsutils file gawk git libncurses-dev make openssh-client \
     openssl python3 qemu-system-x86 qemu-utils rsync unzip wget xz-utils zstd \
     && rm -rf /var/lib/apt/lists/*
 

@@ -4,12 +4,16 @@
   "private": true,
   "description": "Host-side CI and verification tooling for adblock-fast-monitor",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build:userland": "scripts/build-host-ucode.sh",
     "build:package": "scripts/build-package.sh",
     "check:static": "node scripts/check-static.mjs",
+    "lint": "node scripts/lint/run.mjs",
+    "lint:fix": "node scripts/lint/run.mjs --fix",
+    "lint:baseline": "node scripts/lint/run.mjs --prune",
+    "lint:tools": "scripts/lint/fetch-tools.sh",
     "test:unit": "node --test --experimental-test-coverage --test-coverage-include=\"htdocs/**\" --test-coverage-lines=98 --test-coverage-branches=90 --test-coverage-functions=95 \"test/unit/**/*.test.mjs\"",
     "test:ucode": "test/lib/run-tests ucode",
     "test:shell": "test/lib/run-tests shell",
@@ -19,14 +23,24 @@
     "test:browser:required": "node scripts/run-browser-required.mjs",
     "test:performance": "node scripts/performance-gate.mjs",
     "test:performance:measure": "node scripts/integration/measure-performance.mjs",
-    "verify:host": "npm run check:static && npm run test:unit && npm run test:ucode && npm run test:shell",
+    "verify:commit": "npm run lint && ABFM_STATIC_NO_CONTAINER=1 npm run check:static && node --test --test-reporter=dot test/unit/docs-references.test.mjs",
+    "verify:host": "npm run lint && npm run check:static && npm run test:unit && npm run test:ucode && npm run test:shell",
     "verify:guest": "scripts/verify-guest.sh",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "hooks:uninstall": "git config --unset core.hooksPath",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "test:mutation": "stryker run test/mutation/stryker.config.json"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.11.0",
+    "@eslint/js": "10.0.1",
+    "@eslint/json": "2.1.1",
     "@playwright/test": "1.55.1",
     "@stryker-mutator/core": "9.3.0",
-    "ajv": "8.17.1"
+    "@stylistic/eslint-plugin": "5.10.0",
+    "ajv": "8.17.1",
+    "eslint": "10.14.0",
+    "globals": "17.14.0",
+    "markdownlint": "0.42.1"
   }
 }

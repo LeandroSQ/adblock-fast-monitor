@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import { defineConfig } from '@playwright/test';
 
 const baseURL = process.env.MONITOR_BASE_URL;

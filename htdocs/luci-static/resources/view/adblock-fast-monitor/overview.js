@@ -3,7 +3,6 @@
 'require rpc';
 'require uci';
 'require ui';
-'require form';
 'require poll';
 'require dom';
 'require adblock-fast-monitor.model as model';
@@ -145,11 +144,22 @@ function checkbox(id, label, checked, onchange) {
 }
 
 function storageGet(key) {
-	try { return window.localStorage.getItem(key); } catch (e) { return null; }
+	try {
+		return window.localStorage.getItem(key);
+	}
+	catch (e) {
+		return null;
+	}
 }
 
 function storageSet(key, value) {
-	try { window.localStorage.setItem(key, value); return true; } catch (e) { return false; }
+	try {
+		window.localStorage.setItem(key, value);
+		return true;
+	}
+	catch (e) {
+		return false;
+	}
 }
 
 return view.extend({
@@ -381,7 +391,8 @@ return view.extend({
 					this.measureCount = 1;
 				}
 				performance.measure('abfm-poll', { start: t0, end: performance.now(), detail: detail });
-			} catch (e) {}
+			}
+			catch (e) {}
 		}, 0));
 	},
 

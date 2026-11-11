@@ -52,7 +52,7 @@ const ADDNHOSTS = '/var/run/adblock-fast/dnsmasq.addnhosts';
 // §4.3: logd keeps the `dnsmasq[pid]: ` tag in `msg`; there is no ctime /
 // facility prefix in `log read` replies.
 const PREFIX = /^dnsmasq\[([0-9]+)\]: (.*)$/;
-const BODY = /^(TCP |UDP )?([0-9]+) ([^ \/]+)\/([0-9]+) ([^ ]+) ([a-z0-9_.:-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$/;
+const BODY = /^(TCP |UDP )?([0-9]+) ([^ /]+)\/([0-9]+) ([^ ]+) ([a-z0-9_.:-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$/;
 const LOST = /^overflow: ([0-9]+) log entries lost$/;
 const QUERY_LOG = /^(TCP |UDP )?[0-9]+ /;
 const STARTED = /^started, version /;
@@ -402,8 +402,9 @@ return baseclass.extend({
 			blocked_pct: null, span_s: 0,
 			missed_total: st.missedTotal, dnsmasq_lost: st.dnsmasqLost, paused_total: st.pausedTotal,
 			rejected: st.rejected,
-			since_open: { queries: st.sinceOpen.queries, blocked: st.sinceOpen.blocked,
-			              allowed: st.sinceOpen.allowed }
+			since_open: {
+				queries: st.sinceOpen.queries, blocked: st.sinceOpen.blocked, allowed: st.sinceOpen.allowed
+			}
 		};
 		for (const e of list) {
 			if (e.decision === 'no-answer')

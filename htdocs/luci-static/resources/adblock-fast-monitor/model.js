@@ -271,9 +271,13 @@ function cleanList(list, limit) {
 
 /* Parses stored JSON; anything malformed degrades to an empty list. */
 function parsePending(json) {
-	let raw = null;
-	try { raw = (typeof(json) == 'string') ? JSON.parse(json) : json; }
-	catch (e) { raw = null; }
+	let raw;
+	try {
+		raw = (typeof(json) == 'string') ? JSON.parse(json) : json;
+	}
+	catch (e) {
+		raw = null;
+	}
 	if (!isObject(raw) || raw.v !== STORAGE_VERSION)
 		return emptyPending();
 	const state = emptyPending();
@@ -408,7 +412,7 @@ function settleJob(state, job) {
 	const jobError = isObject(job.error) ? String(job.error.code || 'failed') : null;
 	inflight.items.forEach(item => {
 		const it = byDomain[item.domain];
-		let ok, reason = null;
+		let ok, reason;
 		if (job.state == 'failed') {
 			ok = false;
 			reason = jobError || 'failed';

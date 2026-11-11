@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T23 (docs/CONTRACT.md §8): the last-queries list is built in the browser
 // from real dnsmasq log lines read with `log read`: decisions, the % blocked
 // stat, text-only rendering of hostile log data, gaps, dnsmasq's lost lines,
@@ -119,7 +120,7 @@ test('% blocked over the kept rows and since-page-opened counters', async ({ pag
   await expect(since).toContainText('4 queries, 3 blocked, 1 allowed');
 });
 
-test('hostile log data is shown as text, never as HTML', async ({ page }) => {
+test('T27: hostile log data is shown as text, never as HTML', async ({ page }) => {
   await login(page, admin);
   await page.evaluate(() => { delete window.__x; delete window.__y; delete window.__z; });
   fakeDnsmasq([
@@ -148,7 +149,7 @@ test('hostile log data is shown as text, never as HTML', async ({ page }) => {
 // The page's read is held while the burst is written, so its reply and the
 // one refetch both see the ring after the burst: the ids the page never
 // received are exactly the missed entries (no race with the logger).
-test('a burst larger than the log window shows the exact number of missed entries', async ({ page }) => {
+test('T29: a burst larger than the log window shows the exact number of missed entries', async ({ page }) => {
   const replies = trackLogReplies(page);
   const reads = await holdLogReads(page);
   await login(page, admin);
@@ -282,7 +283,7 @@ test('no input for 15 minutes pauses polling until the next input', async ({ pag
   await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(paused);
 });
 
-test('P2: a hidden page sends no log reads for 60 s and resumes when visible', async ({ page }) => {
+test('T28: P2: a hidden page sends no log reads for 60 s and resumes when visible', async ({ page }) => {
   const reads = trackLogReads(page);
   await login(page, admin);
   await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(2);

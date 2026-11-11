@@ -74,8 +74,7 @@ function messages(r, count) {
       const t = open[r.int(open.length)];
       out.push(t.shift());
       if (!t.length) open.splice(open.indexOf(t), 1);
-    }
-    else if (roll < 0.92) out.push('dnsmasq[1]: started, version 2.91 cachesize 1000');
+    } else if (roll < 0.92) out.push('dnsmasq[1]: started, version 2.91 cachesize 1000');
     else if (roll < 0.94) out.push(`dnsmasq[1]: overflow: ${r.int(50)} log entries lost`);
     else if (roll < 0.97) out.push(r.pick(['netifd: up', 'dnsmasq-dhcp[1]: DHCPACK(br-lan) 192.0.2.10', 'kernel: x']));
     else out.push(`dnsmasq[1]: ${r.int(9999)} junk line ${r.pick(HOSTILE)}`);
@@ -192,17 +191,17 @@ test('property: a window that skips entries reports exactly the skipped ids as m
     const r = rng(seed);
     const log = cleanLog(r, 50 + r.int(900)).map((e) => ({ ...e, msg: 'kernel: filler' }));
     const st = ql.create();
-    let head = 1 + r.int(20), skipped = 0, cursor = null;
+    let head = 1 + r.int(20), skipped = 0;
     ql.ingest(st, { log: log.slice(0, head) });
-    cursor = head - 1;
+    let cursor = head - 1;
     while (head < log.length) {
       const next = Math.min(log.length, head + 1 + r.int(400));
       const want = ql.nextRequest(st).lines;
       let from = Math.max(0, next - want);
-      let res = ql.ingest(st, { log: log.slice(from, next) });
+      const res = ql.ingest(st, { log: log.slice(from, next) });
       if (res.refetch) {
         from = Math.max(0, next - res.refetch.lines);
-        res = ql.ingest(st, { log: log.slice(from, next) });
+        ql.ingest(st, { log: log.slice(from, next) });
       }
       if (from > cursor + 1) skipped += from - cursor - 1;
       cursor = next - 1;

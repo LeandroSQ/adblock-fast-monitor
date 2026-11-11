@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T24 (docs/CONTRACT.md §8.4): Allow/Block row buttons stage changes that
 // persist across reloads; one `apply` per batch after a dry run and a
 // confirmation; job progress to per-domain results; the DNS answer really
@@ -7,7 +8,7 @@
 // api-2 trims. Runs against the real guest backends.
 import { expect, test } from '@playwright/test';
 import {
-  admin, checkReplies, dnsQuery, ensureHealthy, guest, guestWait, login, pending, pendingRow, queries, queryRow,
+  admin, checkReplies, dnsQuery, ensureHealthy, guest, guestWait, login, pending, pendingRow, queryRow,
   seeQuery, setVisibility, trackCalls, ubusCalls, waitAdblockFast
 } from './lib/guest.mjs';
 import { validate } from './lib/schemas.mjs';
@@ -62,7 +63,7 @@ const resetRules = () => {
 // The api-2 trims (no may_escalate, info.protected_suffixes, ...) come with
 // the backend of unit C; an older backend is reported, not validated.
 let strictSchemas = false;
-let replies = null;
+const replies = new WeakMap();
 
 test.beforeAll(() => {
   ensureHealthy();
@@ -71,15 +72,15 @@ test.beforeAll(() => {
 });
 
 test.beforeEach(({ page }) => {
-  replies = checkReplies(page, validate);
+  replies.set(page, checkReplies(page, validate));
 });
 
-test.afterEach(async ({}, testInfo) => {
+test.afterEach(async ({ page }, testInfo) => {
   if (!strictSchemas) {
     testInfo.annotations.push({ type: 'schema', description: 'backend without the api-2 trims: replies not validated' });
     return;
   }
-  expect(replies.errors).toEqual([]);
+  expect(replies.get(page).errors).toEqual([]);
 });
 
 /* A process whose command line names adblock-fast's CLI holds a rebuild job in `applying` (job.uc waits for it). */

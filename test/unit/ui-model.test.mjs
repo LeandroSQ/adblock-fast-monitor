@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Executes the real LuCI resource htdocs/luci-static/resources/adblock-fast-monitor/model.js
 // the way luci.js loads it: the file is the body of a factory function
 // (window, document, L, ...requires) whose return value is a class that is

@@ -151,7 +151,7 @@ export function waitAdblockFast(seconds = 300) {
 /*
  * Query logging on (the package's own drop-in), adblock-fast healthy in
  * dnsmasq.servers mode, and a fake upstream for *.up.example.test
- * (A 192.0.2.10) so "allowed" answers are deterministic.
+ * (A 192.0.2.10, AAAA 2001:db8::10) so "allowed" answers are deterministic.
  */
 export function ensureHealthy() {
   guest([
@@ -168,7 +168,7 @@ export function ensureHealthy() {
     '/etc/init.d/adblock-fast-monitor restart',
     // fake upstream: a second dnsmasq on 127.0.0.1:5300 (test-only drop-in)
     'if ! [ -s /tmp/abfm-browser-upstream.pid ] || ! kill -0 "$(cat /tmp/abfm-browser-upstream.pid)" 2>/dev/null; then',
-    '  dnsmasq --conf-file=/dev/null --keep-in-foreground --port=5300 --listen-address=127.0.0.1 --bind-interfaces --no-resolv --no-hosts --local-ttl=300 --user=root --pid-file= --address=/up.example.test/192.0.2.10 >/dev/null 2>&1 &',
+    '  dnsmasq --conf-file=/dev/null --keep-in-foreground --port=5300 --listen-address=127.0.0.1 --bind-interfaces --no-resolv --no-hosts --local-ttl=300 --user=root --pid-file= --address=/up.example.test/192.0.2.10 --address=/up.example.test/2001:db8::10 >/dev/null 2>&1 &',
     '  echo $! >/tmp/abfm-browser-upstream.pid',
     'fi',
     'restart=0',

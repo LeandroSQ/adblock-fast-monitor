@@ -1,6 +1,6 @@
 {
   "docs/CONTRACT.md": {
-    "markdownlint/MD038": 4,
+    "markdownlint/MD038": 3,
     "markdownlint/MD060": 69
   },
   "docs/performance.md": {

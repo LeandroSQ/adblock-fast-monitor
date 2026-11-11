@@ -210,20 +210,17 @@ t_eq "addnhosts mode: allow of a listed name verified" "ok allowed $UPSTREAM_A" 
 	"$(item "$w" 1 result) $(item "$w" 1 observed) $(item "$w" 1 answer.a[0])"
 t_ok "addnhosts mode: the output file lists the new name" grep -qx '127.0.0.1 ah.example.com' /var/run/adblock-fast/dnsmasq.addnhosts
 
-# nftset: the stock dnsmasq has no nftset support, so adblock-fast cannot
-# build the list; the job reports that honestly (verification in this mode is
-# `dns-mode-unsupported`, unit-tested in plan.test.uc).
+# nftset: the stock dnsmasq is built without nftset, so adblock-fast cannot
+# build the list and the job says so (verification in this mode would be
+# `dns-mode-unsupported`, unit-tested in plan.test.uc; ipset is the same).
 uci set adblock-fast.config.dns=dnsmasq.nftset
 uci commit adblock-fast
 w=$(watch '{"ops":[{"op":"block","domain":"nf.example.com"}],"confirm_rebuild":true}')
 t_eq "nftset mode: the apply is accepted and runs one rebuild" "true rebuild" "$(jget "$w" @.apply.ok) $(jget "$w" @.job.mode)"
-t_diag "nftset mode: job $(jget "$w" @.job.state) $(jget "$w" @.job.error.code): $(jget "$w" @.job.error.message); item $(item "$w" 0 result) $(item "$w" 0 reason)"
-case "$(jget "$w" @.job.state)" in
-failed) t_eq "nftset mode: adblock-fast could not build the list -> rebuild-failed, persisted" "rebuild-failed true unverified" \
-	"$(jget "$w" @.job.error.code) $(jget "$w" @.job.persisted) $(item "$w" 0 result)" ;;
-*) t_eq "nftset mode: verification is not possible at the DNS layer" "partial unverified dns-mode-unsupported" \
-	"$(jget "$w" @.job.state) $(item "$w" 0 result) $(item "$w" 0 reason)" ;;
-esac
+t_eq "nftset mode: adblock-fast can't build the list without dnsmasq nftset support -> rebuild-failed, persisted" \
+	"failed rebuild-failed true unverified" \
+	"$(jget "$w" @.job.state) $(jget "$w" @.job.error.code) $(jget "$w" @.job.persisted) $(item "$w" 0 result)"
+t_match "nftset mode: the error names adblock-fast's reason" 'errorNoDnsmasqNftset' "$(jget "$w" @.job.error.message)"
 
 # ------------------------- adblock-fast's own `allow` (contract §10, §14.1)
 # Recorded upstream behaviour that rules out using it for a fast path.

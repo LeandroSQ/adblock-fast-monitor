@@ -8,6 +8,7 @@
 # dhcp `logqueries` (luci-app-adblock-fast's toggle) through the
 # instance.update trigger alone. Runs inside the guest after the APK is
 # installed.
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
 
 INIT=/etc/init.d/adblock-fast-monitor

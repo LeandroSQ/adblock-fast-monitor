@@ -6,6 +6,7 @@
 # (musl) build stage of scripts/hosttools/Dockerfile.
 set -eu
 
+# shellcheck source=scripts/hosttools/pins.env
 . /build/pins.env
 ROOTFS=${ROOTFS:-/rootfs}
 SRC=/build/src

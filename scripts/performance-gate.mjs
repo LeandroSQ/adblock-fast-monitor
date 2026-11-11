@@ -289,10 +289,12 @@ const pollStats = b => {
         incremental_p95_ms_runs: roundAll(incr), incremental_p95_ms: round(median(incr)), incremental_budget_ms: incrBudget,
         full_p95_ms_runs: roundAll(full), full_p95_ms: round(median(full)), full_budget_ms: budgets.P3.log_read_full_p95_ms,
         full_entries: bench.map(b => median(b?.full?.entries ?? [])), errors: bench.map(b => b?.errors ?? null) } };
-    if (finite(page).length < 3 || finite(nopage).length < 3) { measured = false; reasons.push(`fewer than 3 page/no-page windows at ${q} qps`); }
-    else if (delta > budgets.P3.cpu_delta_pp[q]) pass = false;
-    if (finite(incr).length < 3 || finite(full).length < 3) { measured = false; reasons.push(`log read bench missing at ${q} qps`); }
-    else if (median(incr) > incrBudget || median(full) > budgets.P3.log_read_full_p95_ms) pass = false;
+    if (finite(page).length < 3 || finite(nopage).length < 3) {
+      measured = false; reasons.push(`fewer than 3 page/no-page windows at ${q} qps`);
+    } else if (delta > budgets.P3.cpu_delta_pp[q]) pass = false;
+    if (finite(incr).length < 3 || finite(full).length < 3) {
+      measured = false; reasons.push(`log read bench missing at ${q} qps`);
+    } else if (median(incr) > incrBudget || median(full) > budgets.P3.log_read_full_p95_ms) pass = false;
   }
   const expected = budgets.P3.poll_interval_s / budgets.P3.min_poll_ratio;
   const slow = polling.filter(p => !p || p.interval_s == null || p.interval_s > expected);
@@ -473,16 +475,16 @@ function brief(id, m) {
   const b = budgets[id];
   try {
     switch (id) {
-      case 'P1': return `resident ${m.package_processes}${m.found.length ? ` (${m.found[0]}${m.found.length > 1 ? ', …' : ''})` : ''} (≤ ${b.package_processes}); transient init at boot ≤ ${m.transient.boot_max_invocations} per boot (≤ ${b.transient_boot_max}), ${Object.values(m.transient.boot).map(v => `${v.wall_s} s`).join('/')} wall; idle ${m.transient.idle_invocations} (≤ ${b.transient_idle_max}); rpcd RssAnon +${m.rpcd_rss_anon_delta_kib} KiB (≤ ${b.rpcd_rss_anon_delta_kib})${m.missing ? `; ${m.missing}` : ''}`;
-      case 'P2': return `hidden ${m.hidden_requests} req/${m.hidden_s} s (${m.hide_method}), closed ${m.closed_requests} req/${m.closed_s} s, visible control ${m.visible_control_requests} req/${m.visible_control_s} s`;
-      case 'P3': return rates.map(q => `@${q}: Δ ${m.rates[q].cpu_delta_pp} pp (≤ ${b.cpu_delta_pp[q]}), log read p95 N=${m.rates[q].log_read.n_incremental_runs[0]} ${m.rates[q].log_read.incremental_p95_ms} ms (≤ ${m.rates[q].log_read.incremental_budget_ms}) N=900 ${m.rates[q].log_read.full_p95_ms} ms (≤ ${b.log_read_full_p95_ms})`).join('; ');
-      case 'P4': return m.marks_at_900 ? `page marks p95 ${m.marks_p95_ms} ms over ${m.marks_at_900} polls (≤ ${b.poll_p95_ms})` : `querylog module p95 ${m.module_bench?.p95_ms} ms at ${m.module_bench?.entries?.[0]} entries (≤ ${b.poll_p95_ms}; no render)`;
-      case 'P5': return rates.map(q => `@${q}: Δp95 ${m.rates[q].delta_ms} ms (≤ ${m.rates[q].allowed_delta_ms})`).join(', ');
-      case 'P6': return rates.map(q => `@${q}: ${b.processes.map(c => `${c} ${m.rates[q][c].cpu_delta_pp}`).join(' ')} pp (≤ ${b.cpu_delta_pp[q]}, dnsmasq ≤ ${b.cpu_delta_pp_by_process.dnsmasq[q]})`).join('; ');
-      case 'P7': return `info p95 ${m.info?.p95_ms} ms (≤ ${b.info_p95_ms})`;
-      case 'P8': return `dry max ${m.dry_run.max_ms} ms, real ${m.real.max_ms} ms (≤ ${b.apply_max_ms}), rpcd probe max ${round(m.rpcd_probe?.max)} ms (≤ ${b.rpcd_block_max_ms})`;
-      case 'P10': return `boot ${m.boot_logging_restarts}, enable ${JSON.stringify(m.enable.map(e => e.restarts))}, save ${m.save.restarts}`;
-      default: return '';
+    case 'P1': return `resident ${m.package_processes}${m.found.length ? ` (${m.found[0]}${m.found.length > 1 ? ', …' : ''})` : ''} (≤ ${b.package_processes}); transient init at boot ≤ ${m.transient.boot_max_invocations} per boot (≤ ${b.transient_boot_max}), ${Object.values(m.transient.boot).map(v => `${v.wall_s} s`).join('/')} wall; idle ${m.transient.idle_invocations} (≤ ${b.transient_idle_max}); rpcd RssAnon +${m.rpcd_rss_anon_delta_kib} KiB (≤ ${b.rpcd_rss_anon_delta_kib})${m.missing ? `; ${m.missing}` : ''}`;
+    case 'P2': return `hidden ${m.hidden_requests} req/${m.hidden_s} s (${m.hide_method}), closed ${m.closed_requests} req/${m.closed_s} s, visible control ${m.visible_control_requests} req/${m.visible_control_s} s`;
+    case 'P3': return rates.map(q => `@${q}: Δ ${m.rates[q].cpu_delta_pp} pp (≤ ${b.cpu_delta_pp[q]}), log read p95 N=${m.rates[q].log_read.n_incremental_runs[0]} ${m.rates[q].log_read.incremental_p95_ms} ms (≤ ${m.rates[q].log_read.incremental_budget_ms}) N=900 ${m.rates[q].log_read.full_p95_ms} ms (≤ ${b.log_read_full_p95_ms})`).join('; ');
+    case 'P4': return m.marks_at_900 ? `page marks p95 ${m.marks_p95_ms} ms over ${m.marks_at_900} polls (≤ ${b.poll_p95_ms})` : `querylog module p95 ${m.module_bench?.p95_ms} ms at ${m.module_bench?.entries?.[0]} entries (≤ ${b.poll_p95_ms}; no render)`;
+    case 'P5': return rates.map(q => `@${q}: Δp95 ${m.rates[q].delta_ms} ms (≤ ${m.rates[q].allowed_delta_ms})`).join(', ');
+    case 'P6': return rates.map(q => `@${q}: ${b.processes.map(c => `${c} ${m.rates[q][c].cpu_delta_pp}`).join(' ')} pp (≤ ${b.cpu_delta_pp[q]}, dnsmasq ≤ ${b.cpu_delta_pp_by_process.dnsmasq[q]})`).join('; ');
+    case 'P7': return `info p95 ${m.info?.p95_ms} ms (≤ ${b.info_p95_ms})`;
+    case 'P8': return `dry max ${m.dry_run.max_ms} ms, real ${m.real.max_ms} ms (≤ ${b.apply_max_ms}), rpcd probe max ${round(m.rpcd_probe?.max)} ms (≤ ${b.rpcd_block_max_ms})`;
+    case 'P10': return `boot ${m.boot_logging_restarts}, enable ${JSON.stringify(m.enable.map(e => e.restarts))}, save ${m.save.restarts}`;
+    default: return '';
     }
   } catch { return ''; }
 }

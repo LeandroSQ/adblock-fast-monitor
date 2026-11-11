@@ -1,10 +1,12 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2009 # BusyBox pgrep cannot print full command lines
 # T26 / P1 (docs/CONTRACT.md §11, design B-min) in the regular guest suite:
 # the installed package runs no process of its own in any state, with query
 # logging off and on (only job.uc during an Apply may run, not exercised
 # here). Switches go through uci commit + reload_config, as LuCI's Save &
 # Apply does. The full measurement is scripts/integration/measure-performance.mjs.
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
 
 CFG=adblock-fast-monitor.config.query_logging

@@ -35,7 +35,7 @@ dp_af_status() {
 }
 
 dp_af_setup() {
-	local mode=$1 url=$2 out
+	local mode="$1" url="$2" out
 	case "$mode" in
 		dnsmasq.servers) out=/var/run/adblock-fast/dnsmasq.servers ;;
 		dnsmasq.addnhosts) out=/var/run/adblock-fast/dnsmasq.addnhosts ;;
@@ -59,6 +59,7 @@ dp_af_setup() {
 	uci commit adblock-fast
 	rm -f /tmp/.uci/adblock-fast
 	/etc/init.d/adblock-fast restart >/tmp/abfm-dp-af.log 2>&1
+	# shellcheck disable=SC2016 # expanded by the inner sh
 	dp_wait 60 sh -c '[ "$(ubus call service list "{\"name\":\"adblock-fast\"}" | jsonfilter -e "@[\"adblock-fast\"].data.status")" = statusSuccess ]' ||
 		{ cat /tmp/abfm-dp-af.log >&2; return 1; }
 	[ -s "$out" ] || { echo "dp_af_setup: $out missing" >&2; return 1; }

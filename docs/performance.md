@@ -54,7 +54,7 @@ fails the gate.
 ## Files
 
 | Path | Role |
-|---|---|
+| --- | --- |
 | `scripts/integration/measure-performance.mjs` | entrypoint: guest run + gate |
 | `scripts/perf/run.sh` | host-side driver, phases below |
 | `scripts/perf/browser.mjs` | Playwright driver: the real LuCI page, logged in as `root`; request counter, hidden/closed phases, `abfm-poll` marks, querylog module timing |
@@ -207,7 +207,7 @@ records the accelerator. Budgets change only with measured data recorded
 below.
 
 | ID | Budget (gate) | Why this number |
-|---|---|---|
+| --- | --- | --- |
 | P1 | 0 resident package processes in every sample of every state (**hard**); transient init invocations ≤ 2 per boot window and 0 while idle; rpcd RssAnon growth ≤ 1024 KiB | B-min has no resident process; the only cost allowed is the rpcd plugin in rpcd's heap. The init script's procd `instance.update` trigger (§4: re-attaches dnsmasq to a restarted logd) fires 3 s after the last instance start or stop. At boot procd starts every instance, and the 3 s debounce collapses that burst into one firing, which runs two top-level invocations: `reload` and then procd's `running` check. ≤ 2 is exactly one firing per boot; when nothing starts or stops, nothing may run. Measured (run `20261111T042902Z-37426`, 100 ms watch): logging on, `reload` 0.22 s + `running` 0.10 s = 0.32 s wall, 2.4 s into the window (uptime ≈ 19 s); logging off (no trigger registered) 0; 0 in both 60 s idle watches after boot and in the installed watches. |
 | P2 | 0 requests in 60 s hidden, 0 in 60 s closed (**hard**) | LuCI's `Poll` never pauses for hidden tabs; the page must remove its poll on `visibilitychange`. |
 | P3 | uhttpd+ubusd+logd+rpcd CPU with one visible page polling every 2 s minus the same load with no page ≤ 2 pp at 50 qps, ≤ 6 pp at 200 qps; `log read` p95 ≤ 50 ms at the adaptive N (< 900), ≤ 150 ms at N = 900 | Design A's `logread -f` child alone cost 3.4 / 8.1 % at 50 / 200 qps (run `20261110T195320Z-79115`); a page must cost less than that while open, and nothing when closed. A poll is one `log read`, all in C plus rpcd's session check. |
@@ -240,7 +240,7 @@ gives P1 PASS. A descendant that outlives `transient_max_lifetime_s` is
 still resident.
 
 | ID | Result | Noise (spread over 3 repeats, 50 / 200 qps) |
-|---|---|---|
+| --- | --- | --- |
 | P1 | 0 resident; one trigger firing at the logging-on boot (`reload` + `running`, 0.32 s), 0 at the logging-off boot, 0 idle; rpcd RssAnon +220 KiB | |
 | P2 | 0 requests hidden 60.3 s, 0 closed 60.3 s; visible control 6 / 12 s | |
 | P3 | +1.23 pp at 50 qps, +2.53 pp at 200; `log read` p95 26.5 ms (N = 394), 51.9–59.6 ms (N = 900) | CPU 0.13–0.30 pp; `log read` 1.2–5.5 ms |
@@ -261,7 +261,7 @@ measurements in [P6: dnsmasq cost of query logging](#p6-dnsmasq-cost-of-query-lo
 (with the former 2 ms / 4 pp it fails P5 by 0.23 ms and P6 by 4.8 pp).
 
 | ID | Result | Noise (spread over 3 repeats) |
-|---|---|---|
+| --- | --- | --- |
 | P1 | 0 resident processes in 48 snapshots, every window and watch; transient: one trigger firing at the logging-on boot (`reload` + `running`, 0.32 s), 0 at the logging-off boot, 0 idle; rpcd RssAnon +212 KiB (556 → 768) | |
 | P2 | 0 requests hidden 60.3 s (Page Visibility emulation), 0 closed 60.3 s; visible control 7 requests / 12 s; resumed 2 ms after showing | |
 | P3 | +1.26 pp at 50 qps, +2.49 pp at 200 qps; `log read` p95 24.7 ms at N = 394, 60.0 ms at N = 900 (50 qps); 50.4 / 57.4 ms at 200 qps; the page polled every 2.02 s, N 16…900 | CPU 0.13 / 0.26 pp (page / no page) at 50, 0.1 / 0.9 at 200; `log read` 0.6–2.3 ms |
@@ -289,7 +289,7 @@ harness end to end against a real package and the current LuCI page; the
 verdict (**FAIL**: P1, P3, P4) describes design A, not B-min:
 
 | ID | Result | Reading |
-|---|---|---|
+| --- | --- | --- |
 | P1 | FAIL: 61 package-process samples (`monitord.uc` + `logread -f`) in the logging-on states, 0 with logging off; rpcd RssAnon +236 KiB (556 → 792) | Detects design A's daemon in every on-state snapshot, watch and load window; B-min must show 0. |
 | P2 | PASS: 0 requests hidden 60.3 s, 0 closed 60.4 s; visible control 4 requests in 12 s; resumed 7 ms after showing; router ticks uhttpd/rpcd/ubusd 0 while hidden | Hide method: Page Visibility emulation (headless Chromium keeps a background tab `visible`). |
 | P3 | NOT_MEASURED: design A's page polls every 5.3 s (its `poll_interval`), not 2 s. Measured anyway: CPU delta +0.40 pp at 50 qps, +1.43 pp at 200 qps (uhttpd +0.3, ubusd +0.13, rpcd +0.5 pp); `log read` p95 29.3 ms at N ≈ 391 (50 qps), 52.8–56.6 ms at N = 900 | `log read` of 900 entries (141 KB JSON) costs about 53 ms through ubus under TCG: well inside 150 ms. |
@@ -324,7 +324,7 @@ arm interleaved in each repeat, dnsmasq pids recorded before and after each
 window):
 
 | Arm (run `ab-perf2-run2`, 5 repeats) | dnsmasq % median [runs] | logd % | dnsmasq ctx switches / query (vol + invol) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | off: package installed, `query_logging=0` | 8.22 [8.51, 7.08, 7.12, 8.22, 8.26] | 0.10 | 1.25 + 0.00 |
 | manual: hand-written drop-in, same content, no trigger | 15.40 [12.95, 15.89, 15.80, 15.40, 14.79] | 3.74 | ≈ 1.0 + 0.04–0.60 |
 | manual + one `logread -f` subscriber | 10.56 [9.86, 6.73, 12.36, 12.31, 10.56] | 3.88 | 0.84 + 0.01–0.06 |
@@ -337,6 +337,7 @@ An earlier run (`ab-perf2-run1`, 3 repeats, arms in blocks) gave off 6.68,
 6.33 %.
 
 Findings:
+
 - **Not the procd trigger.** No dnsmasq restart happened in any of the 59
   A/B windows or the 18 load windows of the integrator's run (pids
   unchanged). The hand-written drop-in with no trigger registered

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2016 # single-quoted commands are expanded by the guest shell
 # docs/CONTRACT.md §8.1 bound: `log read` with lines ≤ 900 stays under the
 # 1 MiB ubus message cap even when every entry is a ~1000-byte line, so the
 # page's first fetch can never knock logd off ubus. Ring set to 1 MiB

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2016 # single-quoted commands are expanded by the guest shell
 # T17 reboot persistence (docs/CONTRACT.md §7.4): a rebuild job's UCI change
 # survives a guest reboot while job.json (tmpfs) does not, so `job` is null.
 # Host side because it reboots the guest; restores the harness files after.
@@ -13,7 +14,7 @@ result() { # status description [diagnostic]
 	n=$((n + 1))
 	if [[ "$1" == 0 ]]; then echo "ok $n - $2"; else echo "not ok $n - $2"; [[ -n "${3:-}" ]] && echo "#   $3"; failed=1; fi
 }
-check_eq() { [[ "$2" == "$3" ]] && result 0 "$1" || result 1 "$1" "expected <$2> actual <$3>"; }
+check_eq() { if [[ "$2" == "$3" ]]; then result 0 "$1"; else result 1 "$1" "expected <$2> actual <$3>"; fi; }
 g() {
 	guest_exec "cd /tmp/abfm-test || exit 1; export ABFM_TESTLIB=/tmp/abfm-test/lib ABFM_FIXTURES=/tmp/abfm-test/fixtures" \
 		"ABFM_FIXTURE_URL=$GUEST_FIXTURE_URL; . \$ABFM_TESTLIB/sh/testlib.sh; . \$ABFM_FIXTURES/actions/guest-lib.sh; $1"
@@ -29,7 +30,7 @@ check_eq "job is reported before the reboot" 1 "$(g 'call job | jsonfilter -e @.
 # boot-time heartbeat probe (and so the boot sequence) would stall for
 # minutes. UCI persistence is what is under test, so skip the boot start.
 g '$AF disable; cp "$BK/dhcp" /etc/config/dhcp'
-guest_reboot && result 0 "guest rebooted" || result 1 "guest rebooted"
+if guest_reboot; then result 0 "guest rebooted"; else result 1 "guest rebooted"; fi
 # /tmp is tmpfs: put the harness files back for the tests that follow.
 guest_exec 'mkdir -p /tmp/abfm-test/tests'
 guest_copy_dir "$root/test/lib" /tmp/abfm-test/lib

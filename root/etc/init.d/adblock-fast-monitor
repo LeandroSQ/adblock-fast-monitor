@@ -3,6 +3,7 @@
 # Query-logging drop-in reconciliation (docs/CONTRACT.md §4). A procd service
 # with no instance: nothing stays running. START=18 runs before dnsmasq (19),
 # so writing the drop-ins at boot never restarts it (P10).
+# shellcheck disable=SC2034,SC2154 # START/USE_PROCD are read by, and $action is set by, /etc/rc.common
 START=18
 USE_PROCD=1
 

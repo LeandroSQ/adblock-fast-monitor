@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2016 # single-quoted commands are expanded by the guest shell
 # T31, §2 package inventory on the guest (package installed by
 # run-guest-tests): dependencies, file modes and owners, conffile defaults,
 # package metadata, sysupgrade keep list.

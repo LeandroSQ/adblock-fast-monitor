@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2016 # single-quoted commands are expanded by the guest shell
 # The rpcd ucode plugin through uhttpd's /ubus with real LuCI sessions
 # (docs/CONTRACT.md §6, §9): uhttpd injects `ubus_rpc_session` into every
 # call's arguments, and rpcd only accepts it because it is special-cased
 # next to each method's declared signature. Admin and read-only logins go
 # through LuCI's login form, exactly like the browser.
 set -u
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 n=0 failed=0
 result() {
 	n=$((n + 1))
 	if [[ "$1" == 0 ]]; then echo "ok $n - $2"; else echo "not ok $n - $2"; [[ -n "${3:-}" ]] && echo "#   $3"; failed=1; fi
 }
-check_eq() { [[ "$2" == "$3" ]] && result 0 "$1" || result 1 "$1" "expected <$2> actual <$3>"; }
+check_eq() { if [[ "$2" == "$3" ]]; then result 0 "$1"; else result 1 "$1" "expected <$2> actual <$3>"; fi; }
 jq_() { python3 -c 'import json,sys; d=json.load(sys.stdin); exec(sys.argv[1])' "$1"; }
 
 # The read-only LuCI login needs luci-base (menu) and unauthenticated (login page).
@@ -41,9 +41,9 @@ status() {
 }
 
 admin=$(luci_login root "$GUEST_ROOT_PASSWORD")
-[[ -n "$admin" ]] && result 0 "admin logs in through LuCI" || result 1 "admin logs in through LuCI"
+if [[ -n "$admin" ]]; then result 0 "admin logs in through LuCI"; else result 1 "admin logs in through LuCI"; fi
 ro=$(luci_login "$GUEST_READONLY_USER" "$GUEST_READONLY_PASSWORD")
-[[ -n "$ro" ]] && result 0 "read-only user logs in through LuCI" || result 1 "read-only user logs in through LuCI"
+if [[ -n "$ro" ]]; then result 0 "read-only user logs in through LuCI"; else result 1 "read-only user logs in through LuCI"; fi
 
 for who in admin ro; do
 	sid=${!who}

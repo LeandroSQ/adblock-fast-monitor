@@ -5,21 +5,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadLuci } from './querylog-load.mjs';
+import { validate } from '../browser/lib/schemas.mjs';
 
 const m = loadLuci('adblock-fast-monitor/model.js');
 
 const ok = (data) => m.settle(data);
 const err = (code) => m.failure(new Error(`RPC call to x/y failed with error ${code}: msg`));
 const inst = (o = {}) => ({ section: 'cfg01411c', confdir: '/tmp/dnsmasq.cfg01411c.d', dropin: false,
-  uci_logqueries: false, logfacility_file: false, ...o });
+  uci_logqueries: false, running: true, logfacility_file: false, ...o });
+// The full api-2 `info` reply (docs/CONTRACT.md §6.1); checked against the schema below.
 const info = (over = {}) => ({
   api: 2, ok: true,
   monitor: { query_logging: true },
-  adblock_fast: { installed: true, enabled: true, status: 'statusSuccess', dns: 'dnsmasq.servers' },
-  dnsmasq: { running: true, instances: [inst({ dropin: true })] },
   local_domains: ['lan'],
+  protected_suffixes: ['localhost', 'arpa', 'local', 'internal', 'invalid', 'onion', 'bind', 'lan', 'openwrt'],
+  logd: { size_kib: 128 },
+  adblock_fast: { installed: true, enabled: true, status: 'statusSuccess', dns: 'dnsmasq.servers',
+    output_file: '/var/run/adblock-fast/dnsmasq.servers', output_exists: true, external_config: false, pending_uci_changes: false },
+  dnsmasq: { running: true, instances: [inst({ dropin: true })] },
   warnings: [],
   ...over
+});
+
+test('the info fixtures match the api-2 schema (S3), so they cannot drift from the real replies', () => {
+  assert.deepEqual(validate('info', info()), []);
+  assert.deepEqual(validate('info', info({ warnings: ['query-logging-active', 'logd-to-flash', 'logd-remote'],
+    dnsmasq: { running: false, instances: [inst({ confdir: null, reason: 'confdir-invalid', running: false })] } })), []);
+  // the schema is strict: removed api-1/api-2-draft fields and unknown warnings fail
+  assert.notDeepEqual(validate('info', info({ monitor: { query_logging: true, poll_interval: 2 } })), []);
+  assert.notDeepEqual(validate('info', info({ warnings: ['nope'] })), []);
+  assert.notDeepEqual(validate('info', { ...info(), api: 1 }), []);
 });
 
 test('rpcError extracts JSON-RPC and ubus codes from LuCI RPCError messages', () => {
@@ -51,10 +66,8 @@ test('§8.5 pageState: first matching state wins', () => {
     ['logging-unavailable', 'logging-not-active']);
   assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ confdir: null })] } })), logOk),
     ['logging-unavailable', 'confdir-invalid']);
-  // an untargeted instance with a drop-in does not count; an untargeted bad confdir does not matter
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true, targeted: false }), inst({ targeted: true })] } })), logOk),
-    ['logging-unavailable', 'logging-not-active']);
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true, targeted: true }), inst({ confdir: null, targeted: false })] } })), logOk),
+  // one instance with a drop-in is enough; a bad confdir elsewhere does not matter then
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true }), inst({ confdir: null })] } })), logOk),
     ['healthy', null]);
   assert.deepEqual(st(ok(info()), logErr), ['error', null]);
   assert.deepEqual(st(ok(info()), logErr, true), ['healthy', null]);   // keeps earlier rows
@@ -67,21 +80,21 @@ test('poll interval is fixed at 2 s (§8.1)', () => {
   assert.equal(m.POLL_INTERVAL, 2);
 });
 
-test('§6.5 protected names: builtin list, local domains and the server list from info', () => {
-  const p = m.protectedNames(ok(info({ local_domains: ['lan', 'Home.Example'], protected_suffixes: ['router-name', 'hb.example.net', 7],
-    protected_hosts: ['lists.example.org'] })));
-  for (const d of ['x.internal', 'internal', 'a.b.home.arpa', 'localhost', 'z.local', '1.0.0.10.in-addr.arpa',
-    'printer.lan', 'nas.home.example', 'router-name', 'hb.example.net', 'x.hb.example.net', 'lists.example.org']) {
+test('§6.5 protected names: builtin list, local domains and info.protected_suffixes', () => {
+  const p = m.protectedNames(ok(info({ local_domains: ['lan', 'Home.Example'], protected_suffixes: ['localhost', 'router-name', 'HB.example.net', 7] })));
+  for (const d of ['x.internal', 'internal', 'a.b.home.arpa', 'localhost', 'z.local', '1.0.0.10.in-addr.arpa', 'x.onion',
+    'y.invalid', 'version.bind', 'printer.lan', 'nas.home.example', 'router-name', 'hb.example.net', 'x.hb.example.net']) {
     assert.equal(m.isProtected(p, d), true, d);
   }
-  for (const d of ['ads.example.test', 'internal.example.com', 'lan.example.com', 'sub.lists.example.org', 'notlan']) {
+  for (const d of ['ads.example.test', 'internal.example.com', 'lan.example.com', 'notlan', 'xhb.example.net']) {
     assert.equal(m.isProtected(p, d), false, d);
   }
+  assert.equal(p.filter((d) => d === 'localhost').length, 1, 'de-duplicated');
   // without info only the builtin list applies; hostile shapes are ignored
   const bare = m.protectedNames(err(-32002));
   assert.equal(m.isProtected(bare, 'x.internal'), true);
   assert.equal(m.isProtected(bare, 'printer.lan'), false);
-  assert.equal(m.isProtected(m.protectedNames(ok(info({ protected_suffixes: 'lan', protected_hosts: { a: 1 } }))), 'x.lan'), true);
+  assert.equal(m.isProtected(m.protectedNames(ok(info({ protected_suffixes: 'lan', local_domains: null }))), 'x.lan'), false);
   assert.equal(m.isProtected(null, 'x.internal'), false);
   assert.equal(m.isProtected(bare, '__proto__'), false);
   // staging a block of a protected name is refused; allowing it is not

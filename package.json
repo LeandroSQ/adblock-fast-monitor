@@ -10,7 +10,7 @@
     "build:userland": "scripts/build-host-ucode.sh",
     "build:package": "scripts/build-package.sh",
     "check:static": "node scripts/check-static.mjs",
-    "test:unit": "node --test \"test/unit/**/*.test.mjs\"",
+    "test:unit": "node --test --experimental-test-coverage --test-coverage-include=\"htdocs/**\" --test-coverage-lines=98 --test-coverage-branches=90 --test-coverage-functions=95 \"test/unit/**/*.test.mjs\"",
     "test:ucode": "test/lib/run-tests ucode",
     "test:shell": "test/lib/run-tests shell",
     "test:guest": "scripts/guest/run-guest-tests.sh",
@@ -20,9 +20,13 @@
     "test:performance": "node scripts/performance-gate.mjs",
     "test:performance:measure": "node scripts/integration/measure-performance.mjs",
     "verify:host": "npm run check:static && npm run test:unit && npm run test:ucode && npm run test:shell",
-    "verify:guest": "scripts/verify-guest.sh"
+    "verify:guest": "scripts/verify-guest.sh",
+    "test:mutation": "stryker run test/mutation/stryker.config.json"
   },
   "devDependencies": {
-    "@playwright/test": "1.55.1"
+    "@axe-core/playwright": "4.11.0",
+    "@playwright/test": "1.55.1",
+    "@stryker-mutator/core": "9.3.0",
+    "ajv": "8.17.1"
   }
 }

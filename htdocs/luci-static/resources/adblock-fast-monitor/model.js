@@ -21,11 +21,10 @@ const TERMINAL_JOB = { applied: true, partial: true, failed: true };
 /* §8.1: the page polls `log read` every 2 s while visible (fixed, no option). */
 const POLL_INTERVAL = 2;
 /*
- * §6.5 names the server always refuses to block; the server's full list
- * (dhcp names, hostname, heartbeat, list hosts) comes from `info` when it
- * sends one (protected_suffixes, protected_hosts).
+ * §6.5 names the server always refuses to block. The server's full list
+ * (plus dhcp names, hostname, heartbeat) comes as info.protected_suffixes.
  */
-const BUILTIN_PROTECTED = [ 'localhost', 'arpa', 'local', 'internal', 'home.arpa' ];
+const BUILTIN_PROTECTED = [ 'localhost', 'arpa', 'local', 'internal', 'invalid', 'onion', 'bind' ];
 /* adblock-fast `dns` modes whose block decisions the log cannot show (§8.3). */
 const FIREWALL_DNS = { 'dnsmasq.ipset': true, 'dnsmasq.nftset': true };
 const UNSUPPORTED_DNS = /^(smartdns|unbound)\./;
@@ -116,10 +115,9 @@ function pageState(infoResult, logResult, hasRows) {
 			return { state: 'logging-unavailable', reason: 'dnsmasq-not-running' };
 		if (instances.some(i => i.logfacility_file === true))
 			return { state: 'logging-unavailable', reason: 'dnsmasq-logs-to-file' };
-		const targeted = instances.filter(i => i.targeted !== false);
-		if (!instances.some(i => i.uci_logqueries === true) && !targeted.some(i => i.dropin === true))
+		if (!instances.some(i => i.uci_logqueries === true || i.dropin === true))
 			return { state: 'logging-unavailable',
-				reason: targeted.some(i => typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/')
+				reason: instances.some(i => typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/')
 					? 'confdir-invalid' : 'logging-not-active' };
 	}
 	if (logResult && !logResult.ok && !hasRows)
@@ -137,27 +135,22 @@ function loggingElsewhere(infoResult) {
 }
 
 /*
- * Names a `block` would be refused for (§6.5): {suffixes: [names matched
- * equal-or-under], hosts: {name: true} matched exactly}. Built from the
- * builtin list, info.local_domains and, when the server sends them,
- * info.protected_suffixes and info.protected_hosts.
+ * Names a `block` would be refused for (§6.5), matched equal-or-under: the
+ * builtin list, info.local_domains and info.protected_suffixes. The exact
+ * list hosts of §6.5 are not included; the server still refuses those.
  */
 function protectedNames(infoResult) {
 	const info = infoData(infoResult);
-	const str = v => typeof(v) == 'string' && v.length > 0;
-	const suffixes = BUILTIN_PROTECTED.slice();
-	const add = list => (Array.isArray(list) ? list : []).filter(str).forEach(d => {
-		d = d.toLowerCase();
-		if (suffixes.indexOf(d) < 0)
-			suffixes.push(d);
+	const out = BUILTIN_PROTECTED.slice();
+	const add = list => (Array.isArray(list) ? list : []).forEach(d => {
+		if (typeof(d) == 'string' && d.length > 0 && out.indexOf(d.toLowerCase()) < 0)
+			out.push(d.toLowerCase());
 	});
-	const hosts = Object.create(null);
 	if (info) {
 		add(info.local_domains);
 		add(info.protected_suffixes);
-		(Array.isArray(info.protected_hosts) ? info.protected_hosts : []).filter(str).forEach(h => { hosts[h.toLowerCase()] = true; });
 	}
-	return { suffixes: suffixes, hosts: hosts };
+	return out;
 }
 
 function under(name, parent) {
@@ -167,11 +160,7 @@ function under(name, parent) {
 
 /* True when the server would refuse to block this (normalized) name. */
 function isProtected(names, domain) {
-	if (!isObject(names) || typeof(domain) != 'string')
-		return false;
-	if (names.hosts && names.hosts[domain] === true)
-		return true;
-	return (Array.isArray(names.suffixes) ? names.suffixes : []).some(p => under(domain, p));
+	return Array.isArray(names) && typeof(domain) == 'string' && names.some(p => under(domain, p));
 }
 
 /*

@@ -1,11 +1,12 @@
 // T23 (docs/CONTRACT.md §8): the last-queries list is built in the browser
 // from real dnsmasq log lines read with `log read`: decisions, the % blocked
-// stat, text-only rendering of hostile log data, gaps, and no polling while
-// the page is hidden (P2).
+// stat, text-only rendering of hostile log data, gaps, dnsmasq's lost lines,
+// one read in flight, back-off, idle pause, and no polling while the page is
+// hidden (P2).
 import { expect, test } from '@playwright/test';
 import {
-  admin, dnsQuery, ensureHealthy, fakeDnsmasq, guest, guestWait, login, queries, queryRow, seeQuery,
-  setVisibility, trackLogReads, trackLogReplies
+  admin, dnsQuery, ensureHealthy, fakeDnsmasq, guest, guestWait, holdLogReads, isUbus, login, queries, queryRow,
+  seeQuery, setVisibility, trackLogReads, trackLogReplies, ubusCalls
 } from './lib/guest.mjs';
 
 test.describe.configure({ mode: 'serial' });
@@ -49,7 +50,7 @@ test('real queries from a LAN client: decisions, sources, header and toggles', a
     expect(r.args.lines).toBeLessThanOrEqual(900);
   }
 
-  // P4 hook: one `abfm-poll` measure per poll with the reply size and kept rows; no marks left behind
+  // P4 hook: one `abfm-poll` measure per poll with the reply size, kept rows and DOM rows changed; no marks left behind
   const perf = await page.evaluate(() => ({
     measures: performance.getEntriesByName('abfm-poll').map((e) => ({ d: e.duration, ...e.detail })),
     marks: performance.getEntriesByName('abfm-poll-start').length
@@ -63,8 +64,19 @@ test('real queries from a LAN client: decisions, sources, header and toggles', a
     expect(mm.d).toBeGreaterThanOrEqual(0);
     expect(mm.rows).toBeGreaterThanOrEqual(0);
     expect(mm.rows).toBeLessThanOrEqual(500);
+    expect(mm.changed).toBeGreaterThanOrEqual(0);
   }
   expect(perf.measures.at(-1).rows).toBeGreaterThan(0);
+  // the first poll creates the rows; a poll that brings nothing new touches no row
+  expect(perf.measures[0].changed).toBeGreaterThan(0);
+  expect(perf.measures.some((mm) => mm.changed === 0)).toBe(true);
+
+  // an existing row keeps its DOM node across polls (no full rebuild): focus stays on its button
+  const button = queryRow(page, 'ads.example.test').getByRole('button', { name: 'Allow ads.example.test' });
+  await button.focus();
+  await dnsQuery('focus-keeper.up.example.test');
+  await expect(queryRow(page, 'focus-keeper.up.example.test')).toBeVisible({ timeout: 30_000 });
+  expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Allow ads.example.test');
 
   // client column is off by default; router queries hidden by default
   await expect(queries(page).getByRole('columnheader', { name: 'Client' })).toHaveCount(0);
@@ -132,17 +144,24 @@ test('hostile log data is shown as text, never as HTML', async ({ page }) => {
     .toEqual(['undefined', 'undefined', 'undefined']);
 });
 
+// The page's read is held while the burst is written, so its reply and the
+// one refetch both see the ring after the burst: the ids the page never
+// received are exactly the missed entries (no race with the logger).
 test('a burst larger than the log window shows the exact number of missed entries', async ({ page }) => {
   const replies = trackLogReplies(page);
+  const reads = await holdLogReads(page);
   await login(page, admin);
   await expect.poll(() => replies.length, { timeout: 30_000 }).toBeGreaterThan(1);
   await expect(page.locator('#abfm-missed')).toHaveAttribute('data-missed', '0');
-  // ~5000 lines of 200 bytes: far more than the ring (and 900 lines) holds
+  reads.hold();
+  await expect.poll(() => reads.held.length, { timeout: 30_000 }).toBeGreaterThan(0);
+  const before = replies.length;
+  // ~5000 lines of 200 bytes: far more than the ring (and 900 lines) holds; logger has exited when this returns
   guest(`awk 'BEGIN { s = sprintf("%180s", ""); gsub(/ /, "x", s); for (i = 0; i < 5000; i++) print "abfm-burst " i " " s }' | logger -t abfm-burst`);
-  await expect.poll(async () => Number(await page.locator('#abfm-missed').getAttribute('data-missed')), { timeout: 60_000 })
+  await reads.release();
+  await expect.poll(() => replies.length - before, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(async () => Number(await page.locator('#abfm-missed').getAttribute('data-missed')), { timeout: 30_000 })
     .toBeGreaterThan(0);
-  // let the page settle on the new head, then compare with the ids it never received
-  await page.waitForTimeout(5_000);
   const seen = new Set(replies.flat());
   const ids = [...seen].sort((a, b) => a - b);
   let gap = 0;
@@ -150,6 +169,112 @@ test('a burst larger than the log window shows the exact number of missed entrie
   expect(gap).toBeGreaterThan(0);
   await expect(page.locator('#abfm-missed')).toHaveAttribute('data-missed', String(gap));
   await expect(page.locator('#abfm-missed')).toContainText(`${gap} log entries missed`);
+  await expect(page.locator('#abfm-missed')).toHaveAttribute('data-paused', '0');
+});
+
+test('entries overwritten while the page was hidden are reported as paused, not missed', async ({ page }) => {
+  const replies = trackLogReplies(page);
+  const reads = trackLogReads(page);
+  await login(page, admin);
+  await expect.poll(() => replies.length, { timeout: 30_000 }).toBeGreaterThan(1);
+  const missed = await page.locator('#abfm-missed').getAttribute('data-missed');
+  await setVisibility(page, 'hidden');
+  // the poll that may be in flight has answered once no read is outstanding
+  await expect.poll(() => reads.length === replies.length, { timeout: 10_000 }).toBe(true);
+  const quiet = replies.length;
+  guest(`awk 'BEGIN { s = sprintf("%180s", ""); gsub(/ /, "x", s); for (i = 0; i < 5000; i++) print "abfm-hidden " i " " s }' | logger -t abfm-hidden`);
+  expect(replies.length).toBe(quiet);
+  const before = reads.length;
+  await setVisibility(page, 'visible');
+  await expect.poll(async () => Number(await page.locator('#abfm-missed').getAttribute('data-paused')), { timeout: 30_000 })
+    .toBeGreaterThan(0);
+  await expect(page.locator('#abfm-missed')).toHaveAttribute('data-missed', missed ?? '0');
+  await expect(page.locator('#abfm-paused-gap')).toContainText('while updates were paused');
+  // one right-sized request on return (16..900), plus at most one refetch
+  const first = reads[before].args.lines;
+  expect(first).toBeGreaterThanOrEqual(16);
+  expect(first).toBeLessThanOrEqual(900);
+});
+
+test("dnsmasq's lost-entry reports count as missed entries (§8.3)", async ({ page }) => {
+  await login(page, admin);
+  await seeQuery(page, 'before-lost.up.example.test');
+  const missed = Number(await page.locator('#abfm-missed').getAttribute('data-missed'));
+  fakeDnsmasq(['overflow: 12 log entries lost']);
+  await expect(page.locator('#abfm-missed')).toHaveAttribute('data-missed', String(missed + 12), { timeout: 30_000 });
+  await expect(page.locator('#abfm-missed')).toContainText(`${missed + 12} log entries missed`);
+});
+
+test('never two log reads in flight, even when the page is hidden and shown again during a slow read', async ({ page }) => {
+  let inFlight = 0, maxInFlight = 0, slow = false;
+  await page.route((url) => isUbus(url), async (route) => {
+    if (!ubusCalls(route.request()).some(([o, m]) => o === 'log' && m === 'read')) return route.continue();
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    try {
+      if (slow) await new Promise((resolve) => setTimeout(resolve, 6_000));
+      const response = await route.fetch();
+      await route.fulfill({ response });
+    } finally {
+      inFlight--;
+    }
+  });
+  const reads = trackLogReads(page);
+  await login(page, admin);
+  await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(1);
+  slow = true;
+  await expect.poll(() => inFlight, { timeout: 10_000 }).toBe(1);
+  for (let i = 0; i < 2; i++) {
+    await setVisibility(page, 'hidden');
+    await setVisibility(page, 'visible');
+  }
+  // LuCI's poll loop ticks every second: give the re-added poll several chances to start a second read
+  await expect.poll(() => reads.length, { timeout: 15_000 }).toBeGreaterThan(3);
+  slow = false;
+  expect(maxInFlight).toBe(1);
+  await expect(page.locator('#abfm-state')).toHaveAttribute('data-state', 'healthy');
+  await expect(page.locator('#abfm-log-stalled')).toHaveCount(0);
+});
+
+test('failed log reads back off, then recover', async ({ page }) => {
+  const reads = trackLogReads(page);
+  await login(page, admin);
+  await seeQuery(page, 'before-backoff.up.example.test');
+  try {
+    guest('/etc/init.d/log stop');
+    guestWait('! ubus list log >/dev/null 2>&1', 30);
+    await expect(page.locator('#abfm-retrying')).toBeVisible({ timeout: 30_000 });
+    const start = reads.length;
+    // without back-off a 2 s poll makes 15 reads in 30 s; with it, at most 5
+    await page.waitForTimeout(30_000);
+    expect(reads.length - start).toBeLessThanOrEqual(5);
+    expect(reads.length - start).toBeGreaterThanOrEqual(1);
+    // the rows already shown stay
+    await expect(queryRow(page, 'before-backoff.up.example.test')).toBeVisible();
+  } finally {
+    guest('/etc/init.d/log start');
+  }
+  guestWait('ubus list log >/dev/null 2>&1', 30);
+  ensureHealthy();
+  await expect(page.locator('#abfm-retrying')).toHaveCount(0, { timeout: 60_000 });
+  await seeQuery(page, 'after-backoff.up.example.test');
+});
+
+test('no input for 15 minutes pauses polling until the next input', async ({ page }) => {
+  await page.clock.install();
+  const reads = trackLogReads(page);
+  await login(page, admin);
+  await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(1);
+  await page.clock.fastForward('16:00');
+  await expect(page.locator('#abfm-paused')).toBeVisible({ timeout: 30_000 });
+  const paused = reads.length;
+  await page.clock.fastForward('01:00');
+  await page.clock.runFor(5_000);
+  expect(reads.length).toBe(paused);
+  await page.mouse.move(10, 10);
+  await page.mouse.move(40, 40);
+  await expect(page.locator('#abfm-paused')).toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(paused);
 });
 
 test('P2: a hidden page sends no log reads for 60 s and resumes when visible', async ({ page }) => {

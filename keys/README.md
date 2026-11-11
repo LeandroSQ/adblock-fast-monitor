@@ -2,7 +2,7 @@
 
 This directory holds the **public** halves of the keys that sign the apk feed
 and the release packages. Private keys are never committed: `.gitignore`
-rejects `*.key`, `*.key.pem` and `*private*.pem`, and CI runs gitleaks over
+rejects `_.key`, `_.key.pem` and `_private_.pem`, and CI runs gitleaks over
 the whole history. Report a suspected key leak privately as described in
 [SECURITY.md](../SECURITY.md).
 
@@ -22,7 +22,7 @@ subshell with `umask 077`), never inside a checkout. The commands work on macOS 
 
 ```sh
 (umask 077 && mkdir -p ~/.afm-keys &&
-	openssl ecparam -name prime256v1 -genkey -noout -out ~/.afm-keys/afm-2026.key.pem)
+  openssl ecparam -name prime256v1 -genkey -noout -out ~/.afm-keys/afm-2026.key.pem)
 openssl pkey -in ~/.afm-keys/afm-2026.key.pem -pubout -out keys/adblock-fast-monitor.pem
 openssl pkey -pubin -in keys/adblock-fast-monitor.pem -outform DER | openssl dgst -sha256   # fingerprint
 gh secret set APK_SIGNING_KEY --env release < ~/.afm-keys/afm-2026.key.pem
@@ -43,22 +43,22 @@ hand before the first release. Workflows:
 [`release.yml`](../.github/workflows/release.yml).
 
 1. **Environment `release`** (Settings → Environments): required reviewer =
-   the maintainer; *Deployment branches and tags* → *Selected branches and
-   tags* → add a **tag** rule `v*` (no branch rules); environment secret
+   the maintainer; _Deployment branches and tags_ → _Selected branches and
+   tags_ → add a **tag** rule `v*` (no branch rules); environment secret
    `APK_SIGNING_KEY` (above). Only the `sign` job uses it.
-2. **Environment `github-pages`**: Settings → Pages → Source = *GitHub
-   Actions*. GitHub creates the environment allowing only the default
+2. **Environment `github-pages`**: Settings → Pages → Source = _GitHub
+   Actions_. GitHub creates the environment allowing only the default
    branch; releases deploy from a tag, so add a **tag** rule `v*` under
-   *Deployment branches and tags*, or the `deploy` job is rejected. The
+   _Deployment branches and tags_, or the `deploy` job is rejected. The
    published URL must stay `https://leandrosq.github.io/adblock-fast-monitor`
    (the `smoke` job fails if Pages reports another URL, because it is baked
    into the feed page and the release notes).
 3. **Tag protection** (Settings → Rules → Rulesets, target tags `v*`):
    restrict creation, update and deletion to maintainers.
 4. **Branch protection for `main`**: require pull requests and the status
-   check **`CI ok`** (job `ci-ok` in `ci.yml`, which fails if any other CI job
+   check **`ci-ok`** (job `ci-ok` in `ci.yml`, which fails if any other CI job
    failed or was skipped without a docs-only reason).
-5. **Actions settings**: workflow permissions *Read repository contents*;
+5. **Actions settings**: workflow permissions _Read repository contents_;
    require approval for workflows from outside collaborators (fork PRs get no
    secrets and save no caches either way).
 6. **Release flow**: push tag `vX.Y.Z-rN` (equal to `PKG_VERSION-rPKG_RELEASE`

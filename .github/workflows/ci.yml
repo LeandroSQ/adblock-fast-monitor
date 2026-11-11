@@ -76,6 +76,8 @@ jobs:
           path: .local-validation/host-ucode
           key: host-userland-${{ hashFiles('scripts/hosttools/**') }}
       - run: npm ci --no-audit --no-fund
+      - name: Pinned ShellCheck and actionlint (CI fails on a missing lint tool)
+        run: scripts/lint/fetch-tools.sh
       - name: Build or load the ucode/BusyBox userland (OpenWrt 25.12.6 pins)
         run: scripts/build-host-ucode.sh
       - name: Save the host userland image (pushes to main only)
@@ -315,7 +317,7 @@ jobs:
           retention-days: 7
 
   ci-ok:
-    name: CI ok
+    # No display name: the required status check is called ci-ok.
     if: always()
     needs: [changes, host, secrets, package, guest, browser, install]
     runs-on: ubuntu-24.04

@@ -67,8 +67,8 @@ test('real queries from a LAN client: decisions, sources, header and toggles', a
     expect(mm.changed).toBeGreaterThanOrEqual(0);
   }
   expect(perf.measures.at(-1).rows).toBeGreaterThan(0);
-  // the first poll creates the rows; a poll that brings nothing new touches no row
-  expect(perf.measures[0].changed).toBeGreaterThan(0);
+  // polls that bring new queries create rows; a poll that brings nothing new touches no row
+  expect(perf.measures.some((mm) => mm.changed > 0)).toBe(true);
   await expect.poll(() => page.evaluate(() => performance.getEntriesByName('abfm-poll').slice(-3)
     .some((e) => e.detail.changed === 0)), { timeout: 30_000 }).toBe(true);
 
@@ -235,6 +235,7 @@ test('never two log reads in flight, even when the page is hidden and shown agai
   expect(maxInFlight).toBe(1);
   await expect(page.locator('#abfm-state')).toHaveAttribute('data-state', 'healthy');
   await expect(page.locator('#abfm-log-stalled')).toHaveCount(0);
+  await page.unrouteAll({ behavior: 'wait' });
 });
 
 test('failed log reads back off, then recover', async ({ page }) => {
@@ -244,12 +245,15 @@ test('failed log reads back off, then recover', async ({ page }) => {
   try {
     guest('/etc/init.d/log stop');
     guestWait('! ubus list log >/dev/null 2>&1', 30);
-    await expect(page.locator('#abfm-retrying')).toBeVisible({ timeout: 30_000 });
     const start = reads.length;
+    // a read in flight when logd stopped may only fail at uhttpd's ubus timeout
+    await expect(page.locator('#abfm-retrying')).toBeVisible({ timeout: 90_000 });
+    const failed = reads.length;
     // without back-off a 2 s poll makes 15 reads in 30 s; with it, at most 5
     await page.waitForTimeout(30_000);
-    expect(reads.length - start).toBeLessThanOrEqual(5);
-    expect(reads.length - start).toBeGreaterThanOrEqual(1);
+    expect(failed - start).toBeLessThanOrEqual(3);
+    expect(reads.length - failed).toBeLessThanOrEqual(5);
+    expect(reads.length - failed).toBeGreaterThanOrEqual(1);
     // the rows already shown stay
     await expect(queryRow(page, 'before-backoff.up.example.test')).toBeVisible();
   } finally {

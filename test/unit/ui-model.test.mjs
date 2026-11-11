@@ -212,3 +212,28 @@ test('formatting: counts, percentages, durations, local times', () => {
   assert.equal(m.formatTime(t), `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`);
   assert.equal(m.formatTime(null), '—');
 });
+
+test('logWatch/logStalled: notice after a logd restart with no dnsmasq line since', () => {
+  const g = m.LOG_STALL_GRACE;
+  const rep = (...msgs) => ({ log: msgs.map((msg, i) => ({ id: i + 1, msg })) });
+  const quiet = rep('netifd: up', 'dnsmasq-dhcp[1]: DHCPACK', 'logger: dnsmasq[1]: fake');
+  // no reset: nothing pending, replies are not even needed
+  assert.deepEqual(m.logWatch(null, [quiet], false, 100), { resetAt: null });
+  // reset with only non-dnsmasq lines -> pending from now
+  let w = m.logWatch(null, [quiet], true, 100);
+  assert.deepEqual(w, { resetAt: 100 });
+  assert.equal(m.logStalled(w, 100 + g - 1), false);   // grace
+  // still silent: keeps the first reset time
+  w = m.logWatch(w, [quiet], false, 130);
+  assert.deepEqual(w, { resetAt: 100 });
+  assert.equal(m.logStalled(w, 100 + g), true);
+  // any dnsmasq line (also the refetch reply of the same poll) clears it
+  assert.deepEqual(m.logWatch(w, [quiet, rep('dnsmasq[1]: started, version 2.93')], false, 140), { resetAt: null });
+  // a reset whose reply already holds dnsmasq lines is not a stall
+  assert.deepEqual(m.logWatch(null, [rep('dnsmasq[1]: 5 10.0.2.2/1 query[A] a.example.test from 10.0.2.2')], true, 100), { resetAt: null });
+  // a second reset restarts the clock
+  assert.deepEqual(m.logWatch({ resetAt: 100 }, [quiet], true, 200), { resetAt: 200 });
+  // hostile shapes
+  assert.deepEqual(m.logWatch(null, [null, { log: 'x' }, { log: [null, { msg: 7 }] }], true, 5), { resetAt: 5 });
+  assert.equal(m.logStalled(null, 1e9), false);
+});

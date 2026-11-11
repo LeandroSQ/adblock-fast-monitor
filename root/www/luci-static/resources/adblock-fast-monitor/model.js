@@ -132,6 +132,38 @@ function viewOptions(infoResult) {
 	};
 }
 
+const LOG_STALL_GRACE = 20;
+
+function hasDnsmasqLine(reply) {
+	const log = (isObject(reply) && Array.isArray(reply.log)) ? reply.log : [];
+	for (let i = 0; i < log.length; i++)
+		if (isObject(log[i]) && typeof(log[i].msg) == 'string' && log[i].msg.indexOf('dnsmasq[') == 0)
+			return true;
+	return false;
+}
+
+/*
+ * Tracks whether dnsmasq has logged anything since logd restarted (ingest
+ * reported `reset`). replies: the `log read` replies of one poll (the
+ * refetch included); now: epoch s. Returns the new watch {resetAt}; resetAt
+ * is null when no restart is pending. Replies are scanned only right after a
+ * reset or while one is pending, so normal polls cost nothing.
+ */
+function logWatch(prev, replies, reset, now) {
+	const pending = isObject(prev) && prev.resetAt != null;
+	if (!reset && !pending)
+		return { resetAt: null };
+	const seen = (Array.isArray(replies) ? replies : []).some(hasDnsmasqLine);
+	if (seen)
+		return { resetAt: null };
+	return { resetAt: reset ? now : prev.resetAt };
+}
+
+/* logd restarted at least LOG_STALL_GRACE s ago and dnsmasq has been silent since. */
+function logStalled(watch, now) {
+	return isObject(watch) && watch.resetAt != null && (now - watch.resetAt) >= LOG_STALL_GRACE;
+}
+
 /* dhcp `domain`/`local` names from `info.local_domains`, for querylog.create(). */
 function localDomains(infoResult) {
 	const info = infoData(infoResult);
@@ -398,6 +430,9 @@ return baseclass.extend({
 	pageState: pageState,
 	loggingElsewhere: loggingElsewhere,
 	viewOptions: viewOptions,
+	LOG_STALL_GRACE: LOG_STALL_GRACE,
+	logWatch: logWatch,
+	logStalled: logStalled,
 	localDomains: localDomains,
 	rowOp: rowOp,
 	filterRows: filterRows,

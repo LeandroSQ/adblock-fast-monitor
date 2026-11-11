@@ -1,8 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
 name: CI
 
-# No paths-ignore: a docs-only change still runs `changes` and `host` (which
-# includes the docs self-check, test/unit/docs-references.test.mjs); the
-# `changes` job skips the package and QEMU jobs for it.
+# No paths-ignore: a docs-only change still runs `changes`, `host` (which
+# includes the docs self-check, test/unit/docs-references.test.mjs) and
+# `secrets`; the `changes` job skips the package and QEMU jobs for it.
+# `ci-ok` is the single required status check (keys/README.md checklist).
+#
+# Caches are restored read-only everywhere and saved only by pushes to main,
+# so pull requests can never seed a cache that main or a release reads.
+# release.yml uses no caches in its build and sign jobs.
 on:
   pull_request:
     branches: [main]
@@ -19,6 +25,8 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
+  SDK_TARBALL: .local-validation/openwrt-sdk-25.12.6-1864152619092e78.tar.zst
+  SDK_CACHE_KEY: openwrt-sdk-25.12.6-x86-64-1864152619092e78
 
 jobs:
   changes:
@@ -38,18 +46,19 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.sha }}
+        # --no-renames: a file moved out of (or into) a code path counts on both sides.
         run: |
           set -euo pipefail
           code=true
           if [[ "$EVENT" != workflow_dispatch && -n "$BASE" && ! "$BASE" =~ ^0+$ ]] &&
-            files="$(git diff --name-only "$BASE" "$HEAD")"; then
+            files="$(git diff --no-renames --name-only "$BASE" "$HEAD")"; then
             if [[ -n "$files" ]] && ! grep -Evq '^docs/|\.md$' <<<"$files"; then code=false; fi
           fi
           echo "code=$code" >>"$GITHUB_OUTPUT"
           echo "non-docs changes: $code"
 
   host:
-    name: Host (static, unit, ucode, shell)
+    name: Host (lint, static, unit, ucode, shell)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -60,22 +69,43 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - name: Restore OpenWrt host userland image cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore the OpenWrt host userland image
+        id: userland
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .local-validation/host-ucode
           key: host-userland-${{ hashFiles('scripts/hosttools/**') }}
       - run: npm ci --no-audit --no-fund
       - name: Build or load the ucode/BusyBox userland (OpenWrt 25.12.6 pins)
         run: scripts/build-host-ucode.sh
-      - name: Static checks, schema, unit, contract, ucode and BusyBox shell suites
+      - name: Save the host userland image (pushes to main only)
+        if: github.event_name == 'push' && steps.userland.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .local-validation/host-ucode
+          key: host-userland-${{ hashFiles('scripts/hosttools/**') }}
+      - name: Lint, static checks, unit, contract, ucode and BusyBox shell suites
         run: npm run verify:host
-      - name: P0 performance baseline state
-        run: npm run test:performance
+
+  secrets:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # gitleaks v8.30.1 (multi-arch index digest); reviewed exceptions: .gitleaksignore.
+      - name: gitleaks git
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --redact --no-banner --verbose /repo
 
   package:
     name: Package (OpenWrt 25.12.6 SDK)
-    needs: changes
+    needs: [changes, host]
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -83,23 +113,41 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Restore SDK tarball cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: OpenWrt SDK host prerequisites (gawk, ncurses)
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends gawk libncurses-dev
+      - &sdk-restore
+        name: Restore the SDK tarball (sha256-checked before use)
+        id: sdk
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .local-validation/openwrt-sdk-25.12.6-1864152619092e78.tar.zst
-          key: openwrt-sdk-25.12.6-x86-64-1864152619092e78
-      - name: Build the APK with the pinned SDK
+          path: ${{ env.SDK_TARBALL }}
+          key: ${{ env.SDK_CACHE_KEY }}
+      - name: Build the APK in a fresh SDK extracted from the verified tarball
+        env:
+          ABFM_BUILD_OUT: ${{ github.workspace }}/.ci-work/build
         run: |
           set -euo pipefail
-          apk="$(scripts/build-package.sh)"
-          mkdir -p .ci-work/apk .ci-work/dev
-          cp "$apk" "$(dirname "$apk")/package.sha256" .ci-work/apk/
-          # Developer build: unsigned, installable only with apk add --allow-untrusted over SSH.
-          sdk_apk="$(scripts/release/apk-tool.sh)"
-          name="$("$sdk_apk" adbdump "$apk" | sed -n 's/^  name: //p' | head -n1)"
-          version="$("$sdk_apk" adbdump "$apk" | sed -n 's/^  version: //p' | head -n1)"
-          cp "$apk" ".ci-work/dev/$name-$version.apk"
-          (cd .ci-work/dev && sha256sum ./*.apk | sed 's#  \./#  #' >SHA256SUMS)
+          scripts/build-package.sh
+          mkdir -p .ci-work/apk
+          cp .ci-work/build/package.apk .ci-work/build/package.sha256 .ci-work/apk/
+      - name: Save the SDK tarball (pushes to main only)
+        if: >-
+          !cancelled() && github.event_name == 'push' && steps.sdk.outputs.cache-hit != 'true' &&
+          hashFiles(env.SDK_TARBALL) != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SDK_TARBALL }}
+          key: ${{ env.SDK_CACHE_KEY }}
+      - name: Upload the build log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-log
+          path: .ci-work/build/build.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Signing pipeline self-test (throwaway keys, deleted afterwards)
         run: scripts/release/selftest.sh "$RUNNER_TEMP/release-selftest" .ci-work/apk/package.apk
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -107,8 +155,23 @@ jobs:
           name: apk
           path: .ci-work/apk/
           if-no-files-found: error
-          retention-days: 14
-      - name: Upload the unsigned developer build
+          retention-days: 3
+      # Only pushes to main publish a downloadable developer build; pull
+      # requests (including forks) only feed the test jobs above.
+      - name: Name the unsigned developer build
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          sdk_apk="$(scripts/release/apk-tool.sh)"
+          apk=.ci-work/apk/package.apk
+          name="$("$sdk_apk" adbdump "$apk" | sed -n 's/^  name: //p' | head -n1)"
+          version="$("$sdk_apk" adbdump "$apk" | sed -n 's/^  version: //p' | head -n1)"
+          [[ -n "$name" && -n "$version" ]]
+          mkdir -p .ci-work/dev
+          cp "$apk" ".ci-work/dev/$name-$version.apk"
+          (cd .ci-work/dev && sha256sum ./*.apk | sed 's#  \./#  #' >SHA256SUMS)
+      - name: Upload the unsigned developer build (pushes to main only)
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: luci-app-adblock-fast-monitor-unsigned-dev
@@ -135,18 +198,22 @@ jobs:
       - &install-qemu
         name: Install QEMU
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends qemu-system-x86 qemu-utils dnsutils
-      - &guest-cache
-        name: Restore stock image, baseline and package cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends qemu-system-x86 qemu-utils dnsutils
+      # Package indexes (*.adb) are never cached: the proxy fetches them fresh,
+      # so a cached mirror cannot pin stale feed contents.
+      - &guest-restore
+        name: Restore stock image, baseline and package mirror
+        id: guest-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
+          path: &guest-paths |
             .local-validation/qemu/openwrt.img.gz
             .local-validation/qemu/abfm-baseline-25.12.6.qcow2
             .local-validation/qemu/abfm-baseline-25.12.6.qcow2.manifest
             .local-validation/openwrt-package-mirror
-          key: guest-25.12.6-${{ hashFiles('scripts/guest/prepare-baseline.sh', 'scripts/guest/lib.sh') }}
+            !.local-validation/openwrt-package-mirror/**/*.adb
+          key: &guest-key guest-25.12.6-${{ hashFiles('scripts/guest/prepare-baseline.sh', 'scripts/guest/lib.sh') }}
       - &download-apk
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -156,6 +223,14 @@ jobs:
         run: scripts/guest/run-guest-tests.sh .ci-work/apk/package.apk
         env:
           GUEST_RUN_DIR: ${{ github.workspace }}/.ci-work/guest-run
+      - name: Save stock image, baseline and package mirror (pushes to main only)
+        if: >-
+          !cancelled() && github.event_name == 'push' && steps.guest-cache.outputs.cache-hit != 'true' &&
+          hashFiles('.local-validation/qemu/abfm-baseline-25.12.6.qcow2') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: *guest-paths
+          key: *guest-key
       - name: Upload guest logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -178,13 +253,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - &setup-node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - *enable-kvm
       - *install-qemu
-      - *guest-cache
+      - *guest-restore
       - *download-apk
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
@@ -213,19 +289,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+      - *setup-node
       - *enable-kvm
       - *install-qemu
-      - *guest-cache
+      - *guest-restore
       - *download-apk
-      - name: Restore SDK tarball cache (host apk for signing)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .local-validation/openwrt-sdk-25.12.6-1864152619092e78.tar.zst
-          key: openwrt-sdk-25.12.6-x86-64-1864152619092e78
+      - *sdk-restore
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - name: Throwaway-key feed, key added and package installed/removed through LuCI
@@ -244,3 +313,22 @@ jobs:
             .ci-work/guest-run/feed/serve-site.log
           if-no-files-found: ignore
           retention-days: 7
+
+  ci-ok:
+    name: CI ok
+    if: always()
+    needs: [changes, host, secrets, package, guest, browser, install]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job passed; only a docs-only change may skip the package and QEMU jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          CODE: ${{ needs.changes.outputs.code }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e --arg code "$CODE" 'to_entries | all(.value.result == "success" or
+            (.value.result == "skipped" and $code == "false" and
+             (.key | IN("package", "guest", "browser", "install"))))' <<<"$NEEDS" >/dev/null

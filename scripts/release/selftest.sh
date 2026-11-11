@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Executed test of the release signing pipeline (scripts/release/sign-feed.sh)
 # with throwaway ECDSA P-256 keys. Linux x86_64 (SDK host apk).
 #
@@ -48,15 +49,21 @@ t 'the unsigned SDK package does not verify' not "$APK" verify --keys-dir "$work
 t 'index.html carries the feed and key URLs' bash -c "grep -q 'https://example.invalid/feed/apk/packages.adb' '$site/index.html' &&
 	grep -q 'https://example.invalid/feed/keys/adblock-fast-monitor.pem' '$site/index.html' && ! grep -q '@[A-Z_]*@' '$site/index.html'"
 
+# A non-root user (the GitHub runner) can only create a database with --usermode.
+usermode=()
+[[ "$(id -u)" == 0 ]] || usermode=(--usermode)
 newroot() {
-	rm -rf "$1"; mkdir -p "$1/etc/apk/keys"
-	"$APK" --root "$1" --initdb --no-cache --arch x86_64 --repositories-file /dev/null add >/dev/null
+	rm -rf "$1" && mkdir -p "$1/etc/apk/keys" &&
+		"$APK" --root "$1" --initdb "${usermode[@]}" --no-cache --arch x86_64 --repositories-file /dev/null add
 }
-r="$work/root-trusted"; newroot "$r"; cp "$work/keys/adblock-fast-monitor.pem" "$r/etc/apk/keys/"
+r="$work/root-trusted"
+t "apk --initdb creates an empty root (uid $(id -u))" newroot "$r"
+cp "$work/keys/adblock-fast-monitor.pem" "$r/etc/apk/keys/"
 apkr() { "$APK" --root "$1" --no-cache --arch x86_64 --repositories-file /dev/null --repository "$site/apk/packages.adb" "${@:2}"; }
 t 'a root that trusts the key lists the package from the feed' bash -c \
 	"$(declare -f apkr); APK='$APK' site='$site'; apkr '$r' search -x '$name' | grep -qx '$name-$version'"
-r2="$work/root-untrusted"; newroot "$r2"
+r2="$work/root-untrusted"
+t "apk --initdb creates a root without the key (uid $(id -u))" newroot "$r2"
 t 'a root without the key rejects the index' bash -c \
 	"$(declare -f apkr); APK='$APK' site='$site'; out=\$(apkr '$r2' search -x '$name' 2>&1); echo \"\$out\"; ! grep -qx '$name-$version' <<<\"\$out\" && grep -q 'UNTRUSTED' <<<\"\$out\""
 

@@ -1,31 +1,72 @@
 # Package signing keys
 
 This directory holds the **public** halves of the keys that sign the apk feed
-and the release packages. Private keys are never committed.
+and the release packages. Private keys are never committed: `.gitignore`
+rejects `*.key`, `*.key.pem` and `*private*.pem`, and CI runs gitleaks over
+the whole history. Report a suspected key leak privately as described in
+[SECURITY.md](../SECURITY.md).
 
 | File | Status |
 | --- | --- |
 | `adblock-fast-monitor.pem` | **not created yet** — the maintainer generates it offline (below) |
 
-Until `adblock-fast-monitor.pem` exists, `release.yml` fails at the signing
+Until `adblock-fast-monitor.pem` exists, `release.yml` fails in its first
 step on purpose; CI builds stay unsigned developer builds.
 
 ## Generate the key (maintainer, offline, once)
 
-ECDSA P-256 in PEM, the same format OpenWrt's own `private-key.pem` uses:
+ECDSA P-256 in PEM, the same format OpenWrt's own `private-key.pem` uses.
+The private key lives only in `~/.afm-keys` (mode 0700, created in a
+subshell with `umask 077`), never inside a checkout. The commands work on macOS and Linux
+(`openssl dgst` instead of `sha256sum`):
 
 ```sh
-openssl ecparam -name prime256v1 -genkey -noout -out afm-2026.key.pem   # keep OUT of the repo
-openssl pkey -in afm-2026.key.pem -pubout -out keys/adblock-fast-monitor.pem
-openssl pkey -pubin -in keys/adblock-fast-monitor.pem -outform DER | sha256sum   # fingerprint
-gh secret set APK_SIGNING_KEY --env release < afm-2026.key.pem
+(umask 077 && mkdir -p ~/.afm-keys &&
+	openssl ecparam -name prime256v1 -genkey -noout -out ~/.afm-keys/afm-2026.key.pem)
+openssl pkey -in ~/.afm-keys/afm-2026.key.pem -pubout -out keys/adblock-fast-monitor.pem
+openssl pkey -pubin -in keys/adblock-fast-monitor.pem -outform DER | openssl dgst -sha256   # fingerprint
+gh secret set APK_SIGNING_KEY --env release < ~/.afm-keys/afm-2026.key.pem
 ```
 
 Commit `keys/adblock-fast-monitor.pem` and record the fingerprint below. Keep
-an offline backup of the private key (password manager). Never reuse the SDK's
-auto-generated `private-key.pem`.
+an offline backup of `~/.afm-keys/afm-2026.key.pem` (password manager), then
+`ls -la ~/.afm-keys` should show `drwx------` and `-rw-------`. Never reuse
+the SDK's auto-generated `private-key.pem`.
 
 Fingerprint (SHA-256 of the DER public key): _to be filled in with the key_.
+
+## Maintainer checklist (repository settings, once)
+
+Nothing in this repository changes these settings; the maintainer does it by
+hand before the first release. Workflows:
+[`ci.yml`](../.github/workflows/ci.yml),
+[`release.yml`](../.github/workflows/release.yml).
+
+1. **Environment `release`** (Settings → Environments): required reviewer =
+   the maintainer; *Deployment branches and tags* → *Selected branches and
+   tags* → add a **tag** rule `v*` (no branch rules); environment secret
+   `APK_SIGNING_KEY` (above). Only the `sign` job uses it.
+2. **Environment `github-pages`**: Settings → Pages → Source = *GitHub
+   Actions*. GitHub creates the environment allowing only the default
+   branch; releases deploy from a tag, so add a **tag** rule `v*` under
+   *Deployment branches and tags*, or the `deploy` job is rejected. The
+   published URL must stay `https://leandrosq.github.io/adblock-fast-monitor`
+   (the `smoke` job fails if Pages reports another URL, because it is baked
+   into the feed page and the release notes).
+3. **Tag protection** (Settings → Rules → Rulesets, target tags `v*`):
+   restrict creation, update and deletion to maintainers.
+4. **Branch protection for `main`**: require pull requests and the status
+   check **`CI ok`** (job `ci-ok` in `ci.yml`, which fails if any other CI job
+   failed or was skipped without a docs-only reason).
+5. **Actions settings**: workflow permissions *Read repository contents*;
+   require approval for workflows from outside collaborators (fork PRs get no
+   secrets and save no caches either way).
+6. **Release flow**: push tag `vX.Y.Z-rN` (equal to `PKG_VERSION-rPKG_RELEASE`
+   in the `Makefile`). `release.yml` builds, tests, waits for the `release`
+   approval, signs, creates a **draft** release, deploys Pages, smoke-tests the
+   exact version from the public feed (up to ~12 min for the Pages cache), and
+   only then publishes the release. If a job fails, fix the cause and re-run
+   the workflow: the draft's assets are replaced.
 
 ## How the key is used
 
@@ -33,25 +74,29 @@ Fingerprint (SHA-256 of the DER public key): _to be filled in with the key_.
   runs `scripts/release/sign-feed.sh`: `apk adbsign` on each package,
   `apk mkndx --sign-key` for `packages.adb`, then a mandatory
   `apk verify --keys-dir keys/` of everything it publishes. It refuses a key
-  whose public half is not in this directory.
+  whose public half is not in this directory. It signs only the APK whose
+  sha256 the `build` job reported, downloaded by artifact id.
 - Routers trust it through LuCI → System → Administration → Repository Public
   Keys (saved as `/etc/apk/keys/adblock-fast-monitor.pem`). The package lists
   that file in `/lib/upgrade/keep.d/` so sysupgrade keeps it.
 
 ## Rotation
 
-1. Generate the new key as above and commit it as a second file, e.g.
+1. Generate the new key as above (e.g. `~/.afm-keys/afm-2027.key.pem`) and
+   commit its public half as a second file, e.g.
    `keys/adblock-fast-monitor-2027.pem`.
 2. For an overlap period sign with both keys (`apk adbsign --allow-untrusted
    --sign-key new.pem` on the already signed index and packages adds a second
    signature; apk accepts either).
 3. Tell users to add the new key on the Repository Public Keys page.
-4. Drop the old signature and delete the old public key here.
+4. Drop the old signature, delete the old public key here, and replace the
+   `APK_SIGNING_KEY` secret.
 
 Routers that never added the new key see `UNTRUSTED signature` on
 `apk update` once the old signature is gone.
 
 ## Compromise
 
-apk has no revocation. Rotate immediately, publish an advisory, and tell users
-to delete the old key on the Repository Public Keys page.
+apk has no revocation. Rotate immediately, delete the old `APK_SIGNING_KEY`
+secret, publish an advisory (see [SECURITY.md](../SECURITY.md)), and tell
+users to delete the old key on the Repository Public Keys page.

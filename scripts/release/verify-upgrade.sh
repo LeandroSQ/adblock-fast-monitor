@@ -3,17 +3,20 @@
 #
 #   scripts/release/verify-upgrade.sh NEW.apk
 #
-# 1. Builds an "older" variant from the same source as NEW.apk (its
-#    build-package.sh source/ directory when present, else this worktree)
-#    with PKG_VERSION lowered to $ABFM_OLD_PKG_VERSION (default 0.0.9),
-#    through scripts/build-package.sh in a scratch copy (.ci-work/upgrade-old).
+# 1. Builds the old package with PKG_VERSION lowered to $ABFM_OLD_PKG_VERSION
+#    (default 0.0.9), through scripts/build-package.sh in a scratch copy
+#    (.ci-work/upgrade-old). Its source is the git ref $ABFM_OLD_REF (default
+#    d27b5d4, the last api-1 source with the resident daemon, so the test
+#    covers the v1 -> v2 migration); ABFM_OLD_REF=same uses the source of
+#    NEW.apk instead (its build-package.sh source/ directory when present,
+#    else this worktree).
 # 2. Signs old and new into one feed with a throwaway ECDSA key that never
 #    touches this repository: on Linux x86_64 it lives in a mktemp directory,
 #    elsewhere only inside a disposable linux/amd64 container; it is deleted
 #    right after signing.
 # 3. Boots a guest without the package and runs
-#    test/guest/package-upgrade.host.sh (install old from the feed, monitoring
-#    on, conffile change, one applied rule, `apk upgrade`, assertions).
+#    test/guest/package-upgrade.host.sh (install old from the feed, query
+#    logging on, conffile change, one applied rule, `apk upgrade`, assertions).
 # NEW.apk must be inside the worktree or .local-validation.
 set -euo pipefail
 
@@ -22,18 +25,27 @@ cd "$root"
 new="${1:?usage: scripts/release/verify-upgrade.sh NEW.apk}"
 [[ -f "$new" ]] || { echo "not found: $new" >&2; exit 2; }
 old_pkg_version="${ABFM_OLD_PKG_VERSION:-0.0.9}"
+old_ref="${ABFM_OLD_REF:-d27b5d4}"
 log() { printf 'verify-upgrade: %s\n' "$*" >&2; }
 linux_x86=0
 [[ "$(uname -s)-$(uname -m)" == Linux-x86_64 ]] && linux_x86=1
 amd64() { if ((linux_x86)); then "$@"; else scripts/in-docker.sh --platform linux/amd64 -- "$@"; fi; }
 
-# 1. older variant of the same source
-src="$(dirname "$new")/source"
-[[ -f "$src/Makefile" && -d "$src/root" ]] || src="$root"
+# 1. old package
 scratch=.ci-work/upgrade-old
 rm -rf "$scratch"
 mkdir -p "$scratch/scripts"
-tar -C "$src" -cf - Makefile root $([[ -d "$src/po" ]] && echo po) | tar -C "$scratch" -xf -
+if [[ "$old_ref" == same ]]; then
+	src="$(dirname "$new")/source"
+	[[ -f "$src/Makefile" && -d "$src/root" ]] || src="$root"
+	tar -C "$src" -cf - Makefile root $([[ -d "$src/po" ]] && echo po) | tar -C "$scratch" -xf -
+else
+	src="git $old_ref"
+	git -C "$root" archive "$old_ref" Makefile root po | tar -C "$scratch" -xf -
+fi
+# api 1 shipped the resident daemon (docs/CONTRACT.md §3 migration).
+old_api=2
+[[ -e "$scratch/root/usr/libexec/adblock-fast-monitor/monitord.uc" ]] && old_api=1
 cp scripts/build-package.sh "$scratch/scripts/"
 mkdir -p .local-validation
 ln -s "$(cd .local-validation && pwd -P)" "$scratch/.local-validation"
@@ -69,7 +81,7 @@ else
 fi
 
 # 3. guest
-export ABFM_UPGRADE_TEST=1 ABFM_FEED_DIR="$feed" ABFM_OLD_VERSION="$old_pkg_version-r1"
+export ABFM_UPGRADE_TEST=1 ABFM_FEED_DIR="$feed" ABFM_OLD_VERSION="$old_pkg_version-r1" ABFM_OLD_API="$old_api"
 run=(scripts/guest/run-guest-tests.sh --no-install "$new" test/guest/package-upgrade.host.sh)
 if ((linux_x86)) && command -v qemu-system-x86_64 >/dev/null; then
 	exec "${run[@]}"

@@ -24,14 +24,16 @@ humans and agents alike. The interface is frozen in
 4. Record executed evidence in `docs/test-traceability.md` when a feature's
    status changes.
 5. Open a pull request. CI (`.github/workflows/ci.yml`) reruns host, package,
-   guest, browser and install checks; GitHub Actions minutes are limited, so
-   push only after local validation passes.
+   guest, browser and install checks (a docs-only change runs only the host
+   job, which includes the docs self-check); GitHub Actions minutes are
+   limited, so push only after local validation passes. A change to the
+   package's upgrade path also needs `scripts/release/verify-upgrade.sh PKG.apk`.
 
 ## Commits
 
 - Subject: imperative, ≤ 72 characters, optionally prefixed with the area
   (`UI:`, `perf gate:`, `packaging:`, `docs:`). Body: what and why, wrapped
-  at ~72 columns, citing CONTRACT sections or test IDs (T01–T26, P1–P10).
+  at ~72 columns, citing CONTRACT sections or test IDs (T01–T31, P1–P10).
 - Coherent increments: each commit passes `npm run verify:host`.
 - Move or rename files with `git mv` so history follows them.
 - Commits made by an AI agent end with its trailer, e.g.

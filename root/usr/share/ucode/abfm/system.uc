@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// Discovery helpers shared by the daemon, logging.uc and the rpcd plugin:
-// the monitor's own UCI, dnsmasq instances and their conf-dirs, and the
-// query-logging drop-ins (docs/CONTRACT.md §3, §5). Functions take a uci
+// Discovery helpers shared by logging.uc and the rpcd plugin: the package's
+// own UCI, dnsmasq instances and their conf-dirs, and the query-logging
+// drop-ins (docs/CONTRACT.md §3, §5). Functions take a uci
 // cursor (and, where they act, injected callbacks) so they run unchanged
 // against a temporary UCI directory in tests.
 'use strict';
@@ -11,22 +11,17 @@ const fs = require('fs');
 const DROPIN_NAME = 'adblock-fast-monitor.conf';
 // log-async: dnsmasq queues up to 25 log lines instead of blocking the
 // query path on syslog writes; a full queue is reported by dnsmasq as
-// "overflow: N log entries lost" (counted in dropped.dnsmasq_reported).
+// "overflow: N log entries lost" (the browser parser counts it, §8).
 const DROPIN_CONTENT = 'log-queries=extra\nlog-async=25\n';
-const DNS_MODES_OBSERVABLE = [ 'dnsmasq.servers', 'dnsmasq.addnhosts', 'dnsmasq.conf' ];
 
 // ---------------------------------------------------------------------------
-// Monitor configuration (§3)
+// Package configuration (§3)
 
 const UINTS = {
-	recent_size: [ 500, 50, 2000 ],
-	top_size: [ 256, 32, 1024 ],
-	pending_size: [ 512, 64, 4096 ],
-	pending_ttl: [ 10, 2, 60 ],
-	poll_interval: [ 5, 2, 60 ]
+	poll_interval: [ 2, 2, 60 ]
 };
 const BOOLS = {
-	enabled: false, manage_logging: true, record_clients: false, exclude_router: true
+	query_logging: false, exclude_router: true
 };
 const TRUE = { '1': true, 'on': true, 'true': true, 'yes': true, 'enabled': true };
 const FALSE = { '0': true, 'off': true, 'false': true, 'no': true, 'disabled': true };
@@ -127,6 +122,14 @@ function local_domains(cursor) {
 	};
 	cursor.foreach('dhcp', 'dnsmasq', (s) => { add(s.domain); add(s.local); });
 	return out;
+}
+
+// logd ring size in KiB as ubox log.init computes `-S`: log_buffer_size,
+// else log_size, else 64 (§6.1; it bounds how many queries the page sees).
+function logd_size_kib(cursor) {
+	let pick = (v) => (type(v) == 'string' && match(v, /^[0-9]+$/) && +v > 0) ? +v : null;
+	return pick(cursor.get_first('system', 'system', 'log_buffer_size'))
+		?? pick(cursor.get_first('system', 'system', 'log_size')) ?? 64;
 }
 
 // adblock-fast's `dns` mode, or null when adblock-fast has no config.
@@ -268,7 +271,7 @@ function logging_apply(mode, opts) {
 // --- adblock-fast discovery (WU2) ---
 // adblock-fast state for the rpcd plugin (docs/CONTRACT.md §6.1, §6.5, §10).
 // Reads go through the caller's cursor, which must use the plugin's private
-// savedir so LuCI's unsaved changes never leak into the result.
+// savedir so nobody's uncommitted changes leak into the result.
 
 const AF_INIT = '/etc/init.d/adblock-fast';
 const AF_CONFIG = '/etc/config/adblock-fast';
@@ -276,8 +279,11 @@ const AF_PENDING = '/tmp/.uci/adblock-fast';
 const AF_DEFAULT_HEARTBEAT = 'heartbeat.mossdef.org';
 const AF_DEFAULT_UPDATE_URL = 'https://cdn.jsdelivr.net/gh/openwrt/packages/net/adblock-fast/files/adblock-fast.config.update';
 
-// Unsaved LuCI changes for adblock-fast in a uci delta file. adblock-fast
-// itself saves (without committing) file_url sizes after each download when
+// Uncommitted changes for adblock-fast in the default uci savedir (/tmp/.uci:
+// `uci set` without commit from the CLI or a script). `dl` would read them, so
+// apply refuses (§6.3). LuCI's own staged changes live per session in
+// /var/run/rpcd/uci-<sid> and are not seen here (§14). adblock-fast itself
+// saves (without committing) file_url sizes after each download when
 // update_config_sizes=1; that bookkeeping is not a user change.
 function adblock_fast_pending(path) {
 	for (let l in split(fs.readfile(path ?? AF_PENDING) ?? '', '\n'))
@@ -323,14 +329,6 @@ function adblock_fast_protected(cursor, af) {
 	return { names, hosts };
 }
 
-// pid of the first running instance of a procd service, or null.
-function service_pid(conn, name) {
-	for (let k, v in conn?.call('service', 'list', { name })?.[name]?.instances ?? {})
-		if (v?.running)
-			return v.pid ?? null;
-	return null;
-}
-
 // §6.1 `dnsmasq`: logging_status() for every enabled section, plus whether
 // it logs to a file and whether dnsmasq_instance targets it.
 function dnsmasq_info(cursor, conn) {
@@ -355,7 +353,6 @@ function dnsmasq_info(cursor, conn) {
 return {
 	DROPIN_NAME,
 	DROPIN_CONTENT,
-	DNS_MODES_OBSERVABLE,
 	parse_bool,
 	parse_uint,
 	monitor_config,
@@ -364,6 +361,7 @@ return {
 	logging_targets,
 	dropin_path,
 	local_domains,
+	logd_size_kib,
 	adblock_fast_dns,
 	service_state,
 	logging_status,
@@ -371,6 +369,5 @@ return {
 	adblock_fast_pending,
 	adblock_fast_state,
 	adblock_fast_protected,
-	service_pid,
 	dnsmasq_info
 };

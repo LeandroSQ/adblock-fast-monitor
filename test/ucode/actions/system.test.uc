@@ -110,8 +110,15 @@ t.test('dnsmasq_info: enabled sections with logfacility_file, targeted, confdir-
 		[ 'guest', null, 'confdir-invalid', false, true ]);
 });
 
-t.test('service_pid: null without a connection', () => {
-	t.eq(sys.service_pid(null, 'dnsmasq'), null);
+t.test('logd_size_kib: log_buffer_size, else log_size, else 64 (ubox log.init)', () => {
+	t.eq(sys.logd_size_kib(cur()), 64, 'neither set');
+	write('system', "config system\n\toption log_size '128'\n");
+	t.eq(sys.logd_size_kib(cur()), 128);
+	write('system', "config system\n\toption log_size '128'\n\toption log_buffer_size '256'\n");
+	t.eq(sys.logd_size_kib(cur()), 256);
+	write('system', "config system\n\toption log_size 'big'\n\toption log_buffer_size '0'\n");
+	t.eq(sys.logd_size_kib(cur()), 64, 'unparsable and zero are ignored');
+	write('system', "config system\n\toption hostname 'MyRouter'\n");
 });
 
 system(`rm -rf ${base}`);

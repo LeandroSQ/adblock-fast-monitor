@@ -1,7 +1,8 @@
 #!/bin/sh
 # Actions jobs on a real guest with real adblock-fast (docs/CONTRACT.md §7):
-# T15 allow of a listed name, T16 no collateral, T17 block/unblock/unallow
-# each run one rebuild with the full state sequence, T18 list server down,
+# T15 allow of a listed name, T16 no collateral, T17 block, allow of a manual
+# block and block of a manual allow each run one rebuild with the full state
+# sequence, T18 list server down,
 # T19 busy, kill -9 -> interrupted, start-timeout; verification reasons.
 . "$ABFM_TESTLIB/sh/testlib.sh"
 . "$ABFM_FIXTURES/actions/guest-lib.sh"
@@ -47,10 +48,9 @@ w=$(watch '{"ops":[{"op":"allow","domain":"ads.example.com"}],"confirm_rebuild":
 t_eq "T16: allow ads.example.com applied" "applied ok" "$(jget "$w" @.job.state) $(item "$w" 0 result)"
 t_eq "T16: ads.example.com resolves" "$UPSTREAM_A" "$(dns_a ads.example.com)"
 t_eq "T16: bads.example.com stays blocked" NXDOMAIN "$(dns_a bads.example.com)"
-t_eq "T16: rules still lists bads.example.com" "true blocked" \
-	"$(jget "$(call rules '{"domains":["bads.example.com"]}')" '@.domains["bads.example.com"].listed') $(jget "$(call rules '{"domains":["bads.example.com"]}')" '@.domains["bads.example.com"].effective')"
+t_ok "T16: the output file still blocks bads.example.com" grep -qx 'server=/bads.example.com/' /var/run/adblock-fast/dnsmasq.servers
 
-# --------------------------- T17 block / unblock / unallow, one rebuild each
+# ------------------- T17 block, allow of a block, block of an allow: one rebuild each
 m=$(log_mark)
 w=$(watch '{"ops":[{"op":"block","domain":"new.example.com"}],"confirm_rebuild":true}')
 t_eq "T17 block: state sequence" "queued applying verifying applied" "$(states "$w")"
@@ -61,22 +61,23 @@ t_ok "T17 block: blocked_domain persisted" uci_has blocked_domain new.example.co
 t_eq "T17 block: DNS blocked" NXDOMAIN "$(dns_a new.example.com)"
 
 m=$(log_mark)
-w=$(watch '{"ops":[{"op":"unblock","domain":"new.example.com"}],"confirm_rebuild":true}')
-t_eq "T17 unblock: state sequence" "queued applying verifying applied" "$(states "$w")"
-t_eq "T17 unblock: manual block removed and verified" "unblock block:remove ok allowed" \
-	"$(item "$w" 0 effective_op) $(item "$w" 0 change[0]) $(item "$w" 0 result) $(item "$w" 0 observed)"
-t_eq "T17 unblock: one adblock-fast run" 1 "$(af_runs "$m")"
-t_not "T17 unblock: blocked_domain entry removed" uci_has blocked_domain new.example.com
-t_eq "T17 unblock: DNS allowed" "$UPSTREAM_A" "$(dns_a new.example.com)"
+w=$(watch '{"ops":[{"op":"allow","domain":"new.example.com"}],"confirm_rebuild":true}')
+t_eq "T17 allow of a manual block: state sequence" "queued applying verifying applied" "$(states "$w")"
+t_eq "T17 allow of a manual block: block removed, allow added, verified" "allow allow:add block:remove ok allowed" \
+	"$(item "$w" 0 effective_op) $(item "$w" 0 change[0]) $(item "$w" 0 change[1]) $(item "$w" 0 result) $(item "$w" 0 observed)"
+t_eq "T17 allow of a manual block: one adblock-fast run" 1 "$(af_runs "$m")"
+t_not "T17 allow of a manual block: blocked_domain entry removed" uci_has blocked_domain new.example.com
+t_ok "T17 allow of a manual block: allowed_domain entry added" uci_has allowed_domain new.example.com
+t_eq "T17 allow of a manual block: DNS allowed" "$UPSTREAM_A" "$(dns_a new.example.com)"
 
 m=$(log_mark)
-w=$(watch '{"ops":[{"op":"unallow","domain":"ads.example.com"}],"confirm_rebuild":true}')
-t_eq "T17 unallow: state sequence" "queued applying verifying applied" "$(states "$w")"
-t_eq "T17 unallow: observed reported (list blocks again)" "any ok blocked" \
-	"$(item "$w" 0 expect) $(item "$w" 0 result) $(item "$w" 0 observed)"
-t_eq "T17 unallow: one adblock-fast run" 1 "$(af_runs "$m")"
-t_not "T17 unallow: allowed_domain entry removed" uci_has allowed_domain ads.example.com
-t_eq "T17 unallow: DNS blocked again" NXDOMAIN "$(dns_a ads.example.com)"
+w=$(watch '{"ops":[{"op":"block","domain":"ads.example.com"}],"confirm_rebuild":true}')
+t_eq "T17 block of a manual allow: state sequence" "queued applying verifying applied" "$(states "$w")"
+t_eq "T17 block of a manual allow: allow removed, block added, verified" "allow:remove block:add blocked ok blocked" \
+	"$(item "$w" 0 change[0]) $(item "$w" 0 change[1]) $(item "$w" 0 expect) $(item "$w" 0 result) $(item "$w" 0 observed)"
+t_eq "T17 block of a manual allow: one adblock-fast run" 1 "$(af_runs "$m")"
+t_not "T17 block of a manual allow: allowed_domain entry removed" uci_has allowed_domain ads.example.com
+t_eq "T17 block of a manual allow: DNS blocked again" NXDOMAIN "$(dns_a ads.example.com)"
 
 # --------------------------------------------- T18 list server down
 uci set adblock-fast.fixture.url='http://10.0.2.2:1/abfm-list-server-down.txt'
@@ -125,7 +126,7 @@ t_ok "T19: lock is free after kill -9" lock_free
 j=$(call job "{\"job_id\":\"$id\"}")
 t_eq "T19: killed job -> failed/interrupted" "failed interrupted" "$(jget "$j" @.job.state) $(jget "$j" @.job.error.code)"
 t_eq "T19: interruption is persisted" failed "$(jsonfilter -i "$JOB_FILE" -e @.state)"
-w=$(watch '{"ops":[{"op":"unblock","domain":"slow.example.com"}],"confirm_rebuild":true}')
+w=$(watch '{"ops":[{"op":"allow","domain":"slow.example.com"}],"confirm_rebuild":true}')
 t_eq "T19: next apply accepted and completes" "true applied" "$(jget "$w" @.apply.ok) $(jget "$w" @.job.state)"
 t_eq "T19: no adblock-fast run left behind" "" "$(pgrep -f /lib/adblock-fast/cli.uc)"
 

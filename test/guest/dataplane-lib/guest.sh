@@ -14,7 +14,6 @@
 #   dp_mon_set KEY=VALUE...     set adblock-fast-monitor.config options + commit
 #   dp_wait SECS CMD...         poll CMD every second until it succeeds
 #   dp_dnsmasq_pid              pid of the main dnsmasq instance (procd)
-#   dp_mon_pid                  pid of the monitor daemon (procd), empty if none
 
 DP_CONFDIR=${DP_CONFDIR:-/tmp/dnsmasq.$(uci -q -X show dhcp | sed -n 's/^dhcp\.\([^.=]*\)=dnsmasq$/\1/p' | head -n1).d}
 DP_UPSTREAM_CONF=$DP_CONFDIR/abfm-test-upstream.conf
@@ -90,9 +89,4 @@ dp_mon_set() {
 
 dp_dnsmasq_pid() {
 	ubus call service list '{"name":"dnsmasq"}' 2>/dev/null | jsonfilter -e '@.dnsmasq.instances[*].pid' | head -n1
-}
-
-dp_mon_pid() {
-	ubus call service list '{"name":"adblock-fast-monitor"}' 2>/dev/null |
-		jsonfilter -e '@["adblock-fast-monitor"].instances[*].pid' | head -n1
 }

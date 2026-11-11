@@ -7,8 +7,9 @@ applyTo: ".github/workflows/**"
 Adds to [AGENTS.md](../../AGENTS.md) (hard restrictions 8 and 9).
 
 - Minutes are limited: keep triggers as they are (`ci.yml`: PRs and pushes to
-  `main`, docs-only changes skipped, manual dispatch; `release.yml`: tags
-  `v*`). No new triggers, schedules or matrices without a stated need.
+  `main` and manual dispatch, with the `changes` job skipping the package
+  and QEMU jobs for docs-only changes while `host` and its docs self-check
+  still run; `release.yml`: tags `v*`). No new triggers, schedules or matrices without a stated need.
 - Every job has `timeout-minutes` and least-privilege `permissions`
   (workflow default read-only or none); each workflow has a `concurrency`
   group (CI cancels superseded runs; releases never cancel).

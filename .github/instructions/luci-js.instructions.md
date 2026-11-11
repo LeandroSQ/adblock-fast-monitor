@@ -20,7 +20,10 @@ Adds to [AGENTS.md](../../AGENTS.md); contract: `docs/CONTRACT.md` §8–§9.
   real guard.
 - Poll with `poll.add` only while `document.visibilityState` is visible;
   remove the handlers when hidden (P0).
-- Staging is client-side; one `apply` per batch (§8.2).
+- Staging is client-side; one `apply` per batch (§8.4).
+- Read DNS activity only with core `log read` and `lines` in 16–900, never
+  `0` or omitted (§8.1); never `log write` or `/ubus/subscribe`. Parsing and
+  classification live in the pure `querylog.js` (§8.2–8.3).
 - Keep logic that can be pure in
   `root/www/luci-static/resources/adblock-fast-monitor/model.js` and test it
   in `test/unit/` by executing the real file (`test/unit/ui-model.test.mjs`).

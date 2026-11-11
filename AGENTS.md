@@ -11,9 +11,10 @@ incomplete or wrong, then fix it.
 ## What this is
 
 A standalone LuCI app for OpenWrt 25.12.6 (apk) that **depends on**
-adblock-fast 1.2.4-r4: a dashboard (stats, last blocked/allowed domains) and
-staged block/unblock/allow/unallow applied with one explicit Apply (one
-rebuild). The frozen interface is [`docs/CONTRACT.md`](docs/CONTRACT.md); all
+adblock-fast 1.2.4-r4: a dashboard of recent DNS queries (blocked/allowed,
+blocked %) that the **browser** reads from the system log (`log read`), and
+staged allow/block applied with one explicit Apply (one rebuild). No
+resident process runs on the router. The frozen interface (api 2) is [`docs/CONTRACT.md`](docs/CONTRACT.md); all
 code implements it. Docs index: [`docs/README.md`](docs/README.md).
 
 ## Hard restrictions (never violate)
@@ -34,16 +35,20 @@ code implements it. Docs index: [`docs/README.md`](docs/README.md).
    systems or Lua.
 5. **P0 resources** ([`scripts/perf/budgets.json`](scripts/perf/budgets.json),
    rationale in [`docs/performance.md`](docs/performance.md), the process
-   inventory and budgets in CONTRACT §1 and §11): zero processes when
-   disabled; no subprocess, fork or filesystem write per DNS query or log
-   line; no full-list scans on hot paths (RPC methods return in
-   milliseconds; long work runs in a child or the job); no copies of block
-   lists in tmpfs; no idle timers or polling on the router; the UI polls
-   only while the page is visible; bounded RAM structures only.
+   inventory and budgets in CONTRACT §1 and §11): zero package processes in
+   every state (the only exception is the job during an Apply); no
+   per-query work on the router (log processing happens in the browser); no
+   full-list scans on hot paths (RPC methods return in milliseconds; long
+   work runs in the job); no copies of block lists in tmpfs; no idle timers
+   or polling on the router; the UI polls `log read` with bounded `lines`
+   (16–900) only while the page is visible; bounded structures only.
 6. **Privacy and security.** Render untrusted data as text (`E()` children,
    `textContent`); never `innerHTML` or HTML strings with dynamic data.
    Keep the ACL's read and write grants separate (§9); writes to adblock-fast
-   UCI only via `apply`. Recording client addresses (`record_clients`) is off by default. Never commit
+   UCI only via `apply`; never grant `log write` or `:subscribe`. The read
+   grant includes the whole system log, so the app is for admins only (say
+   so in user docs). The client column is hidden by default; nothing stores
+   client addresses on the router. Never commit
    secrets, private keys, guest passwords, real DNS logs or client IPs
    (fixtures use reserved names and TEST-NET addresses).
 7. **No live routers.** Never SSH to or change a real device; use the QEMU
@@ -61,22 +66,22 @@ code implements it. Docs index: [`docs/README.md`](docs/README.md).
 
 ## Architecture map
 
-The data-plane design (which processes run, how DNS activity is collected,
-ubus objects, RPC methods) is defined **only** in
+The design (no resident process, how query logging is switched on, how the
+browser reads and classifies the log, RPC methods) is defined **only** in
 [`docs/CONTRACT.md`](docs/CONTRACT.md): §1 decisions, §2 file inventory with
-each file's role, §4–§7 behaviour. Read those sections before changing code
+each file's role, §4–§8 behaviour. Read those sections before changing code
 under `root/`; do not restate them elsewhere.
 
 | Path | Holds |
 | --- | --- |
 | `root/` | everything installed by the APK (layout = target filesystem; roles: CONTRACT §2) |
-| `root/www/luci-static/resources/` | LuCI views and the pure UI `model.js` (§8) |
+| `root/www/luci-static/resources/` | LuCI views and the pure UI modules (`model.js`, `querylog.js`; §8) |
 | `root/usr/share/rpcd/` | rpcd ucode plugin and ACL (§6, §9) |
 | `root/usr/share/ucode/abfm/` | pure ucode modules, unit-tested on the host |
 | `Makefile`, `po/` | `luci.mk` package definition; translation template |
 | `scripts/` | build (`scripts/build-package.sh`), container wrapper (`scripts/in-docker.sh`), guest harness (`scripts/guest/`), perf (`scripts/perf/`), release (`scripts/release/`) |
 | `test/` | `ucode/`, `shell/`, `unit/` (host), `guest/` (QEMU), `browser/` (Playwright), `lib/`, `fixtures/` |
-| `.github/workflows/` | `ci.yml` (PR/push to main), `release.yml` (tags `v*`) |
+| `.github/workflows/` | `ci.yml` (PR/push to main; docs-only changes run only `changes` and `host`), `release.yml` (tags `v*`) |
 
 Files at the repository root named `*_API.md`, `INTEGRATION_CONTRACT.md` and
 `RUNTIME_TEST_REQUIREMENTS.md` are superseded stubs.
@@ -99,6 +104,7 @@ needed for Playwright (browser and T22). Details of every harness:
 | Guest (functional) tests | `npm run verify:guest -- PKG.apk [test/guest/FILE...]` | Docker/QEMU | ~30 s boot + tests |
 | Guest + browser tests | `npm run verify:guest -- --browser PKG.apk` | Docker/QEMU, `npm ci` | ~6 min |
 | T22 LuCI install from a signed feed | `scripts/release/verify-luci-install.sh PKG.apk` | Docker/QEMU, `npm ci` | ~3 min |
+| T30 upgrade from the api-1 package | `scripts/release/verify-upgrade.sh PKG.apk` | Docker/QEMU, amd64 | ~12 min (builds the old APK) |
 | P0 gate (T26) | `npm run test:performance:measure -- PKG.apk` | Docker/QEMU | 25–40 min |
 | Re-judge a perf run | `npm run test:performance` (SKIP without a run) | Node | |
 | Release signing self-test | `scripts/release/selftest.sh WORKDIR PKG.apk` (macOS: prefix `scripts/in-docker.sh --platform linux/amd64 --`) | Linux x86_64 | ~10 s |
@@ -117,8 +123,8 @@ then sign with `scripts/release/sign-feed.sh` and publish). Maintainers only.
   the real code: ucode interpreter (`test/ucode/**/*.test.uc`), BusyBox ash
   (`test/shell/`), the QEMU guest (`test/guest/*.sh` runs inside the guest,
   `test/guest/*.host.sh` on the host with `guest_exec`), or Playwright against
-  the guest's LuCI (`test/browser/*.spec.mjs`). The T01–T26 matrix is
-  CONTRACT §13.
+  the guest's LuCI (`test/browser/*.spec.mjs`), or Node loading the real
+  LuCI modules (`test/unit/*.test.mjs`). The T01–T31 matrix is CONTRACT §13.
 - **Forbidden:** tests that grep source or docs, re-implementations of the
   logic under test, stubs where a real backend is available, sleeps instead of
   readiness checks. Fix root causes, never loosen a test to pass.

@@ -48,7 +48,7 @@ the repository.
 | Installable from LuCI (key + Upload + feed), no `--allow-untrusted` | T22 | guest + browser | pass |
 | Upgrade from api 1 (config migrated, daemon gone) | T07 `test/shell/uci-defaults-migrate.test.sh`, T30 | BusyBox + guest | pass |
 | Package inventory, deps, modes, sysupgrade keep list | T31 `package-files.host.sh` | guest | pass |
-| Release signing pipeline (throwaway key) | `scripts/release/selftest.sh` (14/14, 2026-11-10, design-A tree; script unchanged since) | Linux x86_64 container | pass |
+| Release signing pipeline (throwaway key: adbsign, mkndx, mandatory verify, tamper/foreign-key rejection) | `scripts/release/selftest.sh WORKDIR PKG.apk` in a linux/amd64 container on the release-candidate artifact | Linux x86_64 container | pass (all checks; the key is created and deleted in the work dir) |
 
 ## P0 (T26)
 

@@ -178,10 +178,18 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
       const recs = w.procs ?? Object.entries(w.seen ?? {}).flatMap(([c, v]) => v.pids.map(pid => ({ pid, ppid: null, cmdline: c,
         first_ms: 0, last_ms: (v.samples - 1) * 250, samples: v.samples })));
       const iv = w.interval_ms ?? 250, pids = new Set(recs.map(r => r.pid));
+      // Children of an init invocation (rc.common's `running` runs ubus and
+      // jsonfilter) belong to that invocation, not to the resident set.
+      const initPids = new Set(recs.filter(r => isInit(r.cmdline)).map(r => r.pid));
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const r of recs) if (!initPids.has(r.pid) && initPids.has(r.ppid)) { initPids.add(r.pid); grew = true; }
+      }
       const inv = [];
       for (const r of recs) {
         const life = (r.last_ms - r.first_ms + iv) / 1000;
-        if (!isInit(r.cmdline) || life > budgets.P1.transient_max_lifetime_s) { add(`${name} (${iv} ms watch)`, r.cmdline); continue; }
+        if (!initPids.has(r.pid) || life > budgets.P1.transient_max_lifetime_s) { add(`${name} (${iv} ms watch)`, r.cmdline); continue; }
+        if (!isInit(r.cmdline)) continue;
         if (!pids.has(r.ppid)) inv.push({ cmdline: r.cmdline, at_s: round(r.first_ms / 1000, 1), wall_s: round(life, 2) });
       }
       transient[name] = { invocations: inv.length, wall_s: round(inv.reduce((t, x) => t + x.wall_s, 0), 2),

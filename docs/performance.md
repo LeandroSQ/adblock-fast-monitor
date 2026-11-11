@@ -226,6 +226,31 @@ so these numbers carry host-contention noise. Raw data stays in the shared
 cache (not committed); re-run the gate on a directory to regenerate
 `summary.json`.
 
+### B-min release candidate (`main` `024b06c`, final gate)
+
+Run `.local-validation/perf/20261111T051631Z-42044` (`npm run
+test:performance:measure`, APK `.local-validation/artifacts/20261111T045712Z-1`,
+sha256 `56e8684b…`, no other guests running): **PASS, all of P1–P8 and P10**.
+The gate as measured reported P1 FAIL: two processes in one 100 ms sample,
+`ubus call service list` and `jsonfilter … instances[*].running`, children
+(ppid) of procd's `running` check of the init script. The classifier now
+counts descendants of an init invocation as part of that transient
+invocation (`scripts/performance-gate.mjs`); re-evaluating the same run
+gives P1 PASS. A descendant that outlives `transient_max_lifetime_s` is
+still resident.
+
+| ID | Result | Noise (spread over 3 repeats, 50 / 200 qps) |
+|---|---|---|
+| P1 | 0 resident; one trigger firing at the logging-on boot (`reload` + `running`, 0.32 s), 0 at the logging-off boot, 0 idle; rpcd RssAnon +220 KiB | |
+| P2 | 0 requests hidden 60.3 s, 0 closed 60.3 s; visible control 6 / 12 s | |
+| P3 | +1.23 pp at 50 qps, +2.53 pp at 200; `log read` p95 26.5 ms (N = 394), 51.9–59.6 ms (N = 900) | CPU 0.13–0.30 pp; `log read` 1.2–5.5 ms |
+| P4 | `abfm-poll` p95 11.0 ms over 60 polls | |
+| P5 | Δp95 +2.04 ms at 50 qps, +1.39 ms at 200 (≤ 3) | 0.26 / 0.43 ms at 50, 0.03 / 0.75 at 200 |
+| P6 | dnsmasq +8.34 / +7.91 pp; logd +3.82 / +7.25; rpcd, uhttpd, ubusd 0 | dnsmasq 0.73 / 0.65, logd 0.30 / 0.13 |
+| P7 | `info` p95 10.1 ms | |
+| P8 | apply dry max 9.0 ms, real 28.2 ms; rpcd worst 18.1 ms | |
+| P10 | boot 0, enable [1, 1, 1, 1], save 0 | |
+
 ### B-min (gate artifact, `main` `7ed430e`)
 
 Run `.local-validation/perf/20261111T042902Z-37426` (`npm run

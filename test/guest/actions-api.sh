@@ -29,7 +29,7 @@ t_eq "info: query_logging mirrors UCI" "$ql" "$(jget "$info" @.monitor.query_log
 t_eq "info: monitor holds only query_logging" query_logging "$(ucode -e 'print(join(" ", sort(keys(json(ARGV[0]).monitor))))' "$info")"
 t_eq "info: dnsmasq instances carry exactly the §6.1 fields" "confdir dropin logfacility_file running section uci_logqueries" \
 	"$(ucode -e 'print(join(" ", sort(keys(json(ARGV[0]).dnsmasq.instances[0]))))' "$info")"
-host=$(uci -q get system.@system[0].hostname | tr '[:upper:]' '[:lower:]')
+host=$(uci -q get system.@system[0].hostname | awk '{ print tolower($0) }')
 t_eq "info: protected_suffixes = built-ins, heartbeat, dhcp domain, hostname" \
 	"localhost arpa local internal invalid onion bind heartbeat.example.com lan $host" "$(jget "$info" '@.protected_suffixes[*]' | tr '\n' ' ' | sed 's/ $//')"
 t_eq "info: local_domains are the dhcp domain/local values" "lan" "$(jget "$info" '@.local_domains[*]' | sort -u | tr '\n' ' ' | sed 's/ $//')"

@@ -48,11 +48,13 @@ old_api=2
 [[ -e "$scratch/root/usr/libexec/adblock-fast-monitor/monitord.uc" ]] && old_api=1
 cp scripts/build-package.sh "$scratch/scripts/"
 mkdir -p .local-validation
-ln -s "$(cd .local-validation && pwd -P)" "$scratch/.local-validation"
+ln -s ../../.local-validation "$scratch/.local-validation"
 sed -i.bak -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$old_pkg_version/" -e 's/^PKG_RELEASE:=.*/PKG_RELEASE:=1/' "$scratch/Makefile"
 rm -f "$scratch/Makefile.bak"
 log "building $old_pkg_version-r1 from $src"
 old="$(amd64 "$scratch/scripts/build-package.sh" | tail -n 1)"
+# scripts/in-docker.sh mounts the checkout at /workspace.
+old="${old/#\/workspace\//$root/}"
 [[ -f "$old" ]] || { log "old build failed"; exit 1; }
 cp "$old" "$scratch/old.apk"
 cp "$new" "$scratch/new.apk"

@@ -13,7 +13,10 @@ import luci from './scripts/lint/eslint-plugin-luci.mjs';
 // LuCI class files. `root/www/` until the move to `htdocs/` (luci.mk layout)
 // lands; both are listed so the config works on either side of it.
 const LUCI = ['root/www/**/*.js', 'htdocs/**/*.js'];
-const XSS = 'is set as innerHTML by LuCI dom.append: pass T(text) or an array (AGENTS.md hard restriction 6)';
+const RULE6 = 'render dynamic data as text (AGENTS.md hard restriction 6)';
+const SINK = `HTML sink: ${RULE6}`;
+// luci.js dom.append assigns a non-array, non-node child to innerHTML.
+const CHILD = `is set as innerHTML by LuCI dom.append; pass T(text) or an array: ${RULE6}`;
 const STR = '/^(Literal|TemplateLiteral|BinaryExpression)$/';
 
 export default defineConfig([
@@ -64,14 +67,14 @@ export default defineConfig([
       'no-empty': ['error', { allowEmptyCatch: true }],
       'no-restricted-globals': ['error', 'name', 'status', 'event', 'length', 'top', 'parent', 'self', 'close', 'open', 'origin'],
       'no-restricted-properties': ['error',
-        ...['innerHTML', 'outerHTML', 'insertAdjacentHTML'].map((property) => ({ property, message: XSS })),
-        { object: 'dom', property: 'parse', message: XSS }],
+        ...['innerHTML', 'outerHTML', 'insertAdjacentHTML'].map((property) => ({ property, message: SINK })),
+        { object: 'dom', property: 'parse', message: SINK }],
       'no-restricted-syntax': ['error',
-        { selector: `CallExpression[callee.name='E'][arguments.2.type=${STR}]`, message: `A string child ${XSS}` },
-        { selector: `CallExpression[callee.name='E'][arguments.length=2][arguments.1.type=${STR}]`, message: `A string child ${XSS}` },
-        { selector: "CallExpression[callee.name='E'][arguments.2.callee.name=/^(_|String)$/]", message: `A string child ${XSS}` },
-        { selector: "CallExpression[callee.name='E'][arguments.2.callee.property.name='format']", message: `A string child ${XSS}` },
-        { selector: `CallExpression[callee.object.name='dom'][callee.property.name=/^(content|append)$/][arguments.1.type=${STR}]`, message: `A string ${XSS}` },
+        { selector: `CallExpression[callee.name='E'][arguments.2.type=${STR}]`, message: `A string child of E() ${CHILD}` },
+        { selector: `CallExpression[callee.name='E'][arguments.length=2][arguments.1.type=${STR}]`, message: `A string child of E() ${CHILD}` },
+        { selector: "CallExpression[callee.name='E'][arguments.2.callee.name=/^(_|String)$/]", message: `A string child of E() ${CHILD}` },
+        { selector: "CallExpression[callee.name='E'][arguments.2.callee.property.name='format']", message: `A string child of E() ${CHILD}` },
+        { selector: `CallExpression[callee.object.name='dom'][callee.property.name=/^(content|append)$/][arguments.1.type=${STR}]`, message: `A string passed to dom.content/append ${CHILD}` },
         { selector: "CallExpression[callee.name='_'][arguments.0.type!='Literal']", message: 'i18n-scan.pl extracts only string literals' }],
       '@stylistic/indent': ['error', 'tab', { SwitchCase: 0 }],
       '@stylistic/brace-style': ['error', 'stroustrup', { allowSingleLine: true }], // LuCI: }⏎else

@@ -23,7 +23,7 @@
     "test:browser:required": "node scripts/run-browser-required.mjs",
     "test:performance": "node scripts/performance-gate.mjs",
     "test:performance:measure": "node scripts/integration/measure-performance.mjs",
-    "verify:commit": "npm run lint && ABFM_STATIC_NO_CONTAINER=1 npm run check:static && node --test test/unit/docs-references.test.mjs",
+    "verify:commit": "npm run lint && ABFM_STATIC_NO_CONTAINER=1 npm run check:static && node --test --test-reporter=dot test/unit/docs-references.test.mjs",
     "verify:host": "npm run lint && npm run check:static && npm run test:unit && npm run test:ucode && npm run test:shell",
     "verify:guest": "scripts/verify-guest.sh",
     "hooks:install": "git config core.hooksPath .githooks",

@@ -1,6 +1,6 @@
 // Prepares the guest once for the browser suite:
 // - points adblock-fast at the deterministic local fixture list;
-// - enables monitoring with a 2 s refresh.
+// - turns on query logging and starts a fake upstream for *.up.example.test.
 import { ensureHealthy, guest, waitAdblockFast } from './lib/guest.mjs';
 
 export default async function globalSetup() {

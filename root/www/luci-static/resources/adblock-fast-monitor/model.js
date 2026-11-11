@@ -3,19 +3,20 @@
 
 /*
  * Pure UI logic for the Adblock Fast Monitor views (docs/CONTRACT.md §8):
- * RPC error mapping, UI state derivation (§8.1), the client-side staging
- * reducer (§8.2) and display formatting. No DOM, no RPC, no timers, so the
- * same file is loaded unchanged by the host unit tests.
+ * RPC error mapping, the page state (§8.5), view options from `info`, the
+ * client-side staging reducer (§8.4), the row filter and display formatting. No DOM, no
+ * RPC, no timers, so the same file is loaded unchanged by the host unit tests.
  */
 
-const STORAGE_KEY = 'adblock-fast-monitor.pending.v1';
+const STORAGE_KEY = 'adblock-fast-monitor.pending.v2';
+const STORAGE_VERSION = 2;
 const MAX_PENDING = 64;
-const OPS = [ 'allow', 'unblock', 'block', 'unallow' ];
-const INVERSE = { allow: 'unallow', unallow: 'allow', block: 'unblock', unblock: 'block' };
+/* The UI stages only allow and block; plan() maps them to UCI changes (§6.6). */
+const OPS = [ 'allow', 'block' ];
+/* Row button per decision: Allow on blocked rows, Block on allowed rows. */
+const ROW_OP = { blocked: 'allow', allowed: 'block' };
 const TERMINAL_JOB = { applied: true, partial: true, failed: true };
 const LEAVES_PENDING = { ok: true, skipped: true };
-const STARTING_GRACE = 15;
-const OBJECT_MISSING = -32000;
 const ACCESS_DENIED = -32002;
 
 function isObject(value) {
@@ -27,21 +28,9 @@ function int(value, fallback) {
 	return (typeof(value) != 'boolean' && value !== '' && value != null && isFinite(n)) ? Math.floor(n) : fallback;
 }
 
-/* §3: out-of-range values clamp, unparsable values fall back to the default. */
-function clampOption(value, def, min, max) {
-	const n = int(value, null);
-	if (n == null)
-		return def;
-	return Math.min(max, Math.max(min, n));
-}
-
-function pollInterval(value) {
-	return clampOption(value, 5, 2, 60);
-}
-
 /*
  * LuCI's rpc.js rejects with an Error whose message carries the JSON-RPC or
- * ubus code ("... failed with error -32000: Object not found",
+ * ubus code ("... failed with error -32002: Access denied",
  * "... failed with ubus code 7: ..."). Returns {rpc, ubus, message}.
  */
 function rpcError(err) {
@@ -78,20 +67,6 @@ function normalizeDomain(input) {
 	return d;
 }
 
-/* §4.6 `q`: lower-cased, ^[a-z0-9_.-]{1,64}$. '' means no filter, null invalid. */
-function searchQuery(input) {
-	const q = String(input == null ? '' : input).trim().toLowerCase();
-	if (q == '')
-		return '';
-	return /^[a-z0-9_.-]{1,64}$/.test(q) ? q : null;
-}
-
-/* ---- §8.1 state derivation ---------------------------------------------- */
-
-/*
- * Wraps an RPC promise outcome into a plain result:
- *   {ok:true, data}  or  {ok:false, rpc, ubus, message}
- */
 function settle(data) {
 	return { ok: true, data: data };
 }
@@ -101,104 +76,86 @@ function failure(err) {
 	return { ok: false, rpc: e.rpc, ubus: e.ubus, message: e.message };
 }
 
-/*
- * Tracks when the monitor object was first seen missing, so `starting` can
- * time out. Returns the epoch (s) of the first -32000 in the current run of
- * missing results, or null when the object is present.
- */
-function missingSince(previousSince, statusResult, now) {
-	if (statusResult && !statusResult.ok && statusResult.rpc === OBJECT_MISSING)
-		return (previousSince != null) ? previousSince : now;
-	return null;
-}
-
-function loggingReason(info) {
-	const dnsmasq = isObject(info) ? info.dnsmasq : null;
-	if (!isObject(dnsmasq))
-		return null;
-	if (dnsmasq.running === false)
-		return 'dnsmasq-not-running';
-	const instances = Array.isArray(dnsmasq.instances) ? dnsmasq.instances : [];
-	if (instances.some(i => isObject(i) && i.logfacility_file === true))
-		return 'dnsmasq-logs-to-file';
-	if (!instances.some(i => isObject(i) && (i.dropin === true || i.uci_logqueries === true))) {
-		if (instances.some(i => isObject(i) && (typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/')))
-			return 'confdir-invalid';
-		return 'logging-not-active';
-	}
-	return null;
+function infoData(infoResult) {
+	return (infoResult && infoResult.ok && isObject(infoResult.data)) ? infoResult.data : null;
 }
 
 /*
- * deriveState(uciEnabled, infoResult, statusResult, now, since)
- *   infoResult / statusResult: settle()/failure() shapes (or null if not yet
- *   loaded); since: missingSince() value. Returns {state, reasons, message}.
- *   The first matching row of §8.1 wins.
+ * §8.5 page state, first match wins. infoResult and logResult are
+ * settle()/failure() shapes or null (not loaded yet); hasRows tells whether
+ * an earlier `log read` delivered data. Returns {state, reason}.
  */
-function deriveState(uciEnabled, infoResult, statusResult, now, since) {
-	const info = (infoResult && infoResult.ok && isObject(infoResult.data)) ? infoResult.data : null;
-	const status = (statusResult && statusResult.ok && isObject(statusResult.data)) ? statusResult.data : null;
-
+function pageState(infoResult, logResult, hasRows) {
 	if (infoResult && !infoResult.ok && infoResult.rpc === ACCESS_DENIED)
-		return { state: 'access-denied', reasons: [] };
-
-	if (info && isObject(info.adblock_fast) && info.adblock_fast.installed === false)
-		return { state: 'adblock-fast-missing', reasons: [] };
-
-	if (!uciEnabled)
-		return { state: 'disabled', reasons: [] };
-
-	if (statusResult && !statusResult.ok && statusResult.rpc === OBJECT_MISSING) {
-		const svc = (info && isObject(info.monitor) && isObject(info.monitor.service)) ? info.monitor.service : null;
-		const first = (since != null) ? since : now;
-		if (svc && svc.running === true && (now - first) < STARTING_GRACE)
-			return { state: 'starting', reasons: [] };
-		return { state: 'not-running', reasons: [] };
+		return { state: 'access-denied', reason: null };
+	const info = infoData(infoResult);
+	if (info) {
+		if (isObject(info.adblock_fast) && info.adblock_fast.installed === false)
+			return { state: 'adblock-fast-missing', reason: null };
+		const mon = isObject(info.monitor) ? info.monitor : {};
+		const dnsmasq = isObject(info.dnsmasq) ? info.dnsmasq : {};
+		const instances = Array.isArray(dnsmasq.instances) ? dnsmasq.instances.filter(isObject) : [];
+		if (mon.query_logging === false && !instances.some(i => i.uci_logqueries === true))
+			return { state: 'logging-off', reason: null };
+		if (dnsmasq.running === false)
+			return { state: 'logging-unavailable', reason: 'dnsmasq-not-running' };
+		if (instances.some(i => i.logfacility_file === true))
+			return { state: 'logging-unavailable', reason: 'dnsmasq-logs-to-file' };
+		const targeted = instances.filter(i => i.targeted !== false);
+		if (!instances.some(i => i.uci_logqueries === true) && !targeted.some(i => i.dropin === true))
+			return { state: 'logging-unavailable',
+				reason: targeted.some(i => typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/')
+					? 'confdir-invalid' : 'logging-not-active' };
 	}
-
-	if (status) {
-		const reason = loggingReason(info);
-		if (reason)
-			return { state: 'logging-unavailable', reasons: [ reason ] };
-		if (status.state == 'degraded')
-			return { state: 'degraded', reasons: Array.isArray(status.reasons) ? status.reasons.map(String) : [] };
-		return { state: 'healthy', reasons: [] };
-	}
-
-	if (statusResult && !statusResult.ok)
-		return { state: 'error', reasons: [], message: statusResult.message };
-
-	return { state: 'loading', reasons: [] };
+	if (logResult && !logResult.ok && !hasRows)
+		return { state: 'error', reason: null };
+	if (!logResult)
+		return { state: 'loading', reason: null };
+	return { state: 'healthy', reason: null };
 }
 
-/* Overlay: the last successful status is older than 3 × poll_interval. */
-function isStale(lastOkAt, now, interval) {
-	return lastOkAt != null && (now - lastOkAt) > 3 * pollInterval(interval);
+/* Query logging is on but was not turned on by this app (dnsmasq `logqueries`). */
+function loggingElsewhere(infoResult) {
+	const info = infoData(infoResult);
+	const instances = (info && isObject(info.dnsmasq) && Array.isArray(info.dnsmasq.instances)) ? info.dnsmasq.instances : [];
+	return instances.some(i => isObject(i) && i.uci_logqueries === true);
 }
 
-function stateSeverity(state) {
-	switch (state) {
-	case 'healthy': return 'success';
-	case 'disabled':
-	case 'starting':
-	case 'loading': return 'notice';
-	case 'logging-unavailable':
-	case 'degraded': return 'warning';
-	default: return 'danger';
-	}
+/* §3 options the dashboard uses: {interval (2..60, default 2), hideRouter (default true)}. */
+function viewOptions(infoResult) {
+	const info = infoData(infoResult);
+	const mon = (info && isObject(info.monitor)) ? info.monitor : {};
+	const n = int(mon.poll_interval, null);
+	return {
+		interval: (n == null) ? 2 : Math.min(60, Math.max(2, n)),
+		hideRouter: mon.exclude_router !== false
+	};
 }
 
-/* Rows show actions only for a known rule, in contract order (§6.2). */
-function rowActions(rule) {
-	if (!isObject(rule) || !Array.isArray(rule.actions))
-		return [];
-	return OPS.filter(op => rule.actions.indexOf(op) >= 0);
+/* dhcp `domain`/`local` names from `info.local_domains`, for querylog.create(). */
+function localDomains(infoResult) {
+	const info = infoData(infoResult);
+	const list = (info && Array.isArray(info.local_domains)) ? info.local_domains : [];
+	return list.filter(d => typeof(d) == 'string' && d.length > 0);
+}
+
+/* The staging op a row offers for its decision, or null. */
+function rowOp(decision) {
+	return Object.prototype.hasOwnProperty.call(ROW_OP, decision) ? ROW_OP[decision] : null;
+}
+
+/* Lower-cased substring filter on the domain; '' keeps every row. */
+function filterRows(rows, query) {
+	const q = String(query == null ? '' : query).trim().toLowerCase();
+	if (!q.length)
+		return rows;
+	return rows.filter(r => isObject(r) && typeof(r.domain) == 'string' && r.domain.toLowerCase().indexOf(q) >= 0);
 }
 
 /* ---- §8.2 staging reducer ------------------------------------------------ */
 
 function emptyPending() {
-	return { v: 1, items: [], inflight: null };
+	return { v: STORAGE_VERSION, items: [], inflight: null };
 }
 
 function cleanItem(item) {
@@ -230,7 +187,7 @@ function parsePending(json) {
 	let raw = null;
 	try { raw = (typeof(json) == 'string') ? JSON.parse(json) : json; }
 	catch (e) { raw = null; }
-	if (!isObject(raw) || raw.v !== 1)
+	if (!isObject(raw) || raw.v !== STORAGE_VERSION)
 		return emptyPending();
 	const state = emptyPending();
 	state.items = cleanList(raw.items, MAX_PENDING);
@@ -240,16 +197,16 @@ function parsePending(json) {
 }
 
 function serializePending(state) {
-	const out = { v: 1, items: state.items };
+	const out = { v: STORAGE_VERSION, items: state.items };
 	if (state.inflight)
 		out.inflight = state.inflight;
 	return JSON.stringify(out);
 }
 
 /*
- * Adds op for domain: replaces any pending op for that domain, and the
- * inverse of a pending op cancels it. Returns {state, change, error}.
- * change: 'added' | 'replaced' | 'cancelled' | 'unchanged'.
+ * Adds op for domain: replaces any pending op for that domain; the same op
+ * again removes it (§8.4). Returns {state, change, error};
+ * change: 'added' | 'replaced' | 'cancelled'.
  */
 function stage(state, op, domain, ts) {
 	if (OPS.indexOf(op) < 0)
@@ -261,9 +218,7 @@ function stage(state, op, domain, ts) {
 	const idx = items.findIndex(i => i.domain == d);
 	let change;
 	if (idx >= 0) {
-		if (items[idx].op == op)
-			return { state: state, change: 'unchanged' };
-		if (INVERSE[items[idx].op] == op) {
+		if (items[idx].op == op) {
 			items.splice(idx, 1);
 			change = 'cancelled';
 		}
@@ -431,47 +386,21 @@ function formatTime(epoch) {
 		p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
 }
 
-function sumDrops(counters) {
-	const d = (isObject(counters) && isObject(counters.dropped)) ? counters.dropped : {};
-	return int(d.input_overflow, 0) + int(d.pending_evicted, 0) + int(d.dnsmasq_reported, 0);
-}
-
-/* "21–40 of 137" style paging info for offset/limit/total. */
-function pageInfo(total, offset, limit) {
-	total = Math.max(0, int(total, 0));
-	offset = Math.max(0, int(offset, 0));
-	limit = Math.max(1, int(limit, 1));
-	return {
-		first: total ? offset + 1 : 0,
-		last: Math.min(total, offset + limit),
-		total: total,
-		hasPrev: offset > 0,
-		hasNext: offset + limit < total,
-		prevOffset: Math.max(0, offset - limit),
-		nextOffset: offset + limit
-	};
-}
-
 return baseclass.extend({
 	STORAGE_KEY: STORAGE_KEY,
 	MAX_PENDING: MAX_PENDING,
 	OPS: OPS,
-	INVERSE: INVERSE,
-	OBJECT_MISSING: OBJECT_MISSING,
 	ACCESS_DENIED: ACCESS_DENIED,
-	clampOption: clampOption,
-	pollInterval: pollInterval,
 	rpcError: rpcError,
 	normalizeDomain: normalizeDomain,
-	searchQuery: searchQuery,
 	settle: settle,
 	failure: failure,
-	missingSince: missingSince,
-	loggingReason: loggingReason,
-	deriveState: deriveState,
-	isStale: isStale,
-	stateSeverity: stateSeverity,
-	rowActions: rowActions,
+	pageState: pageState,
+	loggingElsewhere: loggingElsewhere,
+	viewOptions: viewOptions,
+	localDomains: localDomains,
+	rowOp: rowOp,
+	filterRows: filterRows,
 	emptyPending: emptyPending,
 	parsePending: parsePending,
 	serializePending: serializePending,
@@ -490,7 +419,5 @@ return baseclass.extend({
 	formatCount: formatCount,
 	formatPct: formatPct,
 	formatDuration: formatDuration,
-	formatTime: formatTime,
-	sumDrops: sumDrops,
-	pageInfo: pageInfo
+	formatTime: formatTime
 });

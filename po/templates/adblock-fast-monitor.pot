@@ -1,718 +1,508 @@
 msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8"
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:645
-msgid "%d blocked, %d allowed"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:335
+msgid ""
+"%d log entries missed: the system log buffer was overwritten between "
+"refreshes, or dnsmasq reported lost entries."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:668
-msgid "%d–%d of %d"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:319
+msgid "%d queries over %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:555
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:809
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:382
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:519
 msgid "%s %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:808
-msgid "%s %s (applied as %s)"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:320
+msgid "%s blocked, %s allowed, %s other, %s without answer"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:486
-msgid "%s ago"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:322
+msgid "%s queries, %s blocked, %s allowed"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:485
-msgid "(%s)"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:483
-msgid "(log reader %d, waiting queries %d, dnsmasq %d)"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:66
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:59
 msgid ""
 "A dnsmasq instance has an invalid configuration directory, so query logging "
 "cannot be enabled for it."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:99
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:88
 msgid "A parent domain is still blocked"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:49
-msgid "Access denied"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:638
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:655
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:689
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:698
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:775
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:779
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:402
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:416
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:489
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:493
 msgid "Actions"
 msgstr ""
 
 #: root/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json:3
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:180
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:26
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:159
+#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:20
 msgid "Adblock Fast Monitor"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:747
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:465
 msgid "Add to pending"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:42
+#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:32
 msgid ""
-"Adds a runtime-only dnsmasq option (log-queries=extra) for the selected "
-"instances; /etc/config/dhcp is not changed. Every DNS query is then written "
-"to the system log buffer, which pushes out other log messages faster. Turn "
-"this off only if you enable dnsmasq query logging yourself."
+"Adds a runtime-only dnsmasq option (log-queries=extra); /etc/config/dhcp is "
+"not changed, but dnsmasq is restarted when this changes. Every DNS query is "
+"then written to the system log buffer, which pushes out other log messages "
+"sooner."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:34
-msgid "Advanced"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:565
-msgid "All"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:498
-msgid ""
-"All counters, recent domains and top domains are cleared. DNS and adblock-"
-"fast are not affected."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:49
-msgid "All enabled instances (*)"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:32
 msgid "Allow"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:41
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:481
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:567
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
 msgid "Allowed"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:526
-msgid "Allowed via %s"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:90
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:79
 msgid "An allow rule overrides this block"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:94
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:83
 msgid "Another change is being applied"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:72
-msgid "Answer timeout"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:398
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:410
+msgid "Answer"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:79
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:68
 msgid "Applied"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:817
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:529
 msgid "Apply"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:738
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:811
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:456
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:521
 msgid "Apply changes"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:955
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
 msgid "Apply results"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:78
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:67
 msgid "Applying"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:539
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:369
 msgid "Applying…"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:32
 msgid "Block"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:480
-msgid "Block rate"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:41
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:479
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:566
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:318
 msgid "Blocked"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:526
-msgid "Blocked via %s"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:500
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:548
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:815
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:376
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:527
 msgid "Cancel"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:546
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:375
 msgid "Cancel pending change for %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:723
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:441
 msgid "Cannot stage \"%s\": %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:758
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:773
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:779
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:955
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:958
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:462
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:487
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:493
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:667
 msgid "Change"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:752
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:470
 msgid ""
 "Changes are kept in this browser until you apply them. Apply sends all of "
 "them at once and rebuilds the adblock-fast block lists one time."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:800
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:843
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:513
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:555
 msgid "Changes were not applied: %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:635
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:652
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:400
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:414
 msgid "Client"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:89
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:78
 msgid "Conflicting changes"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:508
-msgid "Could not reset statistics: %s"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:94
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:83
 msgid "Could not save the adblock-fast configuration"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:95
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:84
 msgid "Could not start the apply job"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:485
-msgid "Counting since"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:44
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:40
 msgid "DHCP lease"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:100
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:89
 msgid "DNS lookup failed"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:73
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:47
+msgid "DNS query logging is not working."
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:46
 msgid ""
-"DNS query logging is active: every query is written to the system log buffer."
+"DNS query logging is off, so no queries are shown. Turn on \"Log DNS "
+"queries\" in Settings."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:57
-msgid "DNS query logging is unavailable"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:181
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:45
 msgid ""
-"DNS statistics and recently seen domains for adblock-fast. Rule changes are "
-"collected below and sent to adblock-fast together when you apply them."
+"DNS query logging is on: dnsmasq writes every query to the system log, and "
+"this page reads them from there."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:440
-msgid "Data is stale since %s; showing the last known values."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:740
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:458
 msgid "Discard all"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:462
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:310
 msgid "Dismiss"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:460
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:309
 msgid "Dismiss note"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:65
-msgid ""
-"Do not count queries from the router itself (127.0.0.1, ::1), such as "
-"adblock-fast checks and rule verification."
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:354
+msgid "Display"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:633
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:642
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:687
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:692
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:755
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:772
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:779
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:955
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:957
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:398
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:408
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:473
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:486
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:493
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:666
 msgid "Domain"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:70
-msgid "Domains tracked for each top list (32–1024)."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:483
-msgid "Dropped"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:593
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:62
 msgid ""
-"Each domain appears once, with its latest answer. A, AAAA and HTTPS lookups "
-"are counted together."
+"Every DNS query is written to the system log buffer, which pushes out other "
+"log messages sooner."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:36
-msgid "Enable monitoring"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:165
+msgid ""
+"Everyone who can open this page can read the whole system log through LuCI's "
+"standard log access, the same access that luci-app-adblock-fast and Status → "
+"System Log use. Grant this app only to administrators."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:955
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:959
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:668
 msgid "Expected"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:79
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:102
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:68
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:91
 msgid "Failed"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:949
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:350
+msgid "Filter domains"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:658
 msgid "Finished %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:648
-msgid "First seen %s"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:33
-msgid "General"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:164
+msgid "For administrators only."
 msgstr ""
 
 #: root/usr/share/rpcd/acl.d/luci-app-adblock-fast-monitor.json:3
 msgid "Grant access to Adblock Fast Monitor"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:64
-msgid "Ignore router queries"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:51
-msgid ""
-"Install the adblock-fast package; this dashboard only monitors and edits its "
-"rules."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:47
-msgid "Instances that get query logging. \"*\" means every enabled instance."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:103
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:92
 msgid "Invalid change"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:88
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:77
 msgid "Invalid domain name"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:60
-msgid ""
-"Keep the address of the last client that queried each recent domain (in "
-"memory only)."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:633
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:643
-msgid "Last answer"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:945
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:654
 msgid "Last apply"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:774
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:488
 msgid "Last attempt: %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:592
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
-msgid "Last domains"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:346
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:421
+msgid "Last queries"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:486
-msgid "Last query"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:633
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:648
-msgid "Last seen"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:48
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:44
 msgid "Loading…"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:41
-msgid "Manage query logging"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:31
+msgid "Log DNS queries"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:524
-msgid "Manual allow"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:522
-msgid "Manual block"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:85
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:101
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:74
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:90
 msgid "Mismatch"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:55
-msgid "Monitor is not running"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:54
-msgid "Monitor is starting…"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:60
-msgid "Monitor status is unavailable"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:29
-msgid "Monitoring"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:59
-msgid "Monitoring is active"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:58
-msgid "Monitoring is degraded"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:56
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:347
 msgid ""
-"Monitoring is enabled but the monitor service is not available. Check the "
-"system log for details:"
+"Newest first, up to %d queries. Queries made by the router itself "
+"(127.0.0.1, ::1) can be shown or hidden."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:52
-msgid "Monitoring is off"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
+msgid "No answer"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:661
-msgid "Monitoring is off."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:214
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:57
 msgid ""
-"Most frequent domains since the statistics were last reset (approximate "
-"counts)."
+"No dnsmasq instance logs queries yet. Check \"Log DNS queries\" in Settings."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:672
-msgid "Next page"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:661
-msgid "No data available."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:65
-msgid ""
-"No dnsmasq instance logs queries. Enable \"Manage query logging\" in "
-"Settings."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:663
-msgid "No domains match the filter."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:659
-msgid "No domains seen yet."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:701
-msgid "No domains yet."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:780
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:494
 msgid "No pending changes."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:470
-msgid "No statistics available."
+#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:21
+msgid ""
+"No process of this app runs on the router: the dashboard reads the DNS "
+"queries from the system log in your browser, only while it is open."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:470
-msgid "No statistics while monitoring is off."
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:420
+msgid "No queries match the filter."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:101
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:420
+msgid "No queries seen yet."
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:90
 msgid "Not verifiable in this DNS mode"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:774
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:779
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:488
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:493
 msgid "Note"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:837
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:549
 msgid "Nothing to change: the rules are already in place."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:69
-msgid "Number of distinct domains in the \"Last domains\" list (50–2000)."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:85
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:74
 msgid "OK"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:955
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:960
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:669
 msgid "Observed"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:528
-msgid "On a block list"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:282
+msgid ""
+"Only queries still in the system log buffer (%d KiB, shared by every "
+"service) are shown."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:437
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:283
+msgid ""
+"Only queries still in the system log buffer (shared by every service) are "
+"shown."
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:294
 msgid "Open settings"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:41
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:568
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
 msgid "Other"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:482
-msgid "Other answers"
 msgstr ""
 
 #: root/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json:13
 msgid "Overview"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:79
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:102
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:68
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:91
 msgid "Partially applied"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:85
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:74
 msgid "Pending"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:751
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:779
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:469
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:493
 msgid "Pending changes"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:709
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:428
 msgid ""
 "Pending changes could not be saved in this browser; they are lost when the "
 "page is closed."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:543
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:373
 msgid "Pending: %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:670
-msgid "Previous page"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:88
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:77
 msgid "Protected domain"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:89
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:78
 msgid "Public suffix: rule would be too broad"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:478
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:633
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:645
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:687
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:693
-msgid "Queries"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:23
+msgid "Query logging"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:71
-msgid "Queries waiting for an answer (64–4096); more are counted as dropped."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:78
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:67
 msgid "Queued"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:955
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:962
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:671
 msgid "Reason"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:69
-msgid "Recent domains kept"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:59
-msgid "Record clients"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:56
-msgid "Refresh interval"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:777
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:491
 msgid "Remove"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:776
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:490
 msgid "Remove pending change for %s"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:510
-msgid "Reset"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:199
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:497
-msgid "Reset statistics"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:955
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:961
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:398
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:411
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:664
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:670
 msgid "Result"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:636
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:653
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:687
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:695
-msgid "Rule"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:37
-msgid ""
-"Runs one small resident monitor process. When off, nothing runs and no query "
-"logging is added."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:27
-msgid ""
-"Saving restarts the monitor, which resets its statistics. dnsmasq is "
-"restarted only when the set of instances with monitor-managed query logging "
-"changes."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:601
-msgid "Search"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:57
-msgid "Seconds between dashboard refreshes while the page is visible (2–60)."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:72
-msgid "Seconds to wait for an answer before a query expires (2–60)."
 msgstr ""
 
 #: root/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json:21
 msgid "Settings"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:597
-msgid "Show"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:357
+msgid "Show client column"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:85
-msgid "Skipped"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:356
+msgid "Show router queries"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:633
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:644
-msgid "Source"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:320
+msgid "Shown queries"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:191
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:488
-msgid "Statistics"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:53
-msgid ""
-"Statistics are not collected and no monitor process runs. Rule changes below "
-"still work."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:99
-msgid "Still on a downloaded list; use Allow"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:100
-msgid "Still resolves"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:96
-msgid "The block list rebuild failed"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:98
-msgid "The job could not take its lock"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:97
-msgid "The job did not start"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:98
-msgid "The job is no longer known (router restarted?)"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:97
-msgid "The job was interrupted"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:67
-msgid ""
-"The log reader overflowed in the last minute; some queries were not counted."
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:322
+msgid "Since page opened"
 msgstr ""
 
 #: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:74
+msgid "Skipped"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:176
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:325
+msgid "Statistics"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:88
+msgid "Still on a downloaded list; use Allow"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:89
+msgid "Still resolves"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:85
+msgid "The block list rebuild failed"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:87
+msgid "The job could not take its lock"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:86
+msgid "The job did not start"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:87
+msgid "The job is no longer known (router restarted?)"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:86
+msgid "The job was interrupted"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:160
+msgid ""
+"The last DNS queries answered by dnsmasq, and whether adblock-fast blocked "
+"them. Allow or block a domain, then apply all changes at once."
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:50
+msgid "The system log cannot be read."
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:296
+msgid "The system log cannot be read: %s"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:63
 msgid ""
 "The system log is also written to a file (log_file); query logging increases "
 "writes to that storage."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:75
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:64
 msgid ""
 "The system log is sent to a remote host (log_ip); every DNS query is "
 "forwarded there."
@@ -722,155 +512,146 @@ msgstr ""
 msgid "This account may not read the monitor status."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:805
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:523
 msgid ""
 "This rebuilds the adblock-fast block lists: all lists are downloaded again "
 "over the WAN, DNS is restarted, and it may take minutes."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:103
-msgid "Too many pending changes (maximum 64)"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:398
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:407
+msgid "Time"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:68
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:280
 msgid ""
-"Too many queries were waiting for an answer in the last minute; some were "
-"dropped."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:216
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:686
-msgid "Top allowed"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:215
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:686
-msgid "Top blocked"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:213
-msgid "Top domains"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:70
-msgid "Top domains tracked"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:633
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:647
-msgid "Types"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
-msgid "Unallow"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:71
-msgid "Unanswered queries kept"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:35
-msgid "Unblock"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:85
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:102
-msgid "Unverified"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:580
-msgid "Use letters, digits, \".\", \"-\" or \"_\" only."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:78
-msgid "Verifying DNS answers"
+"To keep more, raise \"System log buffer size\" in System → System → Logging."
 msgstr ""
 
 #: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:92
+msgid "Too many pending changes (maximum 64)"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:398
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:409
+msgid "Type"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:32
+msgid "Unallow"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:32
+msgid "Unblock"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:74
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:91
+msgid "Unverified"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:67
+msgid "Verifying DNS answers"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:36
+msgid "Waiting for answer"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:81
 msgid "adblock-fast DNS mode is not supported"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:70
-msgid ""
-"adblock-fast blocks in the firewall in its current DNS mode (ipset/nftset), "
-"so blocks are not visible to the monitor."
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:93
-msgid "adblock-fast has unsaved changes in LuCI; save or revert them first"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:43
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:39
 msgid "adblock-fast hosts"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:50
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:90
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:79
 msgid "adblock-fast is not installed"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:91
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:48
+msgid ""
+"adblock-fast is not installed. Install the adblock-fast package; this page "
+"only shows and edits its rules."
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:80
 msgid "adblock-fast uses an external configuration file"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:45
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:41
 msgid "authoritative"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:45
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:41
 msgid "cache"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:46
-msgid "dnsmasq instances"
-msgstr ""
-
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:63
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:56
 msgid "dnsmasq is not running."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:69
-msgid "dnsmasq reported lost log entries in the last minute."
+#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:29
+msgid ""
+"dnsmasq query logging is already on in the dnsmasq configuration (for "
+"example through luci-app-adblock-fast), so the dashboard works even with the "
+"option below off."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:43
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:39
 msgid "dnsmasq rule"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:64
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:58
 msgid ""
 "dnsmasq writes its log to a file (log facility), so queries never reach the "
 "system log."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:82
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:292
+msgid ""
+"dnsmasq's own \"Log queries\" option is on (for example set by luci-app-"
+"adblock-fast), so queries are logged whatever this app's setting is."
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:71
 msgid "full rebuild"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:43
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:39
 msgid "hosts file"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:44
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:40
 msgid "local name"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:693
-msgid "may be overestimated by up to %d"
+#: root/www/luci-static/resources/view/adblock-fast-monitor/settings.js:33
+msgid ""
+"luci-app-adblock-fast has its own query-logging toggle; both may be enabled "
+"at the same time."
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:573
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:342
 msgid "part of a domain"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:82
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:71
 msgid "saved only (adblock-fast is disabled)"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:45
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:82
+msgid ""
+"the adblock-fast configuration has uncommitted changes made on the command "
+"line (uci) or by adblock-fast itself; commit or revert them (see \"uci "
+"changes adblock-fast\") and apply again"
+msgstr ""
+
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:41
 msgid "upstream"
 msgstr ""
 
-#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:44
+#: root/www/luci-static/resources/view/adblock-fast-monitor/overview.js:40
 msgid "upstream error"
 msgstr ""

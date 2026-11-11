@@ -8,7 +8,8 @@ Contributions are licensed under the [Apache License 2.0](LICENSE).
 
 ## Setup
 
-- Node.js ≥ 22 and Docker, then `npm ci`.
+- Node.js ≥ 22.13 and Docker, then `npm ci` (also needed for
+  `npm run verify:host`; see Tooling).
 - The first `npm run verify:host` builds the host userland image (cached).
 - Guest suites need the baseline image, built once with
   `scripts/guest/prepare-baseline.sh`; see [`docs/testing.md`](docs/testing.md).
@@ -26,8 +27,34 @@ Contributions are licensed under the [Apache License 2.0](LICENSE).
 4. Update `docs/test-traceability.md` with the runs you executed when your
    change alters a feature's tests or result, and add a line under
    `Unreleased` in `CHANGELOG.md` for user-visible changes.
-5. Open a pull request. CI repeats the checks ([`docs/testing.md`](docs/testing.md) → CI);
-   push only after local validation passes.
+5. Open a pull request. CI repeats the checks ([`docs/testing.md`](docs/testing.md) → CI)
+   and reports them as the required check `ci-ok`; push only after local
+   validation passes.
+
+## Tooling
+
+- Node.js ≥ 22.13. `npm ci` installs ESLint, markdownlint and Playwright and
+  points git at the repository hooks (`core.hooksPath=.githooks`); without
+  `npm ci`, run `npm run hooks:install` (undo: `npm run hooks:uninstall`).
+- `npm run lint:tools` (`scripts/lint/fetch-tools.sh`) installs the pinned
+  ShellCheck 0.11.0 and actionlint 1.7.12 into the local validation cache
+  (SHA-256 checked). A copy on PATH is used only if it is the same version;
+  otherwise the run reports them as SKIPPED locally and fails under `CI`.
+- `npm run lint` runs ESLint (`eslint.config.mjs`: JS, JSON, LuCI views as
+  function bodies with their `'require'` bindings, HTML-sink and `E()`
+  string-child guards), markdownlint (`.markdownlint.jsonc`), ShellCheck
+  (`.shellcheckrc`; `-s sh` for BusyBox files, `-s bash` for bash),
+  actionlint and a whitespace check. `npm run verify:host` starts with it.
+  `npm run lint:fix` applies ESLint autofixes. Style follows `.editorconfig`;
+  no Prettier or shfmt.
+- `scripts/lint/baseline.json` lists tolerated existing findings per file
+  and rule. It only shrinks: a new finding fails, and so does a fixed one
+  until `npm run lint:baseline` lowers the count. Never add entries.
+- Hooks (Docker-free): `pre-commit` runs `npm run verify:commit` (lint,
+  check-static without its container phase, reported as SKIPPED, and the
+  docs self-check) plus gitleaks on the staged diff when installed;
+  `commit-msg` enforces the subject rule below. Bypass once with
+  `git commit --no-verify`; `npm run verify:host` and CI still run.
 
 ## Commits
 

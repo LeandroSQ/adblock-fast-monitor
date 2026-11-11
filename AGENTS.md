@@ -99,14 +99,19 @@ package code; do not restate them elsewhere.
 
 ## Build and test
 
-Node.js ≥ 22 and Docker are required; nothing needs secrets. `npm ci`
-installs the Playwright and lint dependencies. Harness internals:
+Node.js ≥ 22.13 and Docker are required; nothing needs secrets. Run
+`npm ci` first: `verify:host` needs its lint dependencies, the browser
+suites need Playwright, and it installs the git hooks. Lint and hook
+details: [CONTRIBUTING.md → Tooling](CONTRIBUTING.md#tooling). Harness internals:
 [`docs/testing.md`](docs/testing.md). APK paths must be inside the worktree
 or `.local-validation/`.
 
 | Purpose | Command | Needs | Time (M-series Mac, TCG) |
 | --- | --- | --- | --- |
-| All host checks (run before every commit) | `npm run verify:host` | Docker | ~25 s |
+| All host checks (run before every commit) | `npm run verify:host` | Docker, `npm ci` | ~25 s |
+| Lint: ESLint, markdownlint, ShellCheck, actionlint, whitespace | `npm run lint` (autofix: `npm run lint:fix`) | `npm ci` | |
+| Fetch the pinned ShellCheck and actionlint | `npm run lint:tools` | network | |
+| Install the git hooks (done by `npm ci`) | `npm run hooks:install` | git | |
 | Syntax: JSON, JS, `ash -n`, `bash -n`, `ucode -c` | `npm run check:static` | Docker | |
 | Node unit tests and repository checks (`test/unit/**/*.test.mjs`) | `npm run test:unit` | Node | |
 | ucode suites on the pinned interpreter | `npm run test:ucode` (one file: `test/lib/ucode-runner FILE`) | Docker | |
@@ -117,7 +122,7 @@ or `.local-validation/`.
 | T22 LuCI install from a signed feed | `scripts/release/verify-luci-install.sh PKG.apk` | Docker/QEMU, `npm ci` | ~3 min |
 | T30 upgrade from the previous release | `scripts/release/verify-upgrade.sh PKG.apk` | Docker/QEMU, amd64 | ~12 min |
 | P0 gate (T26) | `npm run test:performance:measure -- PKG.apk` | Docker/QEMU | 25–40 min |
-| Re-judge a perf run | `npm run test:performance` (SKIP without a run) | Node | |
+| Re-judge a perf run (local only, not in CI) | `npm run test:performance` (SKIP without a run) | Node | |
 | Release signing self-test | `scripts/release/selftest.sh WORKDIR PKG.apk` (macOS: prefix `scripts/in-docker.sh --platform linux/amd64 --`) | Linux x86_64 | ~10 s |
 
 The baseline guest image is built once by `scripts/guest/prepare-baseline.sh`;

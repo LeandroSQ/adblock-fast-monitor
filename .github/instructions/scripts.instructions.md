@@ -7,7 +7,7 @@ applyTo: "scripts/**"
 Adds to [AGENTS.md](../../AGENTS.md).
 
 - Host scripts are bash (`set -euo pipefail`, or `set -uo pipefail` with
-  explicit status checks in test drivers) or Node ≥ 22 ESM (`.mjs`);
+  explicit status checks in test drivers) or Node ≥ 22.13 ESM (`.mjs`);
   scripts copied into the guest (`scripts/perf/guest/`) are POSIX sh or
   ucode for BusyBox. `npm run check:static` syntax-checks all of them.
 - Scripts must run on Linux x86_64 and, through `scripts/in-docker.sh`, on

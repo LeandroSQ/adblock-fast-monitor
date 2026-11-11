@@ -19,5 +19,5 @@ Adds to [AGENTS.md](../../AGENTS.md) (hard restrictions 8 and 9).
   `scripts/release/verify-luci-install.sh`); put logic in `scripts/`, not YAML.
 - Only the `sign` job of `release.yml` (environment `release`) may use the
   `APK_SIGNING_KEY` secret; no PR-triggered job gets secrets.
-- `npm run check:static` runs the pinned actionlint. Never push or dispatch
+- `npm run lint` runs the pinned actionlint. Never push or dispatch
   to test a workflow.

@@ -420,3 +420,38 @@ test('§8.1 resume after a hidden page: one right-sized request, a remaining gap
   ql.ingest(q, filler(6, 1));
   assert.deepEqual([ql.stats(q).missed_total, ql.stats(q).paused_total], [0, 0]);
 });
+
+test('keys carry the dnsmasq restart epoch and the full pid; only tagged, anchored lines count', () => {
+  const st = ql.create();
+  ql.ingest(st, reply([
+    `dnsmasq[12]: 7 ${C}/1 query[A] a.example.test from ${C}`,
+    'dnsmasq[12]: started, version 2.91 cachesize 1000',
+    `dnsmasq[12]: 7 ${C}/1 query[A] b.example.test from ${C}`,
+    `xdnsmasq[1]: 8 ${C}/1 query[A] c.example.test from ${C}`,
+    'dnsmasq[1]: x overflow: 3 log entries lost',
+    'dnsmasq[1]: overflow: 3 log entries lost extra',
+    'dnsmasq[1]: restarted, version 2.91'
+  ]));
+  const keys = Object.fromEntries(ql.rows(st).map((r) => [r.domain, r.key]));
+  assert.deepEqual(keys, { 'a.example.test': `0:12:7:${C}/1`, 'b.example.test': `1:12:7:${C}/1` });
+  assert.equal(ql.stats(st).dnsmasq_lost, 0);
+  assert.equal(ql.rows(st).find((r) => r.domain === 'a.example.test').decision, 'no-answer');
+});
+
+test('the next request is sized by the new entries of the last reply, not the overlap', () => {
+  const st = ql.create();
+  const filler = (n, id) => reply(Array.from({ length: n }, () => 'kernel: x'), { id });
+  ql.ingest(st, filler(10, 1));
+  ql.ingest(st, filler(10, 5));                                    // ids 5..14: 4 new
+  assert.equal(ql.nextRequest(st).lines, Math.ceil(1.2 * 4) + 16);
+});
+
+test('create() clamps its options', () => {
+  for (const bad of [0, -5, 'x', null]) {
+    const st = ql.create({ max_rows: bad, pending_ttl_s: bad });
+    assert.deepEqual([st.maxRows, st.ttlMs], [500, 10_000], String(bad));
+  }
+  assert.equal(ql.create({ max_rows: 9000 }).maxRows, 500);
+  assert.equal(ql.create({ max_rows: 7.9 }).maxRows, 7);
+  assert.deepEqual(ql.create({ local_domains: ['LAN', 7] }).localDomains, ['lan']);
+});

@@ -307,3 +307,27 @@ test('logWatch/logStalled: notice after a logd restart with no dnsmasq line sinc
   assert.deepEqual(m.logWatch(null, [null, { log: 'x' }, { log: [null, { msg: 7 }] }], true, 5), { resetAt: 5 });
   assert.equal(m.logStalled(null, 1e9), false);
 });
+
+test('edges: job id anchors, multi-digit codes, length limits, numeric parsing', () => {
+  for (const id of ['xj1762747400-3f2a', 'j1762747400-3f2aX', 'j176274740-3f2a', 'j1762747400-3F2A']) {
+    assert.equal(m.parsePending(JSON.stringify({ v: 2, items: [], inflight: { job_id: id, items: [] } })).inflight, null, id);
+  }
+  assert.equal(m.rpcError(new Error('RPC call to a/b failed with ubus code 10: x')).ubus, 10);
+  assert.equal(m.rpcError(new Error('RPC call to a/b failed with error -32602: x')).rpc, -32602);
+  const d253 = `${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(57)}.com`;
+  assert.equal(d253.length, 253);
+  assert.equal(m.normalizeDomain(d253), d253);
+  assert.equal(m.normalizeDomain(`a${d253}`), null);
+  assert.equal(m.normalizeDomain(`${'a.'.repeat(126)}c`), `${'a.'.repeat(126)}c`);   // 127 labels, 253 chars
+  assert.equal(m.normalizeDomain('a.12'), null);
+  assert.equal(m.normalizeDomain('a.1b'), 'a.1b');
+  assert.equal(m.normalizeDomain('a.b1'), 'a.b1');
+  for (const v of [true, false, '', null, undefined, 'x', NaN]) assert.equal(m.formatCount(v), '0', String(v));
+  assert.equal(m.formatTime(0), '—');
+  assert.equal(m.formatTime(true), '—');
+  assert.deepEqual(m.parsePending({ v: 2, items: [{ op: 'block', domain: 'a.example.com', ts: '5', reason: 'x'.repeat(100) }] }).items,
+    [{ op: 'block', domain: 'a.example.com', ts: 5, reason: 'x'.repeat(64) }]);
+  assert.deepEqual(m.markError(m.emptyPending(), null), m.emptyPending());
+  assert.equal(m.applyPlan(null).mode, null);
+  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [] }).noop, false);
+});

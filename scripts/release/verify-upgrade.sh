@@ -46,9 +46,6 @@ else
 	mapfile -t paths < <(git -C "$root" ls-tree --name-only "$old_ref" -- Makefile root htdocs po LICENSE)
 	git -C "$root" archive "$old_ref" -- "${paths[@]}" | tar -C "$scratch" -xf -
 fi
-# api 1 shipped the resident daemon (docs/CONTRACT.md §3 migration).
-old_api=2
-[[ -e "$scratch/root/usr/libexec/adblock-fast-monitor/monitord.uc" ]] && old_api=1
 cp scripts/build-package.sh "$scratch/scripts/"
 mkdir -p .local-validation
 ln -s ../../.local-validation "$scratch/.local-validation"
@@ -87,7 +84,7 @@ else
 fi
 
 # 3. guest
-export ABFM_UPGRADE_TEST=1 ABFM_FEED_DIR="$feed" ABFM_OLD_VERSION="$old_pkg_version-r1" ABFM_OLD_API="$old_api"
+export ABFM_UPGRADE_TEST=1 ABFM_FEED_DIR="$feed" ABFM_OLD_VERSION="$old_pkg_version-r1"
 run=(scripts/guest/run-guest-tests.sh --no-install "$new" test/guest/package-upgrade.host.sh)
 if ((linux_x86)) && command -v qemu-system-x86_64 >/dev/null; then
 	exec "${run[@]}"

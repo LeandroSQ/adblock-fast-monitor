@@ -32,7 +32,8 @@ const SETTINGS_PATH = 'admin/services/adblock-fast-monitor/settings';
 const OP_LABEL = { allow: _('Allow'), block: _('Block'), unblock: _('Unblock'), unallow: _('Unallow') };
 const OP_BUTTON_CLASS = { allow: 'cbi-button cbi-button-positive', block: 'cbi-button cbi-button-negative' };
 const DECISION_LABEL = {
-	blocked: _('Blocked'), allowed: _('Allowed'), other: _('Other'), 'no-answer': _('No answer')
+	blocked: _('Blocked'), allowed: _('Allowed'), other: _('Other'), 'no-answer': _('No answer'),
+	pending: _('Waiting for answer')
 };
 const SOURCE_LABEL = {
 	config: _('dnsmasq rule'), addnhosts: _('adblock-fast hosts'), hosts: _('hosts file'),
@@ -281,7 +282,7 @@ return view.extend({
 	},
 
 	updateStats() {
-		const s = querylog.stats(this.log);
+		const s = querylog.stats(this.log, { show_router: this.display.showRouter });
 		const since = s.since_open || {};
 		const rows = [
 			[ _('Blocked'), model.formatPct(s.blocked_pct), 'blocked_pct',
@@ -322,7 +323,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-title' }, T(_('Display'))),
 					E('div', { 'class': 'cbi-value-field' }, [
-						checkbox('abfm-show-router', _('Show router queries'), v => { this.display.showRouter = v; this.updateQueries(); }), ' ',
+						checkbox('abfm-show-router', _('Show router queries'), v => { this.display.showRouter = v; this.updateStats(); this.updateQueries(); }), ' ',
 						checkbox('abfm-show-client', _('Show client column'), v => { this.display.showClient = v; this.updateQueries(); })
 					])
 				])
@@ -370,7 +371,7 @@ return view.extend({
 		if (this.canWrite)
 			captions.push(_('Actions'));
 		const trs = rows.map(r => {
-			const result = (DECISION_LABEL[r.decision] || r.decision) +
+			const result = ((Object.prototype.hasOwnProperty.call(DECISION_LABEL, r.decision) ? DECISION_LABEL[r.decision] : r.decision)) +
 				(r.source ? ' (' + (SOURCE_LABEL[r.source] || r.source) + ')' : '');
 			const tds = [
 				cell(_('Time'), [ E('time', {}, T(model.formatTime(r.time))) ]),

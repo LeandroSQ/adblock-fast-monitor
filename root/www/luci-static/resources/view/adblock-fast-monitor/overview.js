@@ -27,6 +27,8 @@ const callJob = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'job'
 const INFO_INTERVAL = 30;
 const JOB_INTERVAL = 2;
 const MAX_ROWS = 500;
+/* about 33 min of 2 s polls; then the old `abfm-poll` measures are dropped */
+const MAX_MEASURES = 1000;
 const SETTINGS_PATH = 'admin/services/adblock-fast-monitor/settings';
 
 const OP_LABEL = { allow: _('Allow'), block: _('Block'), unblock: _('Unblock'), unallow: _('Unallow') };
@@ -147,6 +149,9 @@ return view.extend({
 		this.display = { q: '', showRouter: !this.options.hideRouter, showClient: false };
 		this.logResult = null;
 		this.hasRows = false;
+		this.logWatch = null;
+		this.measureCount = 0;
+		this.keptRows = 0;
 		this.dismissed = {};
 		this.rowsKey = null;
 		this.job = null;
@@ -242,21 +247,55 @@ return view.extend({
 	},
 
 	/* One `log read`, plus at most one refetch when querylog sees a gap. */
+	/*
+	 * One `log read`, plus at most one refetch when querylog sees a gap.
+	 * The ingest + render of the reply that is kept is timed as one
+	 * `abfm-poll` measure (P4, docs/performance.md), network time excluded.
+	 */
 	pollLog() {
+		const now = () => Math.floor(Date.now() / 1000);
 		return this.readLog(querylog.nextRequest(this.log).lines).then(reply => {
-			const r = querylog.ingest(this.log, reply);
-			if (r && r.refetch)
-				return this.readLog(r.refetch.lines).then(again => querylog.ingest(this.log, again));
-		}).then(() => {
+			this.markPoll();
+			const r = querylog.ingest(this.log, reply) || {};
+			if (!r.refetch)
+				return { replies: [ reply ], kept: reply, reset: r.reset };
+			return this.readLog(r.refetch.lines).then(again => {
+				this.markPoll();
+				const r2 = querylog.ingest(this.log, again) || {};
+				return { replies: [ reply, again ], kept: again, reset: r.reset || r2.reset };
+			});
+		}).then(res => {
 			this.logResult = model.settle(null);
 			this.hasRows = true;
+			this.logWatch = model.logWatch(this.logWatch, res.replies, res.reset === true, now());
+			return res;
 		}, err => {
 			this.logResult = model.failure(err);
-		}).then(() => {
+			return null;
+		}).then(res => {
 			this.updateState();
 			this.updateStats();
 			this.updateQueries();
+			if (res)
+				this.measurePoll(res.kept);
 		});
+	},
+
+	markPoll() {
+		try { performance.mark('abfm-poll-start'); } catch (e) {}
+	},
+
+	/* One mark/measure pair per poll; marks are cleared at once, measures capped (P0: bounded). */
+	measurePoll(reply) {
+		try {
+			const entries = (reply && Array.isArray(reply.log)) ? reply.log.length : 0;
+			if (++this.measureCount > MAX_MEASURES) {
+				performance.clearMeasures('abfm-poll');
+				this.measureCount = 1;
+			}
+			performance.measure('abfm-poll', { start: 'abfm-poll-start', detail: { entries: entries, rows: this.keptRows || 0 } });
+			performance.clearMarks('abfm-poll-start');
+		} catch (e) {}
 	},
 
 	/* info at load and every 30 s while visible (§8.5); the first tick is the load itself */
@@ -292,6 +331,11 @@ return view.extend({
 			children.push(E('p', {}, T(_('dnsmasq\'s own "Log queries" option is on (for example set by luci-app-adblock-fast), so queries are logged whatever this app\'s setting is.'))));
 		if (st.state == 'logging-off' || st.state == 'logging-unavailable')
 			children.push(E('p', {}, [ E('a', { 'href': L.url(SETTINGS_PATH) }, T(_('Open settings'))) ]));
+		if (st.state == 'healthy' && model.logStalled(this.logWatch, Math.floor(Date.now() / 1000)))
+			children.push(E('div', { 'class': 'alert-message warning', 'id': 'abfm-log-stalled' }, [
+				E('p', {}, T(_('The system log was restarted and dnsmasq has logged nothing since, so DNS query logging may have stopped.'))),
+				E('p', {}, T(_('If new queries do not appear, restart dnsmasq: System → Startup → dnsmasq → Restart, or run "/etc/init.d/dnsmasq restart".')))
+			]));
 		if (this.logResult && !this.logResult.ok)
 			children.push(E('p', { 'id': 'abfm-read-error' }, T(_('The system log cannot be read: %s').format(this.logResult.message))));
 		this.stateNode.className = 'alert-message ' + (STATE_SEVERITY[st.state] || 'danger');
@@ -313,6 +357,7 @@ return view.extend({
 
 	updateStats() {
 		const s = querylog.stats(this.log, { show_router: this.display.showRouter });
+		this.keptRows = s.kept || 0;
 		const since = s.since_open || {};
 		const rows = [
 			[ _('Blocked'), model.formatPct(s.blocked_pct), 'blocked_pct',

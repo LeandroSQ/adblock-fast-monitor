@@ -49,6 +49,23 @@ test('real queries from a LAN client: decisions, sources, header and toggles', a
     expect(r.args.lines).toBeLessThanOrEqual(900);
   }
 
+  // P4 hook: one `abfm-poll` measure per poll with the reply size and kept rows; no marks left behind
+  const perf = await page.evaluate(() => ({
+    measures: performance.getEntriesByName('abfm-poll').map((e) => ({ d: e.duration, ...e.detail })),
+    marks: performance.getEntriesByName('abfm-poll-start').length
+  }));
+  expect(perf.marks).toBe(0);
+  expect(perf.measures.length).toBeGreaterThan(2);
+  expect(perf.measures.length).toBeLessThanOrEqual(reads.length);
+  expect(perf.measures[0].entries).toBeGreaterThan(0);
+  expect(perf.measures[0].entries).toBeLessThanOrEqual(900);
+  for (const mm of perf.measures) {
+    expect(mm.d).toBeGreaterThanOrEqual(0);
+    expect(mm.rows).toBeGreaterThanOrEqual(0);
+    expect(mm.rows).toBeLessThanOrEqual(500);
+  }
+  expect(perf.measures.at(-1).rows).toBeGreaterThan(0);
+
   // client column is off by default; router queries hidden by default
   await expect(queries(page).getByRole('columnheader', { name: 'Client' })).toHaveCount(0);
   await page.getByLabel('Show client column').check();

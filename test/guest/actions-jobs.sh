@@ -6,9 +6,12 @@
 # sequence, T18 list server down, T19 busy, waiting for another adblock-fast
 # run, kill -9 -> interrupted, start-timeout, lock-failed; verification in
 # servers, conf, addnhosts and nftset modes and its reasons.
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
+# shellcheck source=test/fixtures/actions/guest-lib.sh
 . "$ABFM_FIXTURES/actions/guest-lib.sh"
 
+# shellcheck disable=SC2046 # word splitting joins the lines with spaces
 states() { echo $(jget "$1" '@.states[*]'); }
 item() { jget "$1" "@.job.items[$2].$3"; }
 
@@ -124,6 +127,7 @@ t_eq "T19: second apply while the first is queued/running -> busy with its job_i
 t_ok "T19: job reaches applying" abfm_wait_until 30 sh -c "jsonfilter -i $JOB_FILE -e @.state | grep -qx applying"
 jpid=$(pgrep -f "job.uc $id")
 t_ok "T19: job process found" [ -n "$jpid" ]
+# shellcheck disable=SC2010 # ls -l shows the fd link targets
 t_eq "T19: the job holds no rpcd sockets or pipes" 0 "$(ls -l "/proc/$jpid/fd" 2>/dev/null | grep -c 'socket:\|pipe:')"
 t_not "T19: lock is held while the job runs" lock_free
 r3=$(call apply '{"ops":[{"op":"block","domain":"other.example.com"}],"confirm_rebuild":true}')

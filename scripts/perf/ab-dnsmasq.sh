@@ -23,7 +23,7 @@
 # latency. Output: $ABFM_AB_OUT/ab.jsonl (one line per window) + summary.
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$root"
+cd "$root" || exit 1
 out="${ABFM_AB_OUT:-$root/.local-validation/perf/ab-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM}"
 mkdir -p "$out/raw"
 reps="${ABFM_AB_REPEATS:-5}"
@@ -43,7 +43,9 @@ dropin() {
 }
 subscriber() { # on|off
 	if [[ $1 == on ]]; then guest_exec 'setsid logread -f -e "^dnsmasq\[" </dev/null >/dev/null 2>&1 &'
-	else guest_exec 'for p in $(pidof logread); do kill $p; done; :'; fi
+	else
+		# shellcheck disable=SC2016 # expanded by the guest shell
+		guest_exec 'for p in $(pidof logread); do kill $p; done; :'; fi
 }
 window() { # arm r
 	local name="$1-r$2" wpid

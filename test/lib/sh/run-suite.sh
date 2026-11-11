@@ -5,6 +5,7 @@
 # A file passes when it exits 0 and prints no "not ok" line.
 kind=$1
 shift
+# shellcheck source=test/lib/sh/testlib.sh
 . "${ABFM_TESTLIB:-/src/test/lib}/sh/testlib.sh"
 timeout_s=${ABFM_TEST_TIMEOUT:-120}
 passed=0

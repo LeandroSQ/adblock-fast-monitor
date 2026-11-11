@@ -7,5 +7,8 @@
   "MD013": false,
   // The superseded root stubs and some docs start with prose.
   "MD041": false,
-  "MD024": { "siblings_only": true }
+  "MD024": { "siblings_only": true },
+  // Code spans quote exact log text, whose trailing space is significant
+  // (`dnsmasq[1]: `); CommonMark keeps it.
+  "MD038": false
 }

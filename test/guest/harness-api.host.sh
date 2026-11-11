@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2016 # single-quoted commands are expanded by the guest shell
 # Harness smoke test, host side: the guest API and port forwards work.
 set -u
 fail=0 n=0

@@ -16,7 +16,7 @@ never forks or patches it.
 ## 1. Architecture (fixed decisions)
 
 | # | Decision |
-|---|---|
+| --- | --- |
 | D1 | **No resident process.** The init script (`START=18`) is a procd service with **no instance**: on start, stop, reload and boot it only reconciles the query-logging drop-ins through `logging.uc` (§4, §5) and exits; procd runs the same `logging.uc reconcile` directly from one trigger (§4). Nothing of this package runs between those calls, except one `job.uc` during an Apply (D5). |
 | D2 | **No edits to `/etc/config/dhcp`.** Query logging comes from a tmpfs drop-in, `<confdir>/adblock-fast-monitor.conf` containing `log-queries=extra` and `log-async=25`, written for each enabled dnsmasq instance while `query_logging=1`. It is removed when `query_logging=0` or on stop. dnsmasq restarts **only** when the set of drop-ins changes **and** dnsmasq is running (P10). |
 | D3 | **The browser reads and processes the log.** The page calls core logd `log read` through uhttpd (§8.1), the same call LuCI's System Log page and luci-app-adblock-fast make, and parses, correlates and classifies dnsmasq's lines in a pure JS module (`querylog.js`, §8.2–8.3). The router does no per-query work for this package. |
@@ -33,7 +33,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 ## 2. Package file inventory
 
 | Path | Mode | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `/etc/config/adblock-fast-monitor` | 0644 conffile | §3 |
 | `/etc/init.d/adblock-fast-monitor` | 0755 | procd init, `START=18` (before dnsmasq `START=19`), no instance (§4) |
 | `/usr/libexec/adblock-fast-monitor/logging.uc` | 0755 | `reconcile` / `disable` / `status` of the dnsmasq drop-ins (§4, §5) |
@@ -52,7 +52,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 
 | Path | Writer | Content |
-|---|---|---|
+| --- | --- | --- |
 | `/var/run/adblock-fast-monitor/` | plugin, 0700 root | directory |
 | `/var/run/adblock-fast-monitor/job.json` | plugin + job, 0600, atomic rename | last job (§7) |
 | `/var/run/adblock-fast-monitor/uci/` | plugin, 0700 | private UCI savedir for `apply` |
@@ -94,7 +94,7 @@ parse as a UCI boolean falls back to the default. Other options in the
 section are ignored.
 
 | Option | Type | Default | Consumer | Meaning |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `query_logging` | bool | `0` | init → `logging.uc` | `1`: write a drop-in for every dnsmasq instance with `disabled!=1`, so dnsmasq logs queries to logd; `0`: remove ours (logging enabled elsewhere, e.g. dhcp `logqueries`, is left alone) |
 
 The page's other choices are not router settings: it polls every 2 s
@@ -267,7 +267,7 @@ Field sources:
   `dnsmasq.running` is true when any instance runs.
 
 | `warnings` code | Condition |
-|---|---|
+| --- | --- |
 | `query-logging-active` | at least one drop-in exists, or `uci_logqueries` is set (logd's ring fills with DNS lines; informational) |
 | `logd-to-flash` | `system.@system[0].log_file` is set to a path outside tmpfs (not under `/tmp`, `/var` or `/dev/shm`), so logged queries are written to flash |
 | `logd-remote` | `system.@system[0].log_ip` is set |
@@ -417,7 +417,7 @@ Let `A` be the current `allowed_domain`, `B` the current `blocked_domain`, and
 `D` the domain. Membership is exact.
 
 | op | UCI change | `expect` |
-|---|---|---|
+| --- | --- | --- |
 | `allow` | `D∉A` → `allow:add`; `D∈B` → `block:remove` | `allowed` |
 | `block` | `D∈A` → `allow:remove`; `D∉B` → `block:add` | `blocked` |
 
@@ -699,7 +699,7 @@ is under `arpa`, `localhost`, `local`, `invalid`, `onion`, `bind` (OpenWrt's
 for listed ad domains).
 
 | `source` | `verb` | Condition | Decision | `source` attribution |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `query[T]` | `from` | | open entry (`qtype=T`); `router=true` when `client` ∈ {127.0.0.1, ::1} (hidden by default) | — |
 | `forwarded` | `to` | | none (not terminal) | — |
 | `config` | `is` | name is local | `other` | `local` |
@@ -766,7 +766,7 @@ has `dropin` or `uci_logqueries` → `confdir-invalid` or
 earlier data); `loading`. `info.warnings` render as dismissible notes.
 
 | Call | Cadence |
-|---|---|
+| --- | --- |
 | `log read` | §8.1, while visible |
 | `info` | at load and every 30 s while visible |
 | `job` | every 2 s while a job is non-terminal and the page is visible |
@@ -815,7 +815,7 @@ All dynamic text goes through `E()` array children or text nodes. Views
 ## 10. adblock-fast facts this contract relies on (1.2.4-r4)
 
 | Item | Value |
-|---|---|
+| --- | --- |
 | UCI | `adblock-fast.config`: `enabled`, `dns`, `allowed_domain` (list), `blocked_domain` (list), `dnsmasq_config_file_url`, `heartbeat_domain`, `config_update_url`, `file_url` sections (`url`, `enabled`, `action`) |
 | Output file by `dns` | `dnsmasq.servers` → `/var/run/adblock-fast/dnsmasq.servers` (`server=/D/`, allow `server=/D/#`); `dnsmasq.addnhosts` → `/var/run/adblock-fast/dnsmasq.addnhosts` (`127.0.0.1 D`, `:: D`); `dnsmasq.conf`/`ipset`/`nftset` → `/var/run/adblock-fast/adblock-fast.dnsmasq` (`local=/D/`, `ipset=/D/adb`, `nftset=/D/4#inet#fw4#adb4…`) |
 | `allow` fast path | **defective, not used** (§14.1). Requires the output file; refuses with an external config; for each D runs `sed -i '\:/\(/D\|.D\):d'`, appends `server=/D/#` in servers mode, adds `allowed_domain`, commits, refreshes the `/dev/shm` config cache, restarts the resolver once and then publishes an empty `status` to procd. Its exit code is not meaningful. |
@@ -843,7 +843,7 @@ LAN address (not `127.0.0.1`), answered by local fixtures: 50 % forwarded,
 Chromium, logged in as `root`.
 
 | ID | Metric | Budget |
-|---|---|---|
+| --- | --- | --- |
 | P1 | package processes in every state: after install and after a boot, with `query_logging=0` and `=1`, in every load window (snapshots and 100–250 ms `/proc` watches); transient init-script invocations (≤ 10 s) at boot and while idle; rpcd RssAnon growth vs stock | 0 resident processes, except `job.uc` during an Apply (**hard**); transient invocations ≤ 2 per boot, 0 while idle; rpcd RssAnon ≤ 1 MiB |
 | P2 | requests made by a hidden page (background tab or Page Visibility emulation) and by a closed page | 0 in 60 s each (**hard**); the visible control must poll, and polling must resume when shown |
 | P3 | one visible page polling every 2 s under 50 / 200 qps: CPU of uhttpd + ubusd + logd + rpcd vs the same load with no page; `log read` p95 (ubus, guest) | ≤ 2 / 6 pp; p95 ≤ 50 ms at the adaptive N (incremental), ≤ 150 ms at N = 900 |
@@ -894,7 +894,7 @@ Environments:
 - **B**: Playwright against LuCI on G.
 
 | ID | Contract item | Test (must assert) | Env | Where |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | T01 | §8.3 grammar | every example line parses to the expected fields; `LOST` adds to `missed`; non-`dnsmasq[` tags ignored | N | `test/unit/querylog*.test.mjs` |
 | T02 | §8.3 rejection, raw strings | spoofed labels, `<name unprintable>`, extra tokens, uppercase, `not implemented` rejected; answers and names kept byte-for-byte (an HTML-looking PTR answer stays raw) | N | `test/unit/querylog*.test.mjs` |
 | T03 | §8.3 table and correlation | each table row → decision/source; local names; `duplicate` ignored; first terminal wins, CNAME chain adds answers (≤ 4); orphans ignored; 10 s log-time TTL → `no-answer`; reset on `started, version`; router rows flagged and hidden | N | `test/unit/querylog*.test.mjs` |

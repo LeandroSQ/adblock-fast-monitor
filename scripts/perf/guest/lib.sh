@@ -33,7 +33,9 @@ perf_dnsmasq_pids() {
 
 # package processes: the cmdline names the package; plus `logread -f` readers
 # (design B-min has neither; both must stay empty in every state, §11 P1)
+# shellcheck disable=SC2009 # BusyBox pgrep cannot print full command lines
 perf_pkg_procs() { ps w | grep '[a]dblock-fast-monitor' | grep -v 'lib\.sh' | sed 's/^ *//'; }
+# shellcheck disable=SC2009 # BusyBox pgrep cannot print full command lines
 perf_logread_procs() { ps w | grep '[l]ogread -f' | sed 's/^ *//'; }
 
 perf_json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\t' '  ')"; }

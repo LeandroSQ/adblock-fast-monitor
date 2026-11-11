@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2016 # single-quoted commands are expanded by the guest shell
 # T30, package upgrade old -> new from a signed feed (no --allow-untrusted).
 # Run it with
 #
@@ -46,6 +47,7 @@ for _ in $(seq 50); do [[ -s "$work/port" ]] && break; sleep 0.1; done
 port="$(cat "$work/port")"
 feed="${GUEST_HOST_URL%:*}:$port/apk/packages.adb"
 new_version="$(sed -n 's/^luci-app-adblock-fast-monitor-\(.*\)\.apk$/\1/p' <(ls "$site/v2/apk") | grep -vx "$old_version" | head -n 1)"
+# shellcheck disable=SC2010 # plain file names from our own feed build
 t_ok "v1 has only $old_version; v2 has $old_version and $new_version" test -n "$new_version" \
 	-a "$(ls "$site/v1/apk" | grep -c '\.apk$')" = 1 -a -s "$site/v1/apk/$pkg-$old_version.apk" -a -s "$site/v2/apk/$pkg-$old_version.apk"
 installed() { guest_exec "apk list -I $pkg" | sed -n "s/^$pkg-\([^ ]*\) .*/\1/p"; }
@@ -109,7 +111,6 @@ rpcd_before="$(guest_exec 'ubus -v list session' | sed -n 's/.*@\([0-9a-f]*\).*/
 guest_exec 'touch /tmp/luci-indexcache.abfm-probe; mkdir -p /tmp/luci-modulecache && touch /tmp/luci-modulecache/abfm-probe'
 mark="abfm-upgrade-mark-$RANDOM$RANDOM"
 guest_exec "logger -t abfm-test $mark"
-t_upgrade="$(guest_exec 'date +%s')"
 
 # --- upgrade --------------------------------------------------------------
 ln -sfn "$site/v2/apk" "$work/serve/apk"

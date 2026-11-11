@@ -3,7 +3,9 @@
 # Actions backend API on a real guest (docs/CONTRACT.md §6): T11 info,
 # T14 apply pipeline errors through real `ubus call`s, P8 apply return time,
 # a LuCI session's staged UCI change is never committed by apply.
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
+# shellcheck source=test/fixtures/actions/guest-lib.sh
 . "$ABFM_FIXTURES/actions/guest-lib.sh"
 
 t_ok "real adblock-fast builds the fixture list (dnsmasq.servers)" actions_setup dnsmasq.servers
@@ -117,10 +119,10 @@ t_eq "apply: block under an allowed entry -> allow-overrides" "allow-overrides x
 uci del_list adblock-fast.config.allowed_domain=allowed.example.com
 uci commit adblock-fast
 
-mv $AF $AF.abfm-test
+mv "$AF" "$AF.abfm-test"
 t_eq "apply: no /etc/init.d/adblock-fast -> adblock-fast-missing" adblock-fast-missing "$(code '{"ops":[{"op":"allow","domain":"a.example.com"}]}')"
 t_eq "info: installed=false without the init script" false "$(jget "$(call info)" @.adblock_fast.installed)"
-mv $AF.abfm-test $AF
+mv "$AF.abfm-test" "$AF"
 uci set adblock-fast.config.dnsmasq_config_file_url='https://lists.example.org/dnsmasq.conf'
 uci commit adblock-fast
 t_eq "apply: dnsmasq_config_file_url -> external-config" external-config "$(code '{"ops":[{"op":"allow","domain":"a.example.com"}]}')"

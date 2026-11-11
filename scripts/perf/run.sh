@@ -21,7 +21,7 @@
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$root"
+cd "$root" || exit 1
 out="${ABFM_PERF_OUT:-$root/.local-validation/perf/$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM}"
 raw="$out/raw"
 ctl="$out/ctl"

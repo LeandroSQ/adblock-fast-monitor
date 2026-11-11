@@ -3,6 +3,7 @@
 # Harness smoke test: proves the guest runner boots a fresh stock 25.12.6
 # overlay, installed the APK under test, and exposes the shared helpers.
 # It deliberately checks no monitor feature.
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
 
 t_match "guest runs OpenWrt 25.12.6" "25\.12\.6" "$(cat /etc/openwrt_release)"
@@ -15,6 +16,7 @@ dir=$(abfm_tmpdir)
 mkdir -m 0700 "$dir/state"
 t_eq "abfm_stat works on the guest" "0:700:directory" "$(abfm_stat '%u:%a:%F' "$dir/state")"
 t_ok "fixtures were copied" test -f "$ABFM_FIXTURES/lists/primary.txt"
+# shellcheck disable=SC2016 # expanded by the inner sh
 t_ok "host fixture server is reachable from the guest" \
 	sh -c 'uclient-fetch -q -O - "$ABFM_FIXTURE_URL/lists/primary.txt" | grep -q example.test'
 t_ok "dnsmasq answers on the LAN" nslookup localhost 127.0.0.1

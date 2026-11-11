@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2016 # single-quoted commands are expanded by the guest shell
 # T08 at boot / P1 / P10 (docs/CONTRACT.md §4, §5): with query_logging=1 a
 # reboot writes the drop-in before dnsmasq starts (START=18 < 19), so dnsmasq
 # starts once, already logging, is never restarted by the package, and no

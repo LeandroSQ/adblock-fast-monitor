@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Proves test:shell runs OpenWrt 25.12.6's BusyBox with only its default
 # applets: stat and timeout are absent on a stock router (review B4).
+# shellcheck source=test/lib/sh/testlib.sh
 . "$ABFM_TESTLIB/sh/testlib.sh"
 
 has() { command -v "$1" >/dev/null 2>&1; }
 
+# shellcheck disable=SC2012 # the banner of the ls applet, not a listing
 t_match "BusyBox is the 25.12.6 version" '^BusyBox v1\.37\.0' "$(ls --help 2>&1 | head -n 1)"
 t_not "stat applet is absent" has stat
 t_not "timeout applet is absent" has timeout

@@ -22,7 +22,8 @@ test.afterAll(() => ensureHealthy());
 test('logging-unavailable(dnsmasq-not-running): dnsmasq stopped', async ({ page }) => {
   try {
     guest('/etc/init.d/dnsmasq stop');
-    guestWait('! pidof dnsmasq >/dev/null', 30);
+    // procd's view (the fake upstream is also a dnsmasq process)
+    guestWait(`! ubus call service list '{"name":"dnsmasq"}' | grep -q '"running": true'`, 30);
     await login(page, admin);
     await expectState(page, 'logging-unavailable', 'dnsmasq-not-running');
     await expect(state(page)).toContainText('dnsmasq is not running.');

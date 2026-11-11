@@ -621,7 +621,7 @@ return view.extend({
 			parts.push(JOB_MODE_TEXT[job.mode] || job.mode);
 		const children = [
 			E('h4', {}, T(_('Last apply'))),
-			E('p', { 'id': 'abfm-job-state', 'data-state': job.state, 'class': terminal ? '' : 'spinning' }, T(parts.join(' · ')))
+			E('p', { 'id': 'abfm-job-state', 'data-job': job.id, 'data-state': job.state, 'class': terminal ? '' : 'spinning' }, T(parts.join(' · ')))
 		];
 		if (job.finished_at)
 			children.push(E('p', {}, T(_('Finished %s').format(model.formatTime(job.finished_at)))));

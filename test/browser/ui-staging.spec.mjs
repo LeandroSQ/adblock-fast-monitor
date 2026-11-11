@@ -30,12 +30,15 @@ async function stageManual(page, op, domain) {
 
 /* Apply the pending batch, confirm the rebuild and wait for a terminal job. */
 async function applyAndWait(page) {
+  const state = page.locator('#abfm-job-state');
+  const previous = (await state.count()) ? await state.getAttribute('data-job') : null;
   await page.getByRole('button', { name: 'Apply changes' }).click();
   const modal = page.locator('.modal');
   await expect(modal).toContainText('all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes');
   await modal.getByRole('button', { name: 'Apply' }).click();
-  const state = page.locator('#abfm-job-state');
-  await expect(state).toBeVisible();
+  // the previous job stays on screen until `apply` returns the new one
+  await expect(state).toHaveAttribute('data-job', /^j\d{10}-[0-9a-f]{4}$/);
+  await expect(state).not.toHaveAttribute('data-job', previous ?? '');
   const seen = new Set();
   const deadline = Date.now() + 480_000;
   while (Date.now() < deadline) {

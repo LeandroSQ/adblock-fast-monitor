@@ -109,7 +109,7 @@ the set changes).
 
 ## 4. Lifecycle (init script)
 
-```
+```text
 START=18, USE_PROCD=1
 start_service:    logging.uc reconcile   (reads query_logging itself: 1 -> write
                   the drop-ins, 0 -> remove ours; no procd_open_instance:
@@ -143,6 +143,7 @@ all lines back after a dnsmasq restart. procd raises the trigger event
 the `/dev/log` inode seen through `/proc/<pid>/root` of the procd `dnsmasq`
 service's processes with the current one (`abfm.system` `dnsmasq_log_stale`)
 and restarts dnsmasq once if they differ (P10 exception, §11):
+
 - **Scope.** Only the pids of the running `dnsmasq` service instances
   (`ubus call service list '{"name":"dnsmasq"}'`) and their direct children
   (the jailed dnsmasq that ujail forks) are compared. Any other process named
@@ -209,7 +210,6 @@ more restart); when it is cleared, the drop-in comes back.
 
 ---
 
-
 ---
 
 ## 6. Actions backend — rpcd ucode plugin `luci.adblock-fast-monitor`
@@ -240,6 +240,7 @@ Request `{}`. All values are cheap UCI reads, `stat` calls and one ubus
 ```
 
 Field sources:
+
 - `monitor`: §3, parsed.
 - `local_domains`: the dhcp `domain` values and the `local` values with their
   slashes stripped, lower-cased and de-duplicated, over all `dnsmasq`
@@ -369,11 +370,13 @@ Error codes: `invalid-request`, `batch-empty`, `batch-too-large`,
 ### 6.4 Domain grammar and normalization (`abfm.domain`)
 
 Normalization:
+
 1. trim the input;
 2. lower-case it;
 3. strip **one** trailing `.`.
 
 Valid when all of these hold:
+
 - total length ≤ 253;
 - 2–127 labels;
 - each label 1–63 characters from `[a-z0-9_-]`, not starting or ending with
@@ -387,6 +390,7 @@ Anything else is `invalid-domain`.
 ### 6.5 Protected domains and the public-suffix guard (no PSL file)
 
 `protected-domain` (`block` only):
+
 - the name equals or falls under: `localhost`, `arpa` (so `home.arpa`),
   `local`, `internal`, `invalid`, `onion`, `bind` (the names the page treats
   as local, §8.3, plus `internal`), the dhcp `domain` and `local` values, the
@@ -397,6 +401,7 @@ Anything else is `invalid-domain`.
   (blocking those breaks list downloads).
 
 `public-suffix` (both ops). The name is rejected when any of these holds:
+
 - (a) it has fewer than 2 labels (already excluded by §6.4);
 - (b) it has exactly 2 labels and the first is one of
   `ac co com edu gob gouv gov gv go govt ltd mil net nic nom or org plc sch ne int mod`
@@ -422,6 +427,7 @@ So `Allow` undoes a manual block and overrides a downloaded list, and `Block`
 undoes a manual allow; no "unblock"/"unallow" ops are needed.
 
 Mode (one per batch):
+
 - **`persist-only`**: adblock-fast `enabled≠1`. UCI is written and there is
   no runtime step.
 - **`rebuild`**: adblock-fast `enabled=1`. Every change is applied with one
@@ -461,6 +467,7 @@ the fields of a job.
 `items[].expect`: `allow` → `"allowed"`, `block` → `"blocked"`.
 
 `items[].result`:
+
 - `pending`: not verified yet;
 - `ok`: observed matches the expectation, or the op was a noop;
 - `mismatch`: the expectation failed (for example
@@ -471,6 +478,7 @@ the fields of a job.
 - `skipped`: `persist-only`.
 
 `reason` (string or `null`):
+
 - `parent-blocked`: a parent entry still blocks the name, for example under
   `dnsmasq.conf` or `addnhosts`;
 - `still-listed`: after `allow`, the output file still blocks the name
@@ -543,7 +551,7 @@ Job error codes: `lock-failed`, `rebuild-failed`, `interrupted`,
 
 ### 7.4 State machine
 
-```
+```text
 (none) --apply--> queued --job acquires lock--> applying --runtime ok--> verifying --> applied | partial
                     |                              \--error--> failed{rebuild-failed|lock-failed}
                     \--not started 30 s--> failed{start-timeout}      applying|verifying --holder died--> failed{interrupted}
@@ -566,6 +574,7 @@ rpc.declare({ object: 'log', method: 'read', params: [ 'lines', 'stream', 'onesh
 ```
 
 Bounds and cadence:
+
 - **Always pass `lines`**, and `16 ≤ N ≤ 900`. Never `0` (returns nothing)
   and never omit it (returns the whole ring). 900 keeps the worst case, ~1 KiB
   lines, under the 1 MiB ubus message cap, so a fetch can never disconnect
@@ -641,7 +650,7 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
 `<prio>` and the timestamp). Only messages starting with that tag are
 considered (`dnsmasq-dhcp[` and others are not). Grammar (POSIX ERE):
 
-```
+```text
 TAG  = ^dnsmasq\[([0-9]+)\]: (.*)$
 BODY = ^(TCP |UDP )?([0-9]+) ([^ /]+)/([0-9]+) ([^ ]+) ([a-z0-9_.:-]+) (from|is|to) ([^ ]+)( \([^()]*\))?$
 LOST = ^overflow: ([0-9]+) log entries lost$
@@ -671,7 +680,7 @@ its query becomes `no-answer`. At most 500 rows are kept (oldest dropped).
 Line shapes (`"%s%u %s/%u %s %s%s%s %s%s"`, `cache.c` L2511), each prefixed
 with `dnsmasq[1]: `:
 
-```
+```text
 41 192.168.1.10/53211 query[A] ads.example.com from 192.168.1.10
 41 192.168.1.10/53211 config ads.example.com is NXDOMAIN            # dnsmasq.servers / dnsmasq.conf block
 42 192.168.1.10/53212 /var/run/adblock-fast/dnsmasq.addnhosts ads.example.com is ::   # addnhosts block
@@ -813,7 +822,7 @@ All dynamic text goes through `E()` array children or text nodes. Views
 | Output file by `dns` | `dnsmasq.servers` → `/var/run/adblock-fast/dnsmasq.servers` (`server=/D/`, allow `server=/D/#`); `dnsmasq.addnhosts` → `/var/run/adblock-fast/dnsmasq.addnhosts` (`127.0.0.1 D`, `:: D`); `dnsmasq.conf`/`ipset`/`nftset` → `/var/run/adblock-fast/adblock-fast.dnsmasq` (`local=/D/`, `ipset=/D/adb`, `nftset=/D/4#inet#fw4#adb4…`) |
 | `allow` fast path | **defective, not used** (§14.1). Requires the output file; refuses with an external config; for each D runs `sed -i '\:/\(/D\|.D\):d'`, appends `server=/D/#` in servers mode, adds `allowed_domain`, commits, refreshes the `/dev/shm` config cache, restarts the resolver once and then publishes an empty `status` to procd. Its exit code is not meaningful. |
 | `update_config_sizes` | default `1`: after a download adblock-fast `save`s (never commits) each `file_url`'s `size`, leaving a delta in `/tmp/.uci/adblock-fast` (§6.1). |
-| Rebuild | any change to `allowed_domain` or `blocked_domain` makes `start` choose `download`; `dl` forces it. Allowed names are removed with `/(^|\.)D$/d` **after** blocked names are appended. |
+| Rebuild | any change to `allowed_domain` or `blocked_domain` makes `start` choose `download`; `dl` forces it. Allowed names are removed with `/(^\|\.)D$/d` **after** blocked names are appended. |
 | Status | `ubus call service list '{"name":"adblock-fast"}'` → `.adblock-fast.data.status` (`statusSuccess`, `statusFail`, …) and `.data.errors[].code`; a download failure of one list still ends `statusSuccess` with `errorDownloadingList` when the output file could be built |
 | `heartbeat_domain` | `-` does **not** disable the heartbeat (it falls back to the default `heartbeat.mossdef.org`); the heartbeat must resolve within `heartbeat_sleep_timeout` or the start fails |
 | Trigger | the init registers `config.change` → `reload`. The ucode `uci` commit does not emit it, while LuCI `uci.apply` does. |
@@ -860,34 +869,34 @@ once per logd socket (§4). Tested by `test/guest/logging-logd-restart.sh`.
 ## 12. Upstream facts (verified 2026-11-10)
 
 - ucode pin: `PKG_SOURCE_VERSION:=85922056ef7a…` —
-  https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/utils/ucode/Makefile.
+  <https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/utils/ucode/Makefile>.
   The same file packages the `ucode-mod-io`, `ucode-mod-resolv` and
   `ucode-mod-uloop` modules.
 - `uloop.process` accepts only a **string** executable (`lib/uloop.c` L1012)
   and does not capture stdout. `process.delete()` does not kill the child —
-  https://github.com/jow-/ucode/blob/85922056/lib/uloop.c
+  <https://github.com/jow-/ucode/blob/85922056/lib/uloop.c>
 - `conn.publish(name, {m:{args,call}})` exists (`lib/ubus.c` L1889).
   Returning an object replies, returning an integer sets the ubus status, and
   any exception other than `exit` halts uloop (L1574-1632) —
-  https://github.com/jow-/ucode/blob/85922056/lib/ubus.c
+  <https://github.com/jow-/ucode/blob/85922056/lib/ubus.c>
 - `io.pipe`, `io.new`, `dup2`, and `read` (a raw `read(2)`) exist
   (`lib/io.c` L501, L772, L1124, L1249). `fs.file#lock` is `flock` with
   `s`/`x`/`n`/`u` (`lib/fs.c` L849). `resolv.query(names,{type,nameserver,timeout,retries})`
   returns `{name:{A:[],AAAA:[],rcode}}` (`lib/resolv.c`) —
-  https://github.com/jow-/ucode/tree/85922056/lib
+  <https://github.com/jow-/ucode/tree/85922056/lib>
 - `luci-base` depends on `+rpcd +rpcd-mod-ucode +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus …` —
-  https://raw.githubusercontent.com/openwrt/luci/openwrt-25.12/modules/luci-base/Makefile.
+  <https://raw.githubusercontent.com/openwrt/luci/openwrt-25.12/modules/luci-base/Makefile>.
   The `luci.mk` postinst clears caches and runs `rpcd reload` (L238-240).
   `L.hasViewPermission()` is at luci.js L3259.
 - rpcd `d99f703`: ucode plugins come from `/usr/share/rpcd/ucode`, are loaded
   once at init, and world-writable scripts are skipped (`ucode.c` L35,
   L1087-1100). Requests can `defer`, `reply` and `error`. SIGHUP re-execs
   rpcd (`main.c` L44, L66) —
-  https://github.com/openwrt/rpcd/blob/d99f703e4035d03fbcfbada3cb697db346c2b984/ucode.c
+  <https://github.com/openwrt/rpcd/blob/d99f703e4035d03fbcfbada3cb697db346c2b984/ucode.c>
 - uhttpd `93b05e0` `ubus.c`: the object lookup comes before the ACL check, so
   a missing object gives `-32000 Object not found` and a denied call gives
   `-32002 Access denied` (L120-122, L973-979) —
-  https://github.com/openwrt/uhttpd/blob/93b05e0b65d91c23c5aa8fdde378df1f174ec71d/ubus.c
+  <https://github.com/openwrt/uhttpd/blob/93b05e0b65d91c23c5aa8fdde378df1f174ec71d/ubus.c>
 - dnsmasq 2.93 (`PKG_UPSTREAM_VERSION:=2.93`, openwrt-25.12
   `package/network/services/dnsmasq/Makefile`):
   - the `log_query` extra format, `config`/`reply`/`cached`/`cached-stale`
@@ -899,13 +908,13 @@ once per logd socket (§4). Tested by `test/guest/logging-logd-restart.sh`.
   - `overflow: N log entries lost` (`src/log.c` L203).
 
   Fetched from the GitHub mirror at tag v2.93,
-  https://github.com/1g4-mirror/dnsmasq/tree/v2.93/src (upstream gitweb
+  <https://github.com/1g4-mirror/dnsmasq/tree/v2.93/src> (upstream gitweb
   requires interactive login for automated clients).
 - `dnsmasq.init` (openwrt-25.12): `START=19` (L4);
   `logqueries` → `--log-queries=extra` (L990); `logfacility` (L1026);
   conf-dir `confdir` defaulting to `/tmp/dnsmasq${cfg:+.$cfg}.d`, created if
   missing (L1172-1178) —
-  https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/network/services/dnsmasq/files/dnsmasq.init
+  <https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/network/services/dnsmasq/files/dnsmasq.init>
 - ubox `6f78fa4`:
   - `logread -e` compiles a **BRE** (`regcomp` without `REG_EXTENDED`) and
     matches it against the message, which includes the `dnsmasq[pid]:` tag
@@ -915,18 +924,19 @@ once per logd socket (§4). Tested by `test/guest/logging-logd-restart.sh`.
     L174-186);
   - `LOG_LINE_SIZE` is 1024 (`log/syslog.h`).
 
-  https://github.com/openwrt/ubox/tree/6f78fa496bf36c55864a41e353df7d13f04b1077/log
+  <https://github.com/openwrt/ubox/tree/6f78fa496bf36c55864a41e353df7d13f04b1077/log>
 - adblock-fast 1.2.4-r4 (openwrt-25.12 `net/adblock-fast`): `dns_modes` and
   sinkholes (`files/lib/adblock-fast/adblock-fast.uc` L35-78), triggers (L28,
   L1032), `enabled` check (L1075), rebuild allow removal (L2020), and
   `allow()` (L2661-2725). UCI schema in `files/etc/init.d/adblock-fast`
   `load_validate_config` —
-  https://github.com/openwrt/packages/tree/openwrt-25.12/net/adblock-fast/files
+  <https://github.com/openwrt/packages/tree/openwrt-25.12/net/adblock-fast/files>
 - BusyBox defaults (openwrt-25.12 `package/utils/busybox/Config-defaults.in`):
   `STAT n`, `TIMEOUT n`; `FLOCK`, `SETSID`, `KILL`, `GREP`, `AWK` and
   `NSLOOKUP` are `y`.
 
 ---
+
 - ubox `6f78fa4` logd (`log/logd.c` L86-93, L95-158, `log/syslog.c` L44,
   L209-214, `log/log.init` L28-39):
   - `log read {lines, stream, oneshot}` with `stream:false` replies
@@ -968,10 +978,15 @@ once per logd socket (§4). Tested by `test/guest/logging-logd-restart.sh`.
 
 ## 13. Test obligations
 
-Every test must **execute** behaviour. Source-regex and doc-regex tests are
-not accepted.
+Every behavioural test must **execute** the behaviour it covers: a test of
+package behaviour that only matches source or documentation text with a
+regex is not accepted. Repository checks are a separate kind and are
+allowed: they check the repository itself (for example the docs
+self-check, `test/unit/docs-references.test.mjs`, that named paths and
+scripts exist), and they never count as evidence for a T-ID below.
 
 Environments:
+
 - **U**: a ucode interpreter built on the CI host at pin `85922056`, loading
   the real `abfm.*` modules (`npm run test:ucode`).
 - **S**: OpenWrt 25.12.6's BusyBox ash and `uci` in the host userland

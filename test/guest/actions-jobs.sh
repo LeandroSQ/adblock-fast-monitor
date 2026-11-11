@@ -124,12 +124,12 @@ t_eq "T19: second apply while the first is queued/running -> busy with its job_i
 t_ok "T19: job reaches applying" abfm_wait_until 30 sh -c "jsonfilter -i $JOB_FILE -e @.state | grep -qx applying"
 jpid=$(pgrep -f "job.uc $id")
 t_ok "T19: job process found" [ -n "$jpid" ]
-t_eq "T19: the job holds no rpcd sockets or pipes" 0 "$(ls -l /proc/$jpid/fd 2>/dev/null | grep -c 'socket:\|pipe:')"
+t_eq "T19: the job holds no rpcd sockets or pipes" 0 "$(ls -l "/proc/$jpid/fd" 2>/dev/null | grep -c 'socket:\|pipe:')"
 t_not "T19: lock is held while the job runs" lock_free
 r3=$(call apply '{"ops":[{"op":"block","domain":"other.example.com"}],"confirm_rebuild":true}')
 t_eq "T19: apply during the job -> busy" busy "$(err_code "$r3")"
 t_eq "T19: while another adblock-fast run is alive the job waits (phase rebuild, no run of its own)" "applying rebuild 0" \
-	"$(jsonfilter -i $JOB_FILE -e @.state) $(jsonfilter -i $JOB_FILE -e @.phase) $(af_runs "$m")"
+	"$(jsonfilter -i "$JOB_FILE" -e @.state) $(jsonfilter -i "$JOB_FILE" -e @.phase) $(af_runs "$m")"
 kill -9 "$jpid"
 t_ok "T19: the killed job is gone" abfm_wait_until 5 sh -c "! kill -0 $jpid 2>/dev/null"
 t_ok "T19: lock is free after kill -9" lock_free

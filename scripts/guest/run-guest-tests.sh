@@ -62,6 +62,7 @@ PACKAGE_SHA256="$(sha256sum "$apk" | awk '{print $1}')"
 export PACKAGE_APK="$apk" PACKAGE_IPK="$apk" PACKAGE_SHA256
 
 # Prints the guest state a test file must restore (see the header).
+# shellcheck disable=SC2016 # a script for the guest's shell
 GUEST_STATE='
 for c in dhcp adblock-fast adblock-fast-monitor system rpcd network; do
 	echo "config $c $(uci -q -t /tmp/abfm-state.nosave show $c | md5sum | cut -c1-32)"

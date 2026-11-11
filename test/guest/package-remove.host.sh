@@ -46,6 +46,7 @@ t_eq 'removal: every packaged file is gone (except a changed conffile)' '' "$lef
 t_ok 'removal: the runtime state is gone' guest_exec \
 	'test ! -e /var/run/adblock-fast-monitor -a ! -e /var/lock/adblock-fast-monitor.lock -a ! -e /var/lock/adblock-fast-monitor.logging.lock'
 t_ok 'removal: rpcd dropped the plugin (no rpcd restart by hand)' guest_exec '! ubus list luci.adblock-fast-monitor 2>/dev/null'
+# shellcheck disable=SC2016 # expanded by the guest's shell
 t_ok 'removal: no package process' guest_exec \
 	'a=/usr/libexec/adblock-fast; b=-monitor/; for p in /proc/[0-9]*; do case "$(tr "\0" " " <$p/cmdline 2>/dev/null)" in *"$a$b"*) exit 1;; esac; done'
 

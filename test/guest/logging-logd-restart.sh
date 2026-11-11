@@ -60,11 +60,11 @@ jailed_pid() {
 		[ "$(cat "$p/comm" 2>/dev/null)" = dnsmasq ] && [ "$(cut -d' ' -f4 "$p/stat")" = "$ip" ] && echo "${p#/proc/}"
 	done | head -n1
 }
-jail_log() { ls -iL "/proc/$(jailed_pid)/root/dev/log" 2>/dev/null | awk '{print $1}'; }
-host_log() { ls -i /dev/log | awk '{print $1}'; }
+jail_log() { abfm_stat %i "/proc/$(jailed_pid)/root/dev/log" 2>/dev/null; }
+host_log() { abfm_stat %i /dev/log; }
 fresh() { [ -n "$(jail_log)" ] && [ "$(jail_log)" = "$(host_log)" ]; }
 reconciled() { flock "$LOGGING_LOCK" true && abfm_wait_until 30 dns_ready; }
-dropin() { ls /tmp/dnsmasq*.d/adblock-fast-monitor.conf 2>/dev/null | head -n1; }
+dropin() { for _f in /tmp/dnsmasq*.d/adblock-fast-monitor.conf; do [ -e "$_f" ] && echo "$_f" && break; done; }
 dropin_ok() { [ "$(cat "$(dropin)" 2>/dev/null)" = "$(printf 'log-queries=extra\nlog-async=25')" ]; }
 # trigger_ran: restart an unrelated service with the drop-in damaged; the
 # trigger's reconcile rewrites it. Prints trigger-forks.uc's JSON.
@@ -74,7 +74,7 @@ foreign_pid() {
 		[ "$(cat "$p/comm" 2>/dev/null)" = dnsmasq ] && [ "$(cut -d' ' -f4 "$p/stat")" = "$(cat "$FOREIGN_PID" 2>/dev/null)" ] && echo "${p#/proc/}"
 	done | head -n1
 }
-foreign_log() { ls -iL "/proc/$(foreign_pid)/root/dev/log" 2>/dev/null | awk '{print $1}'; }
+foreign_log() { abfm_stat %i "/proc/$(foreign_pid)/root/dev/log" 2>/dev/null; }
 foreign_up() { [ -n "$(foreign_log)" ]; }
 
 reload_config

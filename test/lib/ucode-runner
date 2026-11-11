@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Runs the real ucode interpreter pinned by OpenWrt 25.12.6 (commit 85922056
 # plus OpenWrt's patches) inside the host userland container.
 #

@@ -1,12 +1,7 @@
 {
   "docs/CONTRACT.md": {
-    "markdownlint/MD012": 1,
-    "markdownlint/MD032": 13,
-    "markdownlint/MD034": 11,
     "markdownlint/MD038": 4,
-    "markdownlint/MD040": 4,
-    "markdownlint/MD056": 1,
-    "markdownlint/MD060": 76
+    "markdownlint/MD060": 69
   },
   "docs/performance.md": {
     "markdownlint/MD032": 1,
@@ -83,14 +78,12 @@
   },
   "test/guest/actions-api.sh": {
     "shellcheck/SC1091": 2,
-    "shellcheck/SC2046": 4,
     "shellcheck/SC2086": 4
   },
   "test/guest/actions-jobs.sh": {
     "shellcheck/SC1091": 2,
     "shellcheck/SC2010": 1,
-    "shellcheck/SC2046": 1,
-    "shellcheck/SC2086": 1
+    "shellcheck/SC2046": 1
   },
   "test/guest/actions-reboot.host.sh": {
     "shellcheck/SC2015": 2,
@@ -105,7 +98,7 @@
     "shellcheck/SC1091": 2
   },
   "test/guest/dataplane-boot.host.sh": {
-    "shellcheck/SC2016": 3
+    "shellcheck/SC2016": 2
   },
   "test/guest/dataplane-lib/guest.sh": {
     "shellcheck/SC2016": 1,
@@ -126,8 +119,7 @@
     "shellcheck/SC1091": 1
   },
   "test/guest/logging-logd-restart.sh": {
-    "shellcheck/SC1091": 1,
-    "shellcheck/SC2012": 2
+    "shellcheck/SC1091": 1
   },
   "test/guest/package-acl.host.sh": {
     "shellcheck/SC2329": 1
@@ -140,7 +132,7 @@
   },
   "test/guest/package-upgrade.host.sh": {
     "shellcheck/SC2010": 1,
-    "shellcheck/SC2016": 3,
+    "shellcheck/SC2016": 2,
     "shellcheck/SC2034": 1,
     "shellcheck/SC2329": 1
   },
@@ -154,9 +146,5 @@
   "test/shell/harness-busybox.test.sh": {
     "shellcheck/SC1091": 1,
     "shellcheck/SC2012": 1
-  },
-  "test/shell/uci-defaults-migrate.test.sh": {
-    "shellcheck/SC1090": 3,
-    "shellcheck/SC1091": 1
   }
 }

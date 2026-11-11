@@ -28,17 +28,17 @@ ql=false
 t_eq "info: query_logging mirrors UCI" "$ql" "$(jget "$info" @.monitor.query_logging)"
 t_eq "info: monitor holds only query_logging" query_logging "$(ucode -e 'print(join(" ", sort(keys(json(ARGV[0]).monitor))))' "$info")"
 t_eq "info: dnsmasq instances carry exactly the §6.1 fields" "confdir dropin logfacility_file running section uci_logqueries" \
-	"$(echo $(ucode -e 'print(join("\n", sort(keys(json(ARGV[0]).dnsmasq.instances[0]))))' "$info"))"
-host=$(uci -q get system.@system[0].hostname | tr 'A-Z' 'a-z')
+	"$(ucode -e 'print(join(" ", sort(keys(json(ARGV[0]).dnsmasq.instances[0]))))' "$info")"
+host=$(uci -q get system.@system[0].hostname | tr '[:upper:]' '[:lower:]')
 t_eq "info: protected_suffixes = built-ins, heartbeat, dhcp domain, hostname" \
-	"localhost arpa local internal invalid onion bind heartbeat.example.com lan $host" "$(echo $(jget "$info" '@.protected_suffixes[*]'))"
+	"localhost arpa local internal invalid onion bind heartbeat.example.com lan $host" "$(jget "$info" '@.protected_suffixes[*]' | tr '\n' ' ' | sed 's/ $//')"
 t_eq "info: local_domains are the dhcp domain/local values" "lan" "$(jget "$info" '@.local_domains[*]' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 cp /etc/config/dhcp /tmp/abfm-dhcp.bak
 uci set dhcp.@dnsmasq[0].local=/corp.example/
 uci set dhcp.@dnsmasq[0].domain=Home.Example
 uci commit dhcp
 t_eq "info: local_domains follow dhcp (lower-cased, slashes stripped)" "home.example corp.example" \
-	"$(echo $(jget "$(call info)" '@.local_domains[*]'))"
+	"$(jget "$(call info)" '@.local_domains[*]' | tr '\n' ' ' | sed 's/ $//')"
 cp /tmp/abfm-dhcp.bak /etc/config/dhcp && rm -f /tmp/abfm-dhcp.bak
 logsize=$(uci -q get system.@system[0].log_buffer_size || uci -q get system.@system[0].log_size || echo 64)
 t_eq "info: logd.size_kib is the ring size log.init uses" "$logsize" "$(jget "$info" @.logd.size_kib)"
@@ -206,7 +206,7 @@ uci commit adblock-fast
 t_ok "real adblock-fast rebuilds the fixture list (dnsmasq.addnhosts)" actions_setup dnsmasq.addnhosts
 t_eq "addnhosts: listed name answers with a sinkhole" 127.0.0.1 "$(dns_a ads.example.com)"
 t_eq "info (addnhosts): dns mode and output file" "dnsmasq.addnhosts /var/run/adblock-fast/dnsmasq.addnhosts true" \
-	"$(i=$(call info); echo $(jget "$i" @.adblock_fast.dns) $(jget "$i" @.adblock_fast.output_file) $(jget "$i" @.adblock_fast.output_exists))"
+	"$(i=$(call info); printf '%s %s %s' "$(jget "$i" @.adblock_fast.dns)" "$(jget "$i" @.adblock_fast.output_file)" "$(jget "$i" @.adblock_fast.output_exists)")"
 t_eq "addnhosts: unlisted subdomain resolves" "$UPSTREAM_A" "$(dns_a x.parent.example.com)"
 
 actions_teardown

@@ -1,4 +1,5 @@
 #!/bin/ash
+# SPDX-License-Identifier: Apache-2.0
 # Runs test files inside the userland container (or an OpenWrt guest) and
 # prints a combined report. Usage: run-suite.sh ucode|shell FILE...
 # A file passes when it exits 0 and prints no "not ok" line.

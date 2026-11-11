@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// markdownlint rules for every tracked *.md, run by `npm run lint`
+// (scripts/lint/run.mjs) and read by editor integrations.
+{
+  "default": true,
+  // Prose is wrapped by hand; tables and URLs can't be.
+  "MD013": false,
+  // The superseded root stubs and some docs start with prose.
+  "MD041": false,
+  "MD024": { "siblings_only": true }
+}

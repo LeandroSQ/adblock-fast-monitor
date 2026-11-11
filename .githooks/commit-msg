@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# CONTRIBUTING.md -> Commits: a subject of at most 72 characters, then a blank
+# line. Merge, revert and fixup/squash/amend subjects are exempt.
+# shellcheck disable=SC2016 # the single-quoted program is JavaScript, not shell
+exec node -e '
+const lines = require("fs").readFileSync(process.argv[1], "utf8").split("\n").filter((l) => !l.startsWith("#"));
+const [subject = "", second = ""] = lines;
+if (/^(Merge|Revert|fixup!|squash!|amend!) /.test(subject)) process.exit(0);
+const n = [...subject].length;
+const errors = [];
+if (!subject.trim()) errors.push("empty subject");
+if (n > 72) errors.push(`subject is ${n} characters (max 72)`);
+if (second !== "") errors.push("line 2 must be blank");
+if (errors.length) { console.error(`commit-msg: ${errors.join("; ")}`); process.exit(1); }
+' "$1"

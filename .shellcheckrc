@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# ShellCheck 0.11.0 (pinned by scripts/lint/fetch-tools.sh), run by
+# `npm run lint` with `-s sh` for BusyBox ash files and `-s bash` for bash.
+# BusyBox ash (OpenWrt /bin/sh) and every OpenWrt init script use `local`;
+# everything else stays POSIX. Not `shell=busybox`: it would accept `[[`.
+disable=SC3043
+# Follow the repo-root-relative `# shellcheck source=` directives.
+external-sources=true

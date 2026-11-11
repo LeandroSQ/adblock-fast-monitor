@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# Matches the existing tree; `npm run lint` enforces the whitespace parts.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = tab
+tab_width = 4
+
+[*.{mjs,cjs,json,jsonc,yml,yaml,md}]
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+# LuCI menu.d/acl.d JSON keeps upstream LuCI's tabs
+[{root,htdocs}/**.json]
+indent_style = tab
+
+# Captured data: editors must not rewrite it
+[test/fixtures/**.{json,log,txt}]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset

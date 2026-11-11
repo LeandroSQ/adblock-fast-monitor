@@ -1,0 +1,13 @@
+{"log":[
+{"msg":"abfm-capture: begin-logd","id":962,"priority":13,"source":1,"time":1794354671822},
+{"msg":"dropbear[4291]: Exit (root) from <10.0.2.2:52658>: Disconnect received","id":963,"priority":86,"source":1,"time":1794354671824},
+{"msg":"dnsmasq[1]: 6 10.0.2.2/38162 query[A] ads.example.test from 10.0.2.2","id":964,"priority":30,"source":1,"time":1794354671834},
+{"msg":"dnsmasq[1]: 6 10.0.2.2/38162 /var/run/adblock-fast/dnsmasq.addnhosts ads.example.test is 127.0.0.1","id":965,"priority":30,"source":1,"time":1794354671834},
+{"msg":"dnsmasq[1]: 7 10.0.2.2/33074 query[A] www.up.example.test from 10.0.2.2","id":966,"priority":30,"source":1,"time":1794354671835},
+{"msg":"dnsmasq[1]: 7 10.0.2.2/33074 cached www.up.example.test is 192.0.2.10","id":967,"priority":30,"source":1,"time":1794354671835},
+{"msg":"dropbear[4293]: Child connection from 10.0.2.2:52674","id":968,"priority":86,"source":1,"time":1794354671843},
+{"msg":"dropbear[4293]: Pubkey auth succeeded for 'root' with ssh-ed25519 key SHA256:4diSi1YPh/qOZuSp/O31onRLmCqeoXFd7HAgT+ocEd0 from 10.0.2.2:52674","id":969,"priority":85,"source":1,"time":1794354672014},
+{"msg":"dropbear[4293]: Exit (root) from <10.0.2.2:52674>: Disconnect received","id":970,"priority":86,"source":1,"time":1794354673044},
+{"msg":"dropbear[4295]: Child connection from 10.0.2.2:52690","id":971,"priority":86,"source":1,"time":1794354673055},
+{"msg":"dropbear[4295]: Pubkey auth succeeded for 'root' with ssh-ed25519 key SHA256:4diSi1YPh/qOZuSp/O31onRLmCqeoXFd7HAgT+ocEd0 from 10.0.2.2:52690","id":972,"priority":85,"source":1,"time":1794354673235}
+]}

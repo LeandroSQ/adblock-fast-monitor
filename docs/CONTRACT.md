@@ -137,10 +137,31 @@ start_service:
 stop_service:    logging.uc disable, except during `restart` (start reconciles,
                  so dnsmasq is not restarted twice)
 service_triggers: procd_add_reload_trigger adblock-fast-monitor
+                  query_logging=1 -> procd_add_raw_trigger instance.update 3000
+                                     /etc/init.d/adblock-fast-monitor reload
 ```
 
-`reload` (what the trigger runs) re-runs `start_service`. With an unchanged
-drop-in set nothing restarts. At boot (`START=18` < dnsmasq `19`) dnsmasq is
+`reload` (what the triggers run) re-runs `start_service`. With an unchanged
+drop-in set nothing restarts.
+
+**logd restarts.** procd jails dnsmasq (`procd_add_jail dnsmasq ubus log`),
+bind-mounting `/dev/log` into the jail when dnsmasq starts. When logd
+restarts (`/etc/init.d/log restart`, or LuCI System → Logging save, which
+commits `system` and makes the `log` service reload), it creates a new
+`/dev/log` socket; the jail still holds the old, dead inode. dnsmasq's
+reconnect attempts resolve `/dev/log` inside the jail, so they never reach
+logd again: **dnsmasq logs nothing at all** (queries included, with or
+without `log-async`, and also with dhcp `logqueries`) until it restarts.
+Verified on the 25.12.6 guest: 0 query lines 30 s after a logd restart for
+both `log-queries=extra` + `log-async=25` and plain `log-queries=extra`;
+all lines back after a dnsmasq restart. procd raises the trigger event
+`instance.update` whenever any service instance starts or stops; while
+`query_logging=1` the init script registers a raw trigger on it (debounced
+3 s), and `logging.uc enable` then compares the `/dev/log` inode seen through
+each dnsmasq's `/proc/<pid>/root` with the current one (`abfm.system`
+`dnsmasq_log_stale`) and restarts dnsmasq once if they differ (P10 exception,
+§11). Otherwise the trigger changes nothing; it is not registered while
+`query_logging=0`. A reconcile is a short-lived `ucode logging.uc` (D1). At boot (`START=18` < dnsmasq `19`) dnsmasq is
 not running yet, so writing the drop-ins never restarts it (P10).
 
 ---
@@ -575,15 +596,34 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
 - `ingest(state, reply)` with `reply = {log: [...]}` from `log read` →
   `{added, missed, reset, refetch: {lines: N} | null}`. When `refetch` is not
   `null` the caller performs that one refetch and ingests its reply too.
-- `rows(state, {show_router: false})` → newest first:
-  `{key, time (epoch s), domain, qtype, answers: [≤ 4 strings], decision:
-  'blocked'|'allowed'|'other'|'no-answer', source, client, router: bool}`.
-  All strings are raw (never escaped or altered); the UI renders them as text
+- `rows(state, {show_router})` → newest first, at most `max_rows`:
+  `{key, time (epoch s), domain, qtype, answers: [≤ 4 strings], decision,
+  source, client, router: bool}`. `decision` is `'blocked'`, `'allowed'`,
+  `'other'`, `'no-answer'` (no terminal line within `pending_ttl_s` of log
+  time) or `'pending'` (query seen, no answer yet, TTL not reached).
+  `source` is the §8.3 attribution, or `null` while pending/no-answer. `key`
+  is opaque and unique, formatted `epoch:pid:serial:client/port` (`epoch`
+  counts the dnsmasq restarts seen). In `answers`, a `<CNAME>` answer is
+  replaced by the next name in the chain; it stays `<CNAME>` only when the
+  chain has no further line. `show_router` defaults to `!hide_router`. All
+  strings are raw (never escaped or altered); the UI renders them as text
   only.
-- `stats(state)` → `{kept, blocked, allowed, other, no_answer, blocked_pct
-  (null when blocked + allowed = 0), span_s, missed_total, since_open:
-  {queries, blocked, allowed}}`. `blocked_pct = blocked / (blocked + allowed)`
-  over the kept rows, shown with the row count and time span (P1 stat).
+- `stats(state, {show_router})` → over the rows `rows()` would return with
+  the same option:
+  `{kept, blocked, allowed, other, no_answer, pending, blocked_pct, span_s,
+  missed_total, dnsmasq_lost, rejected, since_open: {queries, blocked,
+  allowed}}`.
+  - `kept`: rows counted; `blocked`/`allowed`/`other`/`no_answer`/`pending`:
+    rows per decision.
+  - `blocked_pct = round(1000 · blocked / (blocked + allowed)) / 10`, or
+    `null` when `blocked + allowed = 0` (P1 stat, shown with `kept` and
+    `span_s`).
+  - `span_s`: seconds between the oldest and newest counted row.
+  - `missed_total`: log ids skipped by gaps (§8.1); `dnsmasq_lost`: sum of
+    dnsmasq's `overflow: N log entries lost`; `rejected`: tagged lines that
+    looked like query-log lines but matched neither `BODY` nor `LOST`.
+  - `since_open`: queries and decisions since the page was opened, not
+    limited to the kept rows (router clients excluded when `hide_router`).
 
 ### 8.3 Line grammar and classification
 
@@ -795,6 +835,13 @@ Chromium, logged in as `root`.
 | P8 | `apply` return time (rpcd blocking) | ≤ 200 ms, and rpcd never blocked > 200 ms (20 ms `session list` probe) (**hard**) |
 | P10 | dnsmasq restarts caused by the package (boot, enabling query logging, a settings save) | 0 / 1 / 0 (**hard**) |
 
+P10 exception (§4, logd restarts): with `query_logging=1` only, a logd
+restart costs exactly one dnsmasq restart, made by the init script's
+`instance.update` trigger because the jailed dnsmasq lost its `/dev/log`.
+dnsmasq would otherwise log nothing until its next restart. With
+`query_logging=0` a logd restart never restarts dnsmasq. Tested by
+`test/guest/logging-logd-restart.sh`.
+
 ---
 
 ## 12. Upstream facts (verified 2026-11-10)
@@ -954,6 +1001,7 @@ Environments:
 | T29 | §8.1 gaps | under load the shown missed count equals the id gap; a `log` restart resets the cursor | B+G | `test/browser/` |
 | T30 | §2 upgrade | `apk upgrade` from the api-1 package over a signed feed: config migrated, daemon gone, drop-in kept, dnsmasq restarted at most once, caches cleared, rpcd reloaded | G | `scripts/release/verify-upgrade.sh` → `test/guest/package-upgrade.host.sh` |
 | T31 | §2 inventory | dependencies, modes, owners, conffile defaults, uci-defaults ran, no api-1 daemon files, sysupgrade keep list | G | `test/guest/package-files.host.sh` |
+| T32 | §4 logd restart | `/etc/init.d/log restart` and a System → Logging save: with `query_logging=1` dnsmasq is restarted once and queries reach `log read` again, an unrelated service restart restarts nothing; with `query_logging=0` no trigger and no restart; `dnsmasq_log_stale` against a fake `/proc` | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
 
 ---
 
@@ -1011,6 +1059,11 @@ Environments:
     "Disabled" while our drop-in logs. `info.dnsmasq.instances[].uci_logqueries`
     lets the page show which mechanism is active; our drop-in is skipped for
     an instance that already has `logqueries=1`.
+15. **A logd restart silences the jailed dnsmasq** (§4): the jail keeps the
+    old `/dev/log` inode. Mitigated by the `instance.update` trigger, which
+    costs one dnsmasq restart per logd restart while `query_logging=1` (P10
+    exception, §11; T32). Restarts of other services run a `logging.uc`
+    reconcile that changes nothing.
 
 ---
 

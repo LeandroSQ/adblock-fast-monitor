@@ -44,6 +44,7 @@ inventory=(
 	/www/luci-static/resources/view/adblock-fast-monitor/overview.js:644:WU3
 	/www/luci-static/resources/view/adblock-fast-monitor/settings.js:644:WU3
 	/www/luci-static/resources/adblock-fast-monitor/model.js:644:WU3
+	/www/luci-static/resources/adblock-fast-monitor/querylog.js:644:QL
 )
 for entry in "${inventory[@]}"; do
 	IFS=: read -r path mode _ <<<"$entry"

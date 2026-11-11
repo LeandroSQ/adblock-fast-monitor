@@ -216,8 +216,34 @@ function remove_dropin(confdir) {
 	return true;
 }
 
-// mode 'enable' | 'disable'. opts: {cursor, running(): bool, restart(): void}.
-// Returns {changed, restarted, errors: [{section, error}], dropins: [paths]}.
+// pids of dnsmasq processes whose /dev/log is not the current logd socket.
+// procd jails dnsmasq (`procd_add_jail dnsmasq ubus log`) with /dev/log
+// bind-mounted at start; when logd restarts it creates a new socket inode,
+// the jail keeps the dead one, and dnsmasq's reconnect attempts never reach
+// logd again, so it logs nothing until it restarts (§4, §14). `root` is a
+// path prefix for tests ('' on the router). Empty when /dev/log is missing.
+function dnsmasq_log_stale(root) {
+	root ??= '';
+	let id = (st) => st ? sprintf('%d:%d:%d', st.dev?.major, st.dev?.minor, st.inode) : null;
+	let cur = id(fs.stat(`${root}/dev/log`));
+	if (!cur)
+		return [];
+	let out = [];
+	for (let pid in fs.lsdir(`${root}/proc`) ?? []) {
+		if (!match(pid, /^[0-9]+$/) || trim(fs.readfile(`${root}/proc/${pid}/comm`) ?? '') != 'dnsmasq')
+			continue;
+		let st = id(fs.stat(`${root}/proc/${pid}/root/dev/log`));
+		if (st && st != cur)
+			push(out, +pid);
+	}
+	return sort(out);
+}
+
+// mode 'enable' | 'disable'. opts: {cursor, running(): bool, restart(reason): void,
+// stale(): bool (optional)}. With mode 'enable', a running dnsmasq whose
+// /dev/log is stale (opts.stale) is restarted once even when the drop-in set
+// is unchanged: the P10 exception of §11. reason: 'changed' | 'stale'.
+// Returns {changed, restarted, stale, errors: [{section, error}], dropins: [paths]}.
 function logging_apply(mode, opts) {
 	let cursor = opts.cursor;
 	let sections = dnsmasq_sections(cursor);
@@ -259,13 +285,14 @@ function logging_apply(mode, opts) {
 	}
 
 	let changed = join('\n', sort(before)) != join('\n', sort(after));
+	let stale = mode == 'enable' && length(after) > 0 && !!opts.stale?.();
 	let restarted = false;
-	if (changed && opts.running()) {
-		opts.restart();
+	if ((changed || stale) && opts.running()) {
+		opts.restart(changed ? 'changed' : 'stale');
 		restarted = true;
 	}
 
-	return { changed, restarted, errors, dropins: after };
+	return { changed, restarted, stale, errors, dropins: after };
 }
 
 // --- adblock-fast discovery (WU2) ---
@@ -366,6 +393,7 @@ return {
 	service_state,
 	logging_status,
 	logging_apply,
+	dnsmasq_log_stale,
 	adblock_fast_pending,
 	adblock_fast_state,
 	adblock_fast_protected,

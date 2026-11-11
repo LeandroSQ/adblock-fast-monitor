@@ -63,10 +63,15 @@ def read_until(pattern, what, within=None):
 
 
 read_until(rb"Please press Enter to activate this console", "console")
-conn.sendall(b"\n")
-read_until(rb"root@[^\r\n]*# ", "shell prompt")
+while True:
+    conn.sendall(b"\n")
+    try:
+        read_until(rb"root@[^\r\n]*# ", "shell prompt", 5)
+        break
+    except TimeoutError:
+        sys.stderr.write("serial-console: no prompt yet, pressing Enter again\n")
 # Input typed while early boot is still loading modules and bringing up the
-# LAN can be lost (seen on armsr-armv8 under hvf, where the prompt appears
+# LAN can be lost (Enter above included) (seen on armsr-armv8 under hvf, where the prompt appears
 # before the hostname is set). Wait for the console to fall silent, then
 # repeat a round trip until the guest answers.
 def wait_quiet(seconds):

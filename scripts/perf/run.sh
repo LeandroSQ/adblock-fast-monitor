@@ -179,6 +179,9 @@ set_state() {
 	local want=0 manual=0
 	[[ $1 == on || $1 == page ]] && want=1
 	[[ $1 == manual ]] && manual=1
+	# The hand-written copy goes before any switch: with both drop-ins in a
+	# confdir dnsmasq refuses the repeated options and does not start.
+	gsh ". $G/lib.sh; perf_manual 0" || err "state $1 r$2: cannot remove the manual drop-in"
 	if [[ "$logging_now" != "$want" ]]; then
 		set_logging "toggle-$([[ $want == 1 ]] && echo on || echo off)-r$2" "$want"
 		logging_now=$want
@@ -268,11 +271,21 @@ if [[ "${ABFM_PERF_SKIP_BOOT:-0}" != 1 ]]; then
 		log "P10: boot with query logging $state"
 		push_tools
 		set_logging "p10-preboot-$state" "$value"
+		# Boot window (transient init invocations, §11 P1): a 60 s watch at
+		# 100 ms started during boot by a one-shot /etc/rc.d/S11 script
+		# (before dnsmasq, S19), because with hvf the trigger has fired long
+		# before the first SSH login. Removed again after the boot.
+		gsh "cp $G/probe.uc /root/abfm-perf-probe.uc && rm -f /root/abfm-boot-watch.json &&
+			printf '#!/bin/sh\nucode /root/abfm-perf-probe.uc watch 60 100 >/root/abfm-boot-watch.json 2>/dev/null </dev/null &\n' >/etc/rc.d/S11abfm-perf-watch &&
+			chmod 755 /etc/rc.d/S11abfm-perf-watch" || err "cannot arm the boot watch ($state)"
 		if cold_boot "$n"; then
 			push_tools
-			# Boot window: 30 s at 100 ms from the first SSH login (transient
-			# init invocations, §11 P1), then 60 s idle once boot has settled.
-			probe "p1-after-boot-$state-watch" watch 30 100
+			# shellcheck disable=SC2016 # expanded by the guest shell
+			gsh 'i=0; until [ -s /root/abfm-boot-watch.json ]; do i=$((i + 1)); [ $i -lt 120 ] || exit 1; sleep 1; done
+				cat /root/abfm-boot-watch.json; rm -f /root/abfm-boot-watch.json /root/abfm-perf-probe.uc /etc/rc.d/S11abfm-perf-watch' >"$raw/p1-after-boot-$state-watch.json" 2>"$raw/p1-after-boot-$state-watch.err" ||
+				err "boot watch ($state) missing"
+			[[ -s "$raw/p1-after-boot-$state-watch.err" ]] || rm -f "$raw/p1-after-boot-$state-watch.err"
+			# Then 60 s idle once boot has settled.
 			gsh ". $G/lib.sh; perf_boot_report" >"$raw/p10-boot-$state.json" 2>&1 || err "boot report $state failed"
 			for i in 1 2 3; do probe "p1-after-boot-$state-$i" snapshot; sleep 5; done
 			probe "p1-idle-after-boot-$state-watch" watch 60 100

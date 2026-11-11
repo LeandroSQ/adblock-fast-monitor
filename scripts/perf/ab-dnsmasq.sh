@@ -35,8 +35,11 @@ if ! { guest_exec "mkdir -p $G" && guest_copy scripts/perf/guest/probe.uc "$G/pr
 	log 'cannot copy the probe into the guest'; exit 1
 fi
 gl perf_prepare >"$out/prepare.json" 2>&1 || { log 'fixtures failed'; exit 1; }
-guest_exec 'apk add --allow-untrusted /tmp/abfm-test/package.apk' >"$out/install.log" 2>&1 || { log 'install failed'; exit 1; }
-if ! { gl perf_set 1 >"$out/enable.json" 2>&1 && gl perf_capture_dropin >"$out/dropin.json" 2>&1; }; then
+gl perf_install /tmp/abfm-test/package.apk >"$out/install.json" 2>"$out/install.log" || { log 'install failed'; exit 1; }
+# reload_config only reports configs it has seen before: the first switch
+# after the install records the new package config (as run.sh does).
+if ! { gl perf_set 0 >"$out/ensure-off.json" 2>&1 && gl perf_set 1 >"$out/enable.json" 2>&1 &&
+	gl perf_capture_dropin >"$out/dropin.json" 2>&1; }; then
 	log 'cannot capture the drop-in'; exit 1
 fi
 printf '{"accel":"%s","guest":"%s","repeats":%d,"seconds":%d,"rates":"%s","settle_age_s":%d,"package_sha256":"%s"}\n' \
@@ -47,6 +50,9 @@ arm_state() { # arm r
 	local want=0 manual=0
 	[[ $1 == product ]] && want=1
 	[[ $1 == manual ]] && manual=1
+	# The hand-written copy goes first: with both drop-ins dnsmasq refuses the
+	# repeated options and does not start.
+	gl 'perf_manual 0'
 	if [[ $logging != "$want" ]]; then gl perf_set "$want" >"$out/raw/set-$1-r$2.json" 2>&1; logging=$want; fi
 	gl "perf_manual $manual && perf_restart $age" >"$out/raw/restart-$1-r$2.json" 2>&1
 }

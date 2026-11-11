@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Builds the signed apk feed and the static site that GitHub Pages serves.
 #
 #   scripts/release/sign-feed.sh --key PRIVATE.pem --out SITE \
@@ -37,7 +38,7 @@ while (($#)); do
 		--keys-dir) keys_dir="$2"; shift 2 ;;
 		--previous) previous="$2"; shift 2 ;;
 		--base-url) base_url="${2%/}"; shift 2 ;;
-		-h | --help) sed -n '2,26p' "$0"; exit 0 ;;
+		-h | --help) sed -n '3,26p' "$0"; exit 0 ;;
 		--) shift; break ;;
 		-*) die "unknown option: $1" ;;
 		*) break ;;

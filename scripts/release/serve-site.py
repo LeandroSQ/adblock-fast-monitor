@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Serves a feed site directory (scripts/release/sign-feed.sh --out) over HTTP
 the way GitHub Pages does for this purpose: static files with
 `Access-Control-Allow-Origin: *`, which LuCI's "Repository Public Keys" page

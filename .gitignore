@@ -9,3 +9,15 @@ sdk.tar.zst
 playwright-report/
 test-results/
 CLAUDE.local.md
+.claude/settings.local.json
+
+# Build and release outputs: packages are CI artifacts, the feed is built by
+# scripts/release/sign-feed.sh (release.yml writes it to site/).
+*.apk
+/site/
+
+# Private keys never enter the repository (keys/README.md): generate them
+# under ~/.afm-keys. keys/*.pem holds public keys only.
+*.key
+*.key.pem
+*private*.pem

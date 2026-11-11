@@ -27,9 +27,6 @@
     "shellcheck/SC2034": 2,
     "shellcheck/SC2154": 1
   },
-  "scripts/build-package.sh": {
-    "shellcheck/SC2046": 1
-  },
   "scripts/guest/lib.sh": {
     "shellcheck/SC2016": 1,
     "shellcheck/SC2046": 1,
@@ -54,16 +51,6 @@
   "scripts/performance-gate.mjs": {
     "eslint/@stylistic/brace-style": 2,
     "eslint/@stylistic/indent": 10
-  },
-  "scripts/release/selftest.sh": {
-    "shellcheck/SC2329": 3
-  },
-  "scripts/release/verify-luci-install.sh": {
-    "shellcheck/SC2016": 1
-  },
-  "scripts/release/verify-upgrade.sh": {
-    "shellcheck/SC2016": 1,
-    "shellcheck/SC2046": 1
   },
   "test/browser/install-luci.spec.mjs": {
     "eslint/preserve-caught-error": 1

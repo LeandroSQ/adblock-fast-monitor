@@ -145,7 +145,7 @@ t_eq 'read-only principal: info allowed after the upgrade' 'true' "$(rpc "$ro" l
 t_eq 'read-only principal: log read allowed after the upgrade (new ACL loaded)' 'list' \
 	"$(rpc "$ro" log read '{"lines":16,"stream":false,"oneshot":true}' | js 'type(d["result"][1]["log"]).__name__')"
 
-t_eq 'the v1 daemon object is gone' 1 "$(guest_exec 'ubus list adblock-fast-monitor >/dev/null 2>&1; echo $?')"
+t_eq 'the v1 daemon object is gone' '' "$(guest_exec 'ubus list adblock-fast-monitor 2>/dev/null' || true)"
 t_eq 'procd has no instance for the package' '' \
 	"$(guest_exec "ubus call service list '{\"name\":\"adblock-fast-monitor\"}'" | js 'd["adblock-fast-monitor"].get("instances")')"
 # patterns are split so this shell's own command line never matches

@@ -37,8 +37,9 @@ eq "drop-in present after boot" "log-queries=extra log-async=25" "$(guest_exec "
 eq "dnsmasq started exactly once since boot" 1 "$(guest_exec "logread | grep -c 'dnsmasq\\[[0-9]*\\]: started, version'")"
 eq "the package did not restart dnsmasq at boot" 0 "$(guest_exec "logread | grep -c 'restarting dnsmasq'")"
 # P1: sample /proc for 10 s (every 250 ms) so a short-lived respawn is seen too.
-procs=$(guest_exec 'end=$(($(date +%s) + 10)); while [ $(date +%s) -lt $end ]; do
-	for p in /proc/[0-9]*; do c=$(tr "\0" " " <$p/cmdline 2>/dev/null); case "$c" in */usr/libexec/adblock-fast-monitor/*|*"logread -f"*) echo "$c";; esac; done
+# The patterns are split so this shell's own command line never matches.
+procs=$(guest_exec 'a=/usr/libexec/adblock-fast; b=-monitor/; l=logread; f=" -f"; end=$(($(date +%s) + 10)); while [ $(date +%s) -lt $end ]; do
+	for p in /proc/[0-9]*; do c=$(tr "\0" " " <$p/cmdline 2>/dev/null); case "$c" in *"$a$b"*|*"$l$f"*) echo "$c";; esac; done
 	usleep 250000 2>/dev/null || sleep 1; done | sort -u')
 eq "no package process after boot (10 s /proc watch)" "" "$procs"
 eq "procd has no instance for the package" "" \

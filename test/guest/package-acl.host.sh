@@ -3,7 +3,9 @@
 # endpoint /ubus/subscribe/<object>, exactly as a browser would call them.
 #
 # Principals:
-#   root              LuCI's admin (rpcd grants it every ACL, "*")
+#   root              LuCI's admin (rpcd grants it every ACL group, "*"); for
+#                     the SSE positive control this test adds a throwaway
+#                     group granting `log` `:subscribe`, which only root gets
 #   monitor-admin     created here: luci-base + this app's read AND write grant
 #   monitor-readonly  the harness login (scripts/guest/lib.sh): luci-base +
 #                     this app's read grant only
@@ -46,10 +48,12 @@ login() {
 	raw 00000000000000000000000000000000 session login "{\"username\":\"$1\",\"password\":\"$2\"}" |
 		python3 -c 'import json,sys; print(json.load(sys.stdin)["result"][1]["ubus_rpc_session"])' 2>/dev/null
 }
-# sse SID -> HTTP status of GET /ubus/subscribe/log (000 if nothing came back);
-# an allowed subscription streams until --max-time.
+# sse SID -> "<HTTP status> <content type>" of GET /ubus/subscribe/log. uhttpd
+# answers 200 either way: text/event-stream when the session may
+# `:subscribe` (streams until --max-time), application/json with a
+# permission error otherwise (uhttpd ubus.c L436-439).
 sse() {
-	curl --silent --output /dev/null --write-out '%{http_code}' --max-time 3 \
+	curl --silent --output "$GUEST_RUN_DIR/acl-sse.out" --write-out '%{http_code} %{content_type}' --max-time 3 \
 		-H "Authorization: Bearer $1" "$GUEST_HTTP_URL/ubus/subscribe/log" || true
 }
 log_count() { guest_exec "logread | grep -c '$1'" || true; }
@@ -61,6 +65,9 @@ t_eq 'the installed ACL grants exactly the §9 sets' \
 
 # --- principals ---------------------------------------------------------------
 hash="$(openssl passwd -6 "$admin_pass")"
+guest_exec 'cat >/usr/share/rpcd/acl.d/abfm-test-sse.json' <<'JSON'
+{ "abfm-test-sse": { "description": "test only", "read": { "ubus": { "log": [ ":subscribe" ] } } } }
+JSON
 guest_exec "set -e
 	grep -q '^$admin_user:' /etc/passwd || { echo '$admin_user:x:1002:65534:monitor admin:/var:/bin/false' >>/etc/passwd; echo '$admin_user:x:0:0:99999:7:::' >>/etc/shadow; }
 	sed -i 's|^$admin_user:[^:]*:|$admin_user:$hash:|' /etc/shadow
@@ -74,7 +81,7 @@ guest_exec "set -e
 	/etc/init.d/rpcd reload
 	ubus -t 15 wait_for session luci.adblock-fast-monitor" >/dev/null
 cleanup() {
-	guest_exec "uci -q delete rpcd.monitor_admin; uci commit rpcd; sed -i '/^$admin_user:/d' /etc/passwd /etc/shadow; /etc/init.d/rpcd reload" >/dev/null 2>&1
+	guest_exec "rm -f /usr/share/rpcd/acl.d/abfm-test-sse.json; uci -q delete rpcd.monitor_admin; uci commit rpcd; sed -i '/^$admin_user:/d' /etc/passwd /etc/shadow; /etc/init.d/rpcd reload" >/dev/null 2>&1
 }
 trap cleanup EXIT
 t_match 'the read-only principal reads luci-base and the app, writes nothing' \
@@ -89,8 +96,8 @@ t_match 'root logs in through /ubus' '^[0-9a-f]{32}$' "$root_sid"
 t_match 'monitor-admin logs in through /ubus' '^[0-9a-f]{32}$' "$admin_sid"
 t_match 'monitor-readonly logs in through /ubus' '^[0-9a-f]{32}$' "$ro_sid"
 
-# --- SSE endpoint works at all (positive control with root's "*" grant) -------
-t_eq 'root: /ubus/subscribe/log streams (the endpoint exists in this uhttpd)' 200 "$(sse "$root_sid")"
+# --- SSE endpoint works at all (positive control: root + the throwaway group) -
+t_eq 'root with a :subscribe grant: /ubus/subscribe/log streams (the endpoint exists)' '200 text/event-stream' "$(sse "$root_sid")"
 
 dry='{"ops":[{"op":"block","domain":"acl.example.com"}],"confirm_rebuild":true,"dry_run":true}'
 for who in admin ro; do
@@ -99,8 +106,8 @@ for who in admin ro; do
 	mark="abfm-acl-$who-$RANDOM$RANDOM"
 	t_eq "$name: log write is denied" denied "$(rpc "$sid" log write "{\"event\":\"$mark\"}")"
 	t_eq "$name: ... and nothing was written" 0 "$(log_count "$mark")"
-	code="$(sse "$sid")"
-	t_ok "$name: /ubus/subscribe/log is refused (HTTP $code)" test "$code" != 200 -a "$code" != 000
+	t_eq "$name: /ubus/subscribe/log is refused (no event stream)" '200 application/json' "$(sse "$sid")"
+	t_match "$name: ... with a permission error" 'denied|ermission' "$(cat "$GUEST_RUN_DIR/acl-sse.out")"
 	t_eq "$name: info is allowed (api 2)" 'allowed 0 true' "$(rpc "$sid" luci.adblock-fast-monitor info)"
 	t_match "$name: job is allowed" '^allowed 0 ' "$(rpc "$sid" luci.adblock-fast-monitor job)"
 	t_eq "$name: rules no longer exists" missing-or-denied \
@@ -121,10 +128,12 @@ t_eq 'monitor-readonly: uci set adblock-fast-monitor is denied' denied \
 	"$(rpc "$ro_sid" uci set '{"config":"adblock-fast-monitor","section":"config","values":{"query_logging":"1"}}')"
 t_eq 'monitor-readonly: uci delete adblock-fast-monitor is denied' denied \
 	"$(rpc "$ro_sid" uci delete '{"config":"adblock-fast-monitor","section":"config"}')"
-for who in admin ro; do
-	case $who in admin) sid=$admin_sid name=monitor-admin ;; ro) sid=$ro_sid name=monitor-readonly ;; esac
-	t_eq "$name: uci set adblock-fast is denied (rules change only through apply)" denied \
-		"$(rpc "$sid" uci set '{"config":"adblock-fast","section":"config","values":{"enabled":"0"}}')"
-done
+t_eq 'monitor-readonly: uci set adblock-fast is denied by uhttpd' denied \
+	"$(rpc "$ro_sid" uci set '{"config":"adblock-fast","section":"config","values":{"enabled":"0"}}')"
+# luci-base's write grant lets the call through uhttpd; rpcd's uci write check
+# refuses the config (UBUS_STATUS_PERMISSION_DENIED = 6).
+t_eq 'monitor-admin: uci set adblock-fast is refused by rpcd (rules change only through apply)' 'allowed 6 -' \
+	"$(rpc "$admin_sid" uci set '{"config":"adblock-fast","section":"config","values":{"enabled":"0"}}')"
+rm -f "$GUEST_RUN_DIR/acl-sse.out"
 t_eq 'no configuration changed' "$before" "$(guest_exec 'uci -q show adblock-fast-monitor; uci -q show adblock-fast' | sha256sum)"
 t_done

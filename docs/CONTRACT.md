@@ -885,7 +885,12 @@ answered by local fixtures: 50 % forwarded, 30 % cached, 20 % blocked.
   knock logd off ubus.
 - uhttpd `93b05e0` serves `GET /ubus/subscribe/<object>` as server-sent
   events, authorized by `Authorization: Bearer <sid>` and the ACL method
-  `:subscribe` on that object (`ubus.c` L150, L427-468, L491-494).
+  `:subscribe` on that object (`ubus.c` L150, L427-468, L491-494). A refused
+  subscription is still HTTP 200, but `application/json` with a
+  `Permission denied` error instead of `text/event-stream` (L436-439).
+- A session with luci-base's write grant reaches rpcd's `uci set` for any
+  config; rpcd's own uci ACL then refuses configs outside the session's `uci`
+  write grant with ubus status 6 (verified for `adblock-fast`, T21).
 - LuCI openwrt-25.12: `luci-app-adblock-fast` grants `"log":["read"]` and
   polls `log read` (1000 lines every 5 s, no cursor); the System Log page
   does the same (`tools/views.js` LogreadBox). `L.Poll` never pauses for a

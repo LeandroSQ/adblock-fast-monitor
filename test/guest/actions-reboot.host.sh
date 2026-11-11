@@ -38,7 +38,7 @@ guest_copy_dir "$root/test/fixtures" /tmp/abfm-test/fixtures
 check_eq "plugin is loaded after boot" 0 "$(guest_exec 'ubus -t 30 wait_for luci.adblock-fast-monitor; echo $?')"
 check_eq "UCI change persisted across the reboot" 1 \
 	"$(guest_exec "uci -q get adblock-fast.config.blocked_domain | tr ' ' '\n' | grep -cxF keep.example.com")"
-check_eq "job is null after the reboot" "1 true" \
+check_eq "job is null after the reboot" "2 true" \
 	"$(guest_exec "r=\$(ubus call luci.adblock-fast-monitor job '{}'); echo \$(echo \"\$r\" | jsonfilter -e @.api -e @.ok) \$(echo \"\$r\" | jsonfilter -e @.job)")"
 check_eq "no job state file after the reboot" missing "$(guest_exec 'test -e /var/run/adblock-fast-monitor/job.json && echo present || echo missing')"
 

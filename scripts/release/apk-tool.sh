@@ -49,20 +49,21 @@ if ! pinned "$dir/apk"; then
 	tarball="${ABFM_SDK_TARBALL:-$cache/openwrt-sdk-25.12.6-${sha:0:16}.tar.zst}"
 	if ! printf '%s  %s\n' "$sha" "$tarball" | sha256sum --check --status 2>/dev/null; then
 		log "downloading $url"
-		curl --fail --location --retry 3 --retry-all-errors --silent --show-error \
-			--output "$tarball.partial.$$" "$url"
-		mv "$tarball.partial.$$" "$tarball"
+		# Unique name: containers sharing this cache may all run as PID 1.
+		partial="$(mktemp "$tarball.partial.XXXXXX")"
+		curl --fail --location --retry 3 --retry-all-errors --silent --show-error --output "$partial" "$url" ||
+			{ rm -f "$partial"; exit 1; }
+		mv "$partial" "$tarball"
 	fi
 	printf '%s  %s\n' "$sha" "$tarball" | sha256sum --check --status || { log "SDK checksum mismatch: $tarball"; exit 1; }
-	rm -rf "$dir/extract.$$"
-	mkdir -p "$dir/extract.$$"
-	tar --use-compress-program=unzstd -xf "$tarball" -C "$dir/extract.$$" --wildcards --strip-components=4 \
+	extract="$(mktemp -d "$dir/extract.XXXXXX")"
+	tar --use-compress-program=unzstd -xf "$tarball" -C "$extract" --wildcards --strip-components=4 \
 		'*/staging_dir/host/bin/.apk.bin'
-	chmod 0755 "$dir/extract.$$/.apk.bin"
-	pinned "$dir/extract.$$/.apk.bin" ||
-		{ rm -rf "$dir/extract.$$"; log "the SDK's .apk.bin does not match APK_BIN_SHA256"; exit 1; }
-	mv -f "$dir/extract.$$/.apk.bin" "$dir/apk"
-	rm -rf "$dir/extract.$$"
+	chmod 0755 "$extract/.apk.bin"
+	pinned "$extract/.apk.bin" ||
+		{ rm -rf "$extract"; log "the SDK's .apk.bin does not match APK_BIN_SHA256"; exit 1; }
+	mv -f "$extract/.apk.bin" "$dir/apk"
+	rm -rf "$extract"
 fi
 "$dir/apk" --version | grep -q '^apk-tools 3\.0\.5,' || { log "$dir/apk is not apk-tools 3.0.5"; exit 1; }
 printf '%s\n' "$dir/apk"

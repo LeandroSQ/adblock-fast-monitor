@@ -35,7 +35,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$root/.local-validation"
 # Physical path: .local-validation may be a symlink to a shared cache.
 cache="$(cd "$root/.local-validation" && pwd -P)"
-log() { printf 'build-package: %s\n' "$*" >&2; }
+# A failing command inside a redirected group exits with that redirection
+# still active, so messages (and the EXIT trap) use a saved copy of stderr.
+exec {stderr_fd}>&2
+log() { printf 'build-package: %s\n' "$*" >&"$stderr_fd"; }
 [[ "$(uname -s)-$(uname -m)" == Linux-x86_64 ]] ||
 	{ log 'the OpenWrt SDK needs Linux x86_64 (use scripts/in-docker.sh --platform linux/amd64)'; exit 1; }
 
@@ -57,7 +60,7 @@ on_exit() {
 	local status=$?
 	if ((status != 0)) && [[ -s "$build_log" ]]; then
 		log "failed; last 60 lines of $build_log:"
-		tail -n 60 "$build_log" >&2
+		tail -n 60 "$build_log" >&"$stderr_fd"
 	fi
 	if [[ -n "$fresh_sdk" && "${ABFM_KEEP_SDK:-0}" != 1 ]]; then rm -rf "$fresh_sdk"; fi
 	return "$status"
@@ -70,9 +73,12 @@ verified_tarball() {
 	local tarball="$cache/openwrt-sdk-25.12.6-${SDK_SHA256:0:16}.tar.zst"
 	if ! printf '%s  %s\n' "$SDK_SHA256" "$tarball" | sha256sum --check --status 2>/dev/null; then
 		log "downloading $SDK_URL"
-		curl --fail --location --retry 3 --retry-all-errors --silent --show-error \
-			--output "$tarball.partial.$$" "$SDK_URL"
-		mv "$tarball.partial.$$" "$tarball"
+		# Unique name: containers sharing this cache may all run as PID 1.
+		local partial
+		partial="$(mktemp "$tarball.partial.XXXXXX")"
+		curl --fail --location --retry 3 --retry-all-errors --silent --show-error --output "$partial" "$SDK_URL" ||
+			{ rm -f "$partial"; return 1; }
+		mv "$partial" "$tarball"
 	fi
 	printf '%s  %s\n' "$SDK_SHA256" "$tarball" | sha256sum --check --status ||
 		{ log "SDK checksum mismatch: $tarball"; return 1; }
@@ -85,7 +91,7 @@ git_() { git -C "$root" -c safe.directory='*' "$@"; }
 if [[ "$from" == auto ]]; then
 	from=worktree
 	top="$(git_ rev-parse --show-toplevel 2>/dev/null)" &&
-		[[ "$(cd "$top" && pwd -P)" == "$(cd "$root" && pwd -P)" ]] && from=head
+		[[ "$(cd "$top" && pwd -P)" == "$(cd "$root" && pwd -P)" ]] && from="head"
 fi
 mkdir -p "$out/source"
 case "$from" in
@@ -95,7 +101,7 @@ head)
 	dirty="$(git_ status --porcelain --untracked-files=all -- Makefile root htdocs po LICENSE)"
 	if [[ -n "$dirty" ]]; then
 		log "uncommitted changes in packaged paths (commit them, or set ABFM_BUILD_FROM=worktree):"
-		printf '%s\n' "$dirty" >&2
+		printf '%s\n' "$dirty" >&"$stderr_fd"
 		exit 1
 	fi
 	git_ archive --format=tar HEAD -- "${paths[@]}" | tar -C "$out/source" -xf -
@@ -155,9 +161,11 @@ if [[ ! -f "$sdk/.config" ]]; then
 	echo '== defconfig' >>"$build_log"
 	make -C "$sdk" defconfig >>"$build_log" 2>&1
 fi
-echo '== clean and compile' >>"$build_log"
-make -C "$sdk" "package/$PKG/clean" >>"$build_log" 2>&1
-make -C "$sdk" "package/$PKG/compile" V=s >>"$build_log" 2>&1
+{
+	echo '== clean and compile'
+	make -C "$sdk" "package/$PKG/clean"
+	make -C "$sdk" "package/$PKG/compile" V=s
+} >>"$build_log" 2>&1
 apk="$(find "$sdk/bin/packages" -type f -name "$PKG-*.apk" -newer "$out/source.sha256" -print -quit)"
 [[ -n "$apk" ]] || { log 'build produced no APK'; exit 1; }
 install -m 0644 "$apk" "$out/package.apk"

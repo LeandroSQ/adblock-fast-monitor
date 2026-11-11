@@ -38,10 +38,13 @@ mkdir -p "$scratch/scripts"
 if [[ "$old_ref" == same ]]; then
 	src="$(dirname "$new")/source"
 	[[ -f "$src/Makefile" && -d "$src/root" ]] || src="$root"
-	tar -C "$src" -cf - Makefile root $([[ -d "$src/po" ]] && echo po) | tar -C "$scratch" -xf -
+	paths=()
+	for p in Makefile root htdocs po LICENSE; do [[ ! -e "$src/$p" ]] || paths+=("$p"); done
+	tar -C "$src" -cf - "${paths[@]}" | tar -C "$scratch" -xf -
 else
 	src="git $old_ref"
-	git -C "$root" archive "$old_ref" Makefile root po | tar -C "$scratch" -xf -
+	mapfile -t paths < <(git -C "$root" ls-tree --name-only "$old_ref" -- Makefile root htdocs po LICENSE)
+	git -C "$root" archive "$old_ref" -- "${paths[@]}" | tar -C "$scratch" -xf -
 fi
 # api 1 shipped the resident daemon (docs/CONTRACT.md §3 migration).
 old_api=2
@@ -63,6 +66,7 @@ cp "$new" "$scratch/new.apk"
 #    like two consecutive releases
 feed=.ci-work/upgrade-feed
 rm -rf "$feed"
+# shellcheck disable=SC2016 # expanded by the bash -c below
 sign='set -euo pipefail
 	k="$1"; shift
 	(umask 077 && mkdir -p "$k/secret" && openssl ecparam -name prime256v1 -genkey -noout -out "$k/secret/key.pem")

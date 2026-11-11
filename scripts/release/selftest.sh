@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck disable=SC2329 # helpers are called through t() and bash -c
 # Executed test of the release signing pipeline (scripts/release/sign-feed.sh)
 # with throwaway ECDSA P-256 keys. Linux x86_64 (SDK host apk).
 #

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Shared setup for test/guest/actions-*.sh (sourced inside the guest after
 # testlib.sh). It points real adblock-fast at the deterministic fixture list
 # served by the host ($ABFM_FIXTURE_URL/actions/block.txt) and gives dnsmasq a
@@ -44,9 +45,16 @@ log_since() {
 }
 dnsmasq_starts() { log_since "$1" | grep -c 'dnsmasq\[[0-9]*\]: started, version'; }
 af_runs() { log_since "$1" | grep -o '\[INIT\] \(Starting\|Force-reloading\) adblock-fast' | wc -l; }
+# af_settled MARK N: adblock-fast finished at least N start/reload runs since
+# MARK (each one ends with its "[STAT] ... is blocking" line).
+af_settled() { [ "$(log_since "$1" | grep -c '\[STAT\] adblock-fast .* is blocking')" -ge "$2" ]; }
 
 # hold_lock SECONDS & : holds the job lock in one process (no forked child).
 hold_lock() { exec ucode -e 'let f = require("fs").open(ARGV[0], "a"); f.lock("x"); sleep(+ARGV[1] * 1000);' "$LOCK_FILE" "$1"; }
+# fake_af_run SECONDS & : a process whose command line names adblock-fast's
+# CLI (/lib/adblock-fast/cli.uc), like a run orphaned by a killed job; the
+# job must wait while it lives (docs/CONTRACT.md §7.2).
+fake_af_run() { exec ucode -e 'sleep(+ARGV[1] * 1000);' /lib/adblock-fast/cli.uc "$1"; }
 af_status() { ubus call service list '{"name":"adblock-fast"}' | jsonfilter -e '@["adblock-fast"].data.status'; }
 uci_has() { uci -q get "adblock-fast.config.$1" | tr ' ' '\n' | grep -qxF "$2"; }
 
@@ -66,6 +74,19 @@ wait_job_terminal() {
 
 lock_free() { flock -n "$LOCK_FILE" true; }
 
+# config_ack: record the current /etc/config as applied, the bookkeeping
+# reload_config does (/var/run/config.md5) without sending config.change
+# events. For a teardown that restored configs and restarted the services
+# itself: a later reload_config (in another test) must not replay them.
+config_ack() {
+	[ -f /var/run/config.md5 ] || return 0
+	rm -rf /var/run/config.check
+	mkdir -p /var/run/config.check
+	for _c in /etc/config/*; do uci show "${_c##*/}" >"/var/run/config.check/${_c##*/}"; done
+	md5sum /var/run/config.check/* >/var/run/config.md5
+	rm -rf /var/run/config.check
+}
+
 start_fake_upstream() {
 	[ -f /tmp/abfm-fake-upstream.pid ] && kill -0 "$(cat /tmp/abfm-fake-upstream.pid)" 2>/dev/null && return 0
 	dnsmasq --port=5353 --listen-address=127.0.0.1 --bind-interfaces --no-resolv --no-hosts \
@@ -82,15 +103,10 @@ actions_setup() {
 		cp /etc/config/adblock-fast "$BK/adblock-fast"
 		if $AF enabled; then echo 1 >"$BK/af-enabled"; else echo 0 >"$BK/af-enabled"; fi
 	fi
-	if ! apk info -e ucode-mod-resolv >/dev/null 2>&1; then
-		t_diag 'ucode-mod-resolv is not pulled in by the package (WU4 Makefile); installing it for the job'
-		apk add -q ucode-mod-resolv >/dev/null 2>&1
-	fi
-	if ! ubus list luci.adblock-fast-monitor >/dev/null 2>&1; then
-		t_diag 'rpcd did not load the plugin at install (postinst rpcd reload is WU4); reloading rpcd'
-		/etc/init.d/rpcd reload
-		ubus -t 15 wait_for luci.adblock-fast-monitor
-	fi
+	# Packaging faults are failures, never repaired here: the package must
+	# pull in ucode-mod-resolv and its postinst must have reloaded rpcd.
+	apk info -e ucode-mod-resolv >/dev/null 2>&1 || { echo 'ucode-mod-resolv is not installed' >&2; return 1; }
+	ubus list luci.adblock-fast-monitor >/dev/null 2>&1 || { echo 'rpcd has not loaded the plugin' >&2; return 1; }
 	start_fake_upstream
 	if ! uci -q get dhcp.@dnsmasq[0].server | grep -qF '127.0.0.1#5353'; then
 		uci set dhcp.@dnsmasq[0].noresolv=1
@@ -125,6 +141,7 @@ actions_teardown() {
 	cp "$BK/dhcp" /etc/config/dhcp
 	rm -f /tmp/.uci/adblock-fast "$JOB_FILE"
 	if [ "$(cat "$BK/af-enabled")" = 1 ]; then
+		$AF enable
 		$AF restart >/dev/null 2>&1
 	else
 		$AF stop >/dev/null 2>&1
@@ -133,6 +150,10 @@ actions_teardown() {
 	fi
 	[ -f /tmp/abfm-fake-upstream.pid ] && kill "$(cat /tmp/abfm-fake-upstream.pid)" 2>/dev/null
 	rm -f /tmp/abfm-fake-upstream.pid
+	# adblock-fast leaves uncommitted UCI changes of its own (file_url sizes;
+	# dhcp addnhosts in addnhosts mode): drop them with the rest.
+	rm -f /tmp/.uci/adblock-fast /tmp/.uci/dhcp
 	/etc/init.d/dnsmasq restart
+	config_ack
 	rm -rf "$BK"
 }

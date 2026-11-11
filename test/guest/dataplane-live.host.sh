@@ -23,9 +23,16 @@ logjson() { guest_exec "ubus call log read '{\"lines\":200,\"stream\":false,\"on
 has() { python3 -c 'import json,re,sys; d=json.loads(sys.argv[1]); print(int(any(re.search(sys.argv[2], e["msg"]) for e in d["log"])))' "$1" "$2"; }
 
 guest_copy_dir "$lib" /tmp/abfm-dp
-guest_exec 'cp /etc/config/adblock-fast-monitor /tmp/abfm-live-monitor.bak; cp /etc/config/adblock-fast /tmp/abfm-live-af.bak'
-trap "guest_exec 'cp /tmp/abfm-live-monitor.bak /etc/config/adblock-fast-monitor; cp /tmp/abfm-live-af.bak /etc/config/adblock-fast; rm -f /tmp/abfm-live-*.bak; reload_config'" EXIT
-G 'reload_config; sleep 2; dp_upstream_start' || nok "fake upstream starts"
+guest_exec 'cp /etc/config/adblock-fast-monitor /tmp/abfm-live-monitor.bak; cp /etc/config/adblock-fast /tmp/abfm-live-af.bak; cp /etc/config/dhcp /tmp/abfm-live-dhcp.bak'
+# adblock-fast's addnhosts mode edits dhcp (addnhosts) and leaves uncommitted
+# UCI changes; restore all of it.
+# Applied here, synchronously (dnsmasq restart, bookkeeping without events),
+# so nothing restarts after this file ends.
+trap "guest_exec '. /tmp/abfm-test/lib/sh/testlib.sh; . /tmp/abfm-test/fixtures/actions/guest-lib.sh
+	cp /tmp/abfm-live-monitor.bak /etc/config/adblock-fast-monitor; cp /tmp/abfm-live-af.bak /etc/config/adblock-fast
+	cp /tmp/abfm-live-dhcp.bak /etc/config/dhcp; rm -f /tmp/abfm-live-*.bak /tmp/.uci/dhcp /tmp/.uci/adblock-fast
+	/etc/init.d/dnsmasq restart; config_ack; abfm_wait_until 30 nslookup localhost 127.0.0.1'" EXIT
+G 'reload_config; dp_upstream_start' || nok "fake upstream starts"
 
 q A before-logging.example.test
 eq "query_logging=0: dnsmasq logs no queries" 0 "$(has "$(logjson)" 'query\[A\] before-logging\.example\.test')"
@@ -42,8 +49,13 @@ run_mode() { # mode blocked-line-regex
 	ok "$mode: adblock-fast serves the fixture list"
 	q A ads.example.test www.up.example.test
 	q A www.up.example.test
-	sleep 1
-	j=$(logjson)
+	# dnsmasq hands lines to logd asynchronously (log-async): wait until the
+	# last one (the cached answer) is in the ring, then read once.
+	for _ in $(seq 20); do
+		j=$(logjson)
+		[[ "$(has "$j" 'cached www\.up\.example\.test is ')" == 1 ]] && break
+		guest_exec 'sleep 1'
+	done
 	eq "$mode: the client's query line is logged with serial and client/port" 1 \
 		"$(has "$j" '^dnsmasq\[[0-9]+\]: [0-9]+ 10\.0\.2\.2/[0-9]+ query\[A\] ads\.example\.test from 10\.0\.2\.2$')"
 	eq "$mode: the blocked answer is logged" 1 "$(has "$j" "$block")"

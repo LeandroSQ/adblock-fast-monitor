@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Guest test entrypoint: boots a fresh COW overlay of the OpenWrt 25.12.6
 # baseline, installs an APK, runs test/guest/*.sh inside the guest and
 # test/guest/*.host.sh on the host, then discards the guest.
@@ -17,9 +18,15 @@
 #   ABFM_TESTLIB=/tmp/abfm-test/lib (test/lib copied; `. "$ABFM_TESTLIB/sh/testlib.sh"`)
 #   ABFM_APK=/tmp/abfm-test/package.apk  ABFM_FIXTURES=/tmp/abfm-test/fixtures
 #   ABFM_FIXTURE_URL / ABFM_HOST_URL  (host HTTP server as seen from the guest)
-# A test passes when it exits 0 and prints no "not ok" line; per-file limit
+# A test passes when it exits 0, prints a TAP plan `1..N` with N > 0 and
+# exactly N result lines, and none of them is "not ok"; per-file limit
 # ABFM_GUEST_TEST_TIMEOUT seconds (default 900). *.host.sh tests run with bash
 # on the host with guest_exec/guest_copy/guest_fetch and GUEST_* available.
+# On a shared guest, the state every file must leave behind (configs and no
+# uncommitted UCI changes, flushed reload_config, query logging, drop-ins,
+# enabled services, the plugin loaded, the job lock free, only the service's
+# dnsmasq) is recorded before each file and compared after it; a difference
+# fails that file. results/state.install is the state after the install.
 # Results: $GUEST_RUN_DIR/results/<test>.log and summary.tsv.
 set -euo pipefail
 
@@ -54,6 +61,27 @@ fi
 PACKAGE_SHA256="$(sha256sum "$apk" | awk '{print $1}')"
 export PACKAGE_APK="$apk" PACKAGE_IPK="$apk" PACKAGE_SHA256
 
+# Prints the guest state a test file must restore (see the header).
+GUEST_STATE='
+for c in dhcp adblock-fast adblock-fast-monitor system rpcd network; do
+	echo "config $c $(uci -q -t /tmp/abfm-state.nosave show $c | md5sum | cut -c1-32)"
+done
+for f in /tmp/.uci/*; do [ -s "$f" ] && echo "uncommitted ${f##*/}: $(tr "\n" " " <"$f")"; done
+if [ -f /var/run/config.md5 ]; then
+	sed -n "s#^\([0-9a-f]*\)  /var/run/config.check/\(.*\)#\1 \2#p" /var/run/config.md5 | while read -r sum c; do
+		[ "$(uci show "$c" 2>/dev/null | md5sum | cut -c1-32)" = "$sum" ] || echo "unflushed $c (reload_config was not run after a change)"
+	done
+fi
+for s in adblock-fast adblock-fast-monitor dnsmasq uhttpd rpcd log; do
+	echo "enabled $s $(/etc/init.d/$s enabled && echo 1 || echo 0)"
+done
+echo "query_logging $(uci -q get adblock-fast-monitor.config.query_logging)"
+echo "dropins $(ls /tmp/dnsmasq*.d/adblock-fast-monitor.conf 2>/dev/null | wc -l)"
+echo "plugin $(ubus list luci.adblock-fast-monitor >/dev/null 2>&1 && echo 1 || echo 0)"
+l=/var/lock/adblock-fast-monitor.lock
+echo "job-lock-free $({ [ ! -e $l ] || flock -n $l true; } && echo 1 || echo 0)"
+echo "dnsmasq-processes $(pidof dnsmasq | wc -w)"
+'
 summary=''
 failures=0
 guest_up=0
@@ -74,6 +102,7 @@ boot() {
 			>"$GUEST_RUN_DIR/results/install.log" 2>&1 ||
 			{ cat "$GUEST_RUN_DIR/results/install.log" >&2; echo 'APK installation failed' >&2; return 1; }
 	fi
+	guest_exec "$GUEST_STATE" >"$GUEST_RUN_DIR/results/state.install"
 	printf '%s\t%s\t%s\n' boot "$GUEST_BOOT_SECONDS" "$GUEST_ACCEL_USED" >>"$GUEST_RUN_DIR/results/summary.tsv"
 }
 
@@ -83,6 +112,11 @@ run_one() {
 	log="$GUEST_RUN_DIR/results/$name.log"
 	start=$(date +%s)
 	printf '=== %s\n' "$file"
+	local before='' check=0
+	if ((guest_up && ! isolate && install)); then
+		check=1
+		before="$(guest_exec "$GUEST_STATE" 2>&1)"
+	fi
 	set +e
 	if [[ "$name" == *.host.sh ]]; then
 		bash "$file" 2>&1 | tee "$log"
@@ -96,8 +130,25 @@ run_one() {
 			". /tmp/abfm-test/lib/sh/testlib.sh; abfm_timeout ${ABFM_GUEST_TEST_TIMEOUT:-900} sh tests/$name" 2>&1 | tee "$log"
 		rc=${PIPESTATUS[0]}
 	fi
+	local verdict=PASS plan
+	plan="$(sed -n 's/^1\.\.\([0-9][0-9]*\)\( .*\)\{0,1\}$/\1/p' "$log" | tail -n 1)"
+	if [[ -z "$plan" || "$plan" == 0 ]]; then
+		echo "# no TAP plan with at least one test" | tee -a "$log"
+		rc=${rc/#0/1}
+	elif (($(grep -cE '^(not )?ok [0-9]+' "$log" || true) != plan)); then
+		echo "# plan 1..$plan but $(grep -cE '^(not )?ok [0-9]+' "$log" || true) result lines" | tee -a "$log"
+		rc=${rc/#0/1}
+	fi
+	if ((check)); then
+		local state
+		state="$(guest_exec "$GUEST_STATE" 2>&1)"
+		if [[ "$state" != "$before" ]]; then
+			{ echo "# guest state left behind differs from the state before this file:"
+				diff <(printf '%s\n' "$before") <(printf '%s\n' "$state") | sed 's/^/#   /' || true; } | tee -a "$log"
+			rc=${rc/#0/1}
+		fi
+	fi
 	set -e
-	local verdict=PASS
 	if ((rc != 0)) || grep -q '^not ok' "$log"; then verdict=FAIL; failures=$((failures + 1)); fi
 	printf '%s %s (exit %s, %ss)\n' "$verdict" "$file" "$rc" "$(($(date +%s) - start))"
 	printf '%s\t%s\t%s\t%s\n' "$file" "$verdict" "$rc" "$(($(date +%s) - start))" >>"$GUEST_RUN_DIR/results/summary.tsv"

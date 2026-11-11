@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Harness smoke test: proves the guest runner boots a fresh stock 25.12.6
 # overlay, installed the APK under test, and exposes the shared helpers.
 # It deliberately checks no monitor feature.

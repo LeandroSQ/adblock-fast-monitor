@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# SPDX-License-Identifier: Apache-2.0
 # Reusable OpenWrt 25.12.6 QEMU guest API (Linux host or container with
 # qemu-system-x86_64). Source it from bash:
 #
@@ -175,9 +176,6 @@ guest_start() {
 	GUEST__DISK_OWNED=$([[ -z "${GUEST_DISK:-}" ]] && echo 1 || echo 0)
 	GUEST__DISK="$disk"
 
-	GUEST_SSH_PORT="$(guest__port GUEST_SSH_PORT)"
-	GUEST_HTTP_PORT="$(guest__port GUEST_HTTP_PORT)"
-	GUEST_DNS_PORT="$(guest__port GUEST_DNS_PORT)"
 	GUEST_SSH_KEY="$GUEST_RUN_DIR/id_ed25519"
 	rm -f "$GUEST_SSH_KEY" "$GUEST_SSH_KEY.pub" "$GUEST_RUN_DIR/known_hosts"
 	ssh-keygen -q -t ed25519 -N '' -C abfm-guest -f "$GUEST_SSH_KEY"
@@ -207,8 +205,28 @@ guest_start() {
 	local boot_timeout="${GUEST_BOOT_TIMEOUT:-$([[ $GUEST_ACCEL_USED == kvm ]] && echo 120 || echo 600)}"
 
 	GUEST__ACCEL_ARGS="${accel[*]}"
-	rm -f "$GUEST_RUN_DIR/serial.log"
-	guest__launch_qemu
+	# "auto" ports are probed free and then handed to QEMU, so a concurrent
+	# guest can take one in between; QEMU then exits at once ("Could not set
+	# up host forwarding rule"). Pick new ports and launch again (3 tries).
+	local attempt
+	for attempt in 1 2 3; do
+		GUEST_SSH_PORT="$(guest__port GUEST_SSH_PORT)"
+		GUEST_HTTP_PORT="$(guest__port GUEST_HTTP_PORT)"
+		GUEST_DNS_PORT="$(guest__port GUEST_DNS_PORT)"
+		rm -f "$GUEST_RUN_DIR/serial.log"
+		: >"$GUEST_RUN_DIR/qemu.log"
+		guest__launch_qemu
+		for ((i = 0; i < 200; i++)); do
+			[[ -s "$GUEST_RUN_DIR/serial.log" ]] && break
+			guest__qemu_alive "$GUEST_QEMU_PID" || break
+			sleep 0.1
+		done
+		guest__qemu_alive "$GUEST_QEMU_PID" && break
+		grep -qi 'forward' "$GUEST_RUN_DIR/qemu.log" ||
+			{ cat "$GUEST_RUN_DIR/qemu.log" >&2; guest_stop; return 1; }
+		guest__log "host port taken (attempt $attempt): $(tr '\n' ' ' <"$GUEST_RUN_DIR/qemu.log")"
+		((attempt < 3)) || { guest_stop; return 1; }
+	done
 
 	local root_hash readonly_hash feeds
 	# crypt(3) hashes use only [./0-9A-Za-z$], so they are safe inside single quotes.
@@ -219,6 +237,9 @@ guest_start() {
 		official | none) feeds=true ;;
 		*) guest__die "unknown GUEST_FEEDS=${GUEST_FEEDS}" || return 1 ;;
 	esac
+	# The setup commits rpcd (and maybe network) and applies them itself; the
+	# last step records that like reload_config would, without its events, so
+	# a test's own reload_config never replays the harness's changes.
 	python3 "$GUEST_LIB_ROOT/scripts/guest/serial-console.py" "$GUEST_RUN_DIR/serial.sock" "$boot_timeout" <<-EOF || { tail -n 40 "$GUEST_RUN_DIR/serial.log" >&2; guest_stop; return 1; }
 		ubus -t "$boot_timeout" wait_for network.interface.lan session uci service
 		sed -i 's|^root:[^:]*:|root:$root_hash:|' /etc/shadow
@@ -228,6 +249,7 @@ guest_start() {
 		uci -q get rpcd.monitor_readonly >/dev/null || { uci set rpcd.monitor_readonly=login; uci set rpcd.monitor_readonly.username='$GUEST_READONLY_USER'; uci set rpcd.monitor_readonly.password='\$p\$$GUEST_READONLY_USER'; uci add_list rpcd.monitor_readonly.read='luci-app-adblock-fast-monitor'; uci add_list rpcd.monitor_readonly.read='luci-base'; uci add_list rpcd.monitor_readonly.read='unauthenticated'; uci commit rpcd; /etc/init.d/rpcd reload; }
 		$feeds
 		[ "\$(uci -q get network.lan.proto)" = dhcp ] || { uci set network.lan.proto=dhcp; uci delete network.lan.ipaddr; uci delete network.lan.netmask; uci commit network; /etc/init.d/network reload; }
+		[ ! -f /var/run/config.md5 ] || { rm -rf /var/run/config.check; mkdir -p /var/run/config.check; for c in /etc/config/*; do uci show \${c##*/} >/var/run/config.check/\${c##*/}; done; md5sum /var/run/config.check/* >/var/run/config.md5; rm -rf /var/run/config.check; }
 		$GUEST_READY_CHECK
 	EOF
 	guest__wait_ssh "$boot_timeout" || { guest__log 'guest SSH did not become ready'; guest_stop; return 1; }

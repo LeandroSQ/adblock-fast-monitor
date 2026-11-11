@@ -142,7 +142,7 @@ function m_info() {
 			push(warnings, 'query-logging-active');
 			break;
 		}
-	if (c.get_first('system', 'system', 'log_file'))
+	if (sys.log_file_persistent(c.get_first('system', 'system', 'log_file')))
 		push(warnings, 'logd-to-flash');
 	if (c.get_first('system', 'system', 'log_ip'))
 		push(warnings, 'logd-remote');

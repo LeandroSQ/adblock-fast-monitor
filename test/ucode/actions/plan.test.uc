@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T13 (docs/CONTRACT.md §6.6) plan table and mode selection, plus the pure
 // halves of §7.2 (listed, observed, verdict) that the job feeds with real
 // files and DNS answers.

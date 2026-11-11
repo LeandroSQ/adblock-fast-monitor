@@ -20,19 +20,26 @@ uci add_list adblock-fast.config.allowed_domain=ads.example.com
 uci commit adblock-fast
 m=$(log_mark)
 reload_config
+# procd runs the reload 1 s after config.change: wait for that run's own
+# status line, not just for an idle adblock-fast (idle already before it).
+t_ok "config.change trigger: adblock-fast's reload ran" abfm_wait_until 120 af_settled "$m" 1
 t_ok "config.change trigger: adblock-fast settles" abfm_wait_until 120 af_idle
 t_ok "reload_config: the output file still blocks the allowed name" grep -qx 'server=/ads.example.com/' "$OUT"
 t_eq "reload_config: still NXDOMAIN" NXDOMAIN "$(dns_a ads.example.com)"
 
+m=$(log_mark)
 $AF reload >/dev/null 2>&1
+t_ok "adblock-fast reload: ran" abfm_wait_until 120 af_settled "$m" 1
 t_ok "adblock-fast reload: settles" abfm_wait_until 120 af_idle
 t_ok "adblock-fast reload: the output file still blocks the allowed name" grep -qx 'server=/ads.example.com/' "$OUT"
 t_eq "adblock-fast reload: still NXDOMAIN" NXDOMAIN "$(dns_a ads.example.com)"
 
+m=$(log_mark)
 $AF restart >/dev/null 2>&1
+t_ok "adblock-fast restart: ran" abfm_wait_until 120 af_settled "$m" 1
 t_ok "adblock-fast restart: settles" abfm_wait_until 120 af_idle
 t_ok "adblock-fast restart: the output file still blocks the allowed name" grep -qx 'server=/ads.example.com/' "$OUT"
-t_diag "adblock-fast runs since the commit: $(af_runs "$m"); downloads: $(log_since "$m" | grep -c 'Downloading\|download' )"
+t_eq "adblock-fast restart: no download" 0 "$(log_since "$m" | grep -c 'Downloading\|download')"
 
 $AF dl >/dev/null 2>&1
 t_ok "adblock-fast dl: settles" abfm_wait_until 120 af_idle

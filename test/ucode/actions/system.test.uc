@@ -119,5 +119,12 @@ t.test('logd_size_kib: log_buffer_size, else log_size, else 64 (ubox log.init)',
 	write('system', "config system\n\toption hostname 'MyRouter'\n");
 });
 
+t.test('log_file_persistent: only files outside tmpfs count as flash', () => {
+	for (let p in [ '/root/messages', '/overlay/log/messages', '/mnt/usb/log', '/tmpfoo/x' ])
+		t.ok(sys.log_file_persistent(p), p);
+	for (let p in [ '/tmp/messages', '/var/log/messages', '/dev/shm/log', '/tmp', '', null ])
+		t.ok(!sys.log_file_persistent(p), p ?? 'null');
+});
+
 system(`rm -rf ${base}`);
 t.done();

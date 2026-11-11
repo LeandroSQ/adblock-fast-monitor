@@ -48,11 +48,14 @@ lock?.lock('x');
 // stale jail socket is not missed (logd is up long before START=18 at boot).
 let stale_pids = [];
 function stale() {
+	let pids = sys.service_state(conn, 'dnsmasq').pids;
+	if (!length(pids))
+		return false;
 	for (let i = 0; i < 25 && !fs.stat('/dev/log'); i++)
 		sleep(200);
 	if (!fs.stat(RUN_DIR))
 		fs.mkdir(RUN_DIR, 0o700);
-	stale_pids = sys.dnsmasq_stale_restart('', sys.service_state(conn, 'dnsmasq').pids, STALE_STAMP);
+	stale_pids = sys.dnsmasq_stale_restart('', pids, STALE_STAMP);
 	return length(stale_pids) > 0;
 }
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T12 (docs/CONTRACT.md §6.4-6.5): grammar, normalization, protected set and
 // public-suffix guard of the real abfm.domain module.
 push(REQUIRE_SEARCH_PATH, '/src/root/usr/share/ucode/*.uc');

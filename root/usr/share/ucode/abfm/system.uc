@@ -105,6 +105,15 @@ function logd_size_kib(cursor) {
 		?? pick(cursor.get_first('system', 'system', 'log_size')) ?? 64;
 }
 
+// §6.1 `logd-to-flash`: logd also writes the log to `log_file`, and that
+// file is not on tmpfs (/tmp, /var -> /tmp, /dev/shm), so every logged query
+// is written to flash.
+function log_file_persistent(path) {
+	if (type(path) != 'string' || path == '')
+		return false;
+	return !match(path, /^\/(tmp|var|dev\/shm)(\/|$)/);
+}
+
 // adblock-fast's `dns` mode, or null when adblock-fast has no config.
 function adblock_fast_dns(cursor) {
 	let s = cursor.get_all('adblock-fast', 'config');
@@ -399,6 +408,7 @@ return {
 	dropin_path,
 	local_domains,
 	logd_size_kib,
+	log_file_persistent,
 	adblock_fast_dns,
 	service_state,
 	logging_status,

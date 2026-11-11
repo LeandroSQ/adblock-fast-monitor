@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Pull-through cache for downloads.openwrt.org, plus a static fixture tree.
 
 The OpenWrt guest's apk repositories are rewritten to http://10.0.2.2:PORT/...

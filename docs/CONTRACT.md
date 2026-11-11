@@ -1,4 +1,4 @@
-# luci-app-adblock-fast-monitor — interface contract, api 2 (design B-min)
+# luci-app-adblock-fast-monitor — interface contract, api 2
 
 Status: **frozen at API version 2**. All code implements this file. Changing
 any name, field, type, bound, state or error code needs a contract change:
@@ -270,7 +270,7 @@ Field sources:
 | `warnings` code | Condition |
 |---|---|
 | `query-logging-active` | at least one drop-in exists, or `uci_logqueries` is set (logd's ring fills with DNS lines; informational) |
-| `logd-to-flash` | `system.@system[0].log_file` is set |
+| `logd-to-flash` | `system.@system[0].log_file` is set to a path outside tmpfs (not under `/tmp`, `/var` or `/dev/shm`), so logged queries are written to flash |
 | `logd-remote` | `system.@system[0].log_ip` is set |
 
 ### 6.2 Arguments and errors
@@ -823,7 +823,7 @@ All dynamic text goes through `E()` array children or text nodes. Views
 
 ## 11. Performance budgets
 
-Design B-min: no resident process; the browser reads `log read` and does all
+No resident process; the browser reads `log read` and does all
 parsing. Measured by T26 (`npm run test:performance:measure -- PKG.apk`) and
 judged by `scripts/performance-gate.mjs` against `scripts/perf/budgets.json`.
 Method, justification and measured data: [`docs/performance.md`](performance.md).
@@ -990,7 +990,7 @@ Environments:
 | T05 | §8.3 port | one-time differential: api-1 ucode `logparse`+`stats` vs `querylog.js` over the dnsmasq fixtures, same decision per key | N | `test/fixtures/logread/differential/` |
 | T06 | D1, P1 | 0 package processes and no procd instance in every state: default, `query_logging` 0/1, settings save, restart, stop, after boot with `query_logging=1`; an `instance.update` firing costs one process | G | `test/guest/logging-lifecycle.sh`, `test/guest/logging-logd-restart.sh`, `test/guest/dataplane-boot.host.sh`, `test/guest/perf-p1-disabled.sh` |
 | T07 | §4 stale scope, loop guard | only procd dnsmasq instance pids and their jailed children are compared; one stale restart per logd socket; a foreign dnsmasq with a different `/dev/log` (own root) never restarts dnsmasq and causes no loop | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
-| T08 | §4, §5, P10 | drop-in set for reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
+| T08 | §4, §5, P10 | drop-in set for reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
 | T09 | §8.1 live | with the drop-in, real queries from a LAN source appear in `log read` (query, blocked `config`/addnhosts, `reply`, `cached` lines) with consecutive ids; none with `query_logging=0` | G | `test/guest/dataplane-live.host.sh` |
 | T10 | §8.1 bound | `log_size=1024`, ~1000-byte lines: `log read` with `lines:900` succeeds through `/ubus` and the CLI, reply < 1 MiB, logd stays on ubus | G | `test/guest/logd-oversize.host.sh` |
 | T11 | §6.1 | `info` fields (`api` 2, `monitor`, `local_domains`, `protected_suffixes`, `logd`), warnings for `log_file`, `log_ip`, dhcp `logfacility`/`logqueries`; through LuCI sessions | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-api.sh`, `test/guest/actions-session.host.sh` |
@@ -1004,7 +1004,7 @@ Environments:
 | T19 | §7.2–7.3 | second apply → `busy`; a fresh queued job → `busy` with its id; the job waits while another adblock-fast CLI run is alive; `kill -9` of the job → `interrupted`; `start-timeout`; `lock-failed` | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-jobs.sh` |
 | T20 | §10 | a committed `allowed_domain` change picked up by `reload_config`, `reload` or `restart` leaves the name blocked; only `dl` rebuilds | G | `test/guest/actions-upstream-reload.sh` |
 | T21 | §9 | for a read+write app login and the read-only login: `log read`, `info`, `job`, `uci get adblock-fast-monitor` allowed; `uci get adblock-fast` refused; `log write` and `/ubus/subscribe/log` refused (root's subscription streams as a control); `apply` allowed for admins, denied read-only; `uci set` denied as granted; a login without this app's ACL gets no menu entry and `-32002` on `info`, `job` and `log read` | G | `test/guest/package-acl.host.sh`, `test/guest/actions-session.host.sh` |
-| T22 | §2 install | LuCI Software upload with the key added through LuCI (no `--allow-untrusted`) → methods work without a manual rpcd restart; removal removes drop-ins (one dnsmasq restart), files, the `rc.d` link and the runtime state | B+G | `test/browser/install-luci.spec.mjs` (`scripts/release/verify-luci-install.sh`) |
+| T22 | §2 install | LuCI Software upload with the key added through LuCI (no `--allow-untrusted`) → methods work without a manual rpcd restart; removal removes drop-ins (one dnsmasq restart), files, the `rc.d` link and the runtime state | B+G | `test/browser/install-luci.spec.mjs` (`scripts/release/verify-luci-install.sh`), `test/guest/package-remove.host.sh` |
 | T23 | §8.5 | each page state rendered from a real guest condition | B | `test/browser/` |
 | T24 | §8.4 | staging persists across reload; Allow/Block row buttons; one `apply` per batch; confirm modal for rebuild; job progress; failed items return to pending | B | `test/browser/` |
 | T25 | §8.4, §9 | a read-only user sees no write controls; Settings loads and saves for an admin | B | `test/browser/` |

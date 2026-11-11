@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Regenerates the captured dnsmasq 2.93 log fixtures in this directory from a
 # real OpenWrt 25.12.6 guest (real dnsmasq + real adblock-fast serving the
 # local fixture list). Run through the guest harness, e.g.

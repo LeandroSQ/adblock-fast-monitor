@@ -19,6 +19,7 @@ test('real queries from a LAN client: decisions, sources, header and toggles', a
   await expect(page.locator('#abfm-disclaimer')).toContainText('read the whole system log');
   await expect(page.locator('#abfm-disclaimer')).toContainText('only to administrators');
   await expect(page.locator('#abfm-buffer-hint')).toContainText('System log buffer size');
+  await expect(page.locator('#abfm-buffer-hint')).toContainText(/\(\d+ KiB, shared by every service\)/);
   // first read fetches the most the contract allows; LuCI's call shape
   await expect.poll(() => reads.length).toBeGreaterThan(0);
   expect(reads[0].args).toEqual({ lines: 900, stream: false, oneshot: true });

@@ -3,12 +3,13 @@
 
 /*
  * Pure UI logic for the Adblock Fast Monitor views (docs/CONTRACT.md §8):
- * RPC error mapping, query-logging state from `info`, the client-side
- * staging reducer (§8.2), the row filter and display formatting. No DOM, no
+ * RPC error mapping, the page state (§8.5), view options from `info`, the
+ * client-side staging reducer (§8.4), the row filter and display formatting. No DOM, no
  * RPC, no timers, so the same file is loaded unchanged by the host unit tests.
  */
 
-const STORAGE_KEY = 'adblock-fast-monitor.pending.v1';
+const STORAGE_KEY = 'adblock-fast-monitor.pending.v2';
+const STORAGE_VERSION = 2;
 const MAX_PENDING = 64;
 /* The UI stages only allow and block; plan() maps them to UCI changes (§6.6). */
 const OPS = [ 'allow', 'block' ];
@@ -75,40 +76,65 @@ function failure(err) {
 	return { ok: false, rpc: e.rpc, ubus: e.ubus, message: e.message };
 }
 
+function infoData(infoResult) {
+	return (infoResult && infoResult.ok && isObject(infoResult.data)) ? infoResult.data : null;
+}
+
 /*
- * Query-logging state from an `info` result (§6.1):
- *   {state:'access-denied'|'unknown'|'adblock-fast-missing'|'active'|'off'|'unavailable',
- *    reason, configured}
- * `active` means some dnsmasq instance logs queries now (our drop-in or
- * dnsmasq's own `logqueries`, e.g. set by luci-app-adblock-fast); `configured`
- * is this app's `query_logging` option.
+ * §8.5 page state, first match wins. infoResult and logResult are
+ * settle()/failure() shapes or null (not loaded yet); hasRows tells whether
+ * an earlier `log read` delivered data. Returns {state, reason}.
  */
-function loggingState(infoResult) {
-	if (infoResult && !infoResult.ok)
-		return { state: infoResult.rpc === ACCESS_DENIED ? 'access-denied' : 'unknown', reason: null, configured: null };
-	const info = (infoResult && isObject(infoResult.data)) ? infoResult.data : null;
-	if (!info)
-		return { state: 'unknown', reason: null, configured: null };
-	const mon = isObject(info.monitor) ? info.monitor : {};
-	const configured = typeof(mon.query_logging) == 'boolean' ? mon.query_logging : null;
-	if (isObject(info.adblock_fast) && info.adblock_fast.installed === false)
-		return { state: 'adblock-fast-missing', reason: null, configured: configured };
-	const dnsmasq = isObject(info.dnsmasq) ? info.dnsmasq : {};
-	const instances = Array.isArray(dnsmasq.instances) ? dnsmasq.instances.filter(isObject) : [];
-	if (dnsmasq.running === false)
-		return { state: 'unavailable', reason: 'dnsmasq-not-running', configured: configured };
-	if (instances.some(i => i.logfacility_file === true))
-		return { state: 'unavailable', reason: 'dnsmasq-logs-to-file', configured: configured };
-	if (instances.some(i => i.dropin === true || i.uci_logqueries === true))
-		return { state: 'active', reason: null, configured: configured };
-	if (configured && instances.some(i => typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/'))
-		return { state: 'unavailable', reason: 'confdir-invalid', configured: configured };
-	return { state: 'off', reason: null, configured: configured };
+function pageState(infoResult, logResult, hasRows) {
+	if (infoResult && !infoResult.ok && infoResult.rpc === ACCESS_DENIED)
+		return { state: 'access-denied', reason: null };
+	const info = infoData(infoResult);
+	if (info) {
+		if (isObject(info.adblock_fast) && info.adblock_fast.installed === false)
+			return { state: 'adblock-fast-missing', reason: null };
+		const mon = isObject(info.monitor) ? info.monitor : {};
+		const dnsmasq = isObject(info.dnsmasq) ? info.dnsmasq : {};
+		const instances = Array.isArray(dnsmasq.instances) ? dnsmasq.instances.filter(isObject) : [];
+		if (mon.query_logging === false && !instances.some(i => i.uci_logqueries === true))
+			return { state: 'logging-off', reason: null };
+		if (dnsmasq.running === false)
+			return { state: 'logging-unavailable', reason: 'dnsmasq-not-running' };
+		if (instances.some(i => i.logfacility_file === true))
+			return { state: 'logging-unavailable', reason: 'dnsmasq-logs-to-file' };
+		const targeted = instances.filter(i => i.targeted !== false);
+		if (!instances.some(i => i.uci_logqueries === true) && !targeted.some(i => i.dropin === true))
+			return { state: 'logging-unavailable',
+				reason: targeted.some(i => typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/')
+					? 'confdir-invalid' : 'logging-not-active' };
+	}
+	if (logResult && !logResult.ok && !hasRows)
+		return { state: 'error', reason: null };
+	if (!logResult)
+		return { state: 'loading', reason: null };
+	return { state: 'healthy', reason: null };
+}
+
+/* Query logging is on but was not turned on by this app (dnsmasq `logqueries`). */
+function loggingElsewhere(infoResult) {
+	const info = infoData(infoResult);
+	const instances = (info && isObject(info.dnsmasq) && Array.isArray(info.dnsmasq.instances)) ? info.dnsmasq.instances : [];
+	return instances.some(i => isObject(i) && i.uci_logqueries === true);
+}
+
+/* §3 options the dashboard uses: {interval (2..60, default 2), hideRouter (default true)}. */
+function viewOptions(infoResult) {
+	const info = infoData(infoResult);
+	const mon = (info && isObject(info.monitor)) ? info.monitor : {};
+	const n = int(mon.poll_interval, null);
+	return {
+		interval: (n == null) ? 2 : Math.min(60, Math.max(2, n)),
+		hideRouter: mon.exclude_router !== false
+	};
 }
 
 /* dhcp `domain`/`local` names from `info.local_domains`, for querylog.create(). */
 function localDomains(infoResult) {
-	const info = (infoResult && infoResult.ok && isObject(infoResult.data)) ? infoResult.data : null;
+	const info = infoData(infoResult);
 	const list = (info && Array.isArray(info.local_domains)) ? info.local_domains : [];
 	return list.filter(d => typeof(d) == 'string' && d.length > 0);
 }
@@ -129,7 +155,7 @@ function filterRows(rows, query) {
 /* ---- §8.2 staging reducer ------------------------------------------------ */
 
 function emptyPending() {
-	return { v: 1, items: [], inflight: null };
+	return { v: STORAGE_VERSION, items: [], inflight: null };
 }
 
 function cleanItem(item) {
@@ -161,7 +187,7 @@ function parsePending(json) {
 	let raw = null;
 	try { raw = (typeof(json) == 'string') ? JSON.parse(json) : json; }
 	catch (e) { raw = null; }
-	if (!isObject(raw) || raw.v !== 1)
+	if (!isObject(raw) || raw.v !== STORAGE_VERSION)
 		return emptyPending();
 	const state = emptyPending();
 	state.items = cleanList(raw.items, MAX_PENDING);
@@ -171,15 +197,16 @@ function parsePending(json) {
 }
 
 function serializePending(state) {
-	const out = { v: 1, items: state.items };
+	const out = { v: STORAGE_VERSION, items: state.items };
 	if (state.inflight)
 		out.inflight = state.inflight;
 	return JSON.stringify(out);
 }
 
 /*
- * Adds op for domain, replacing any pending op for that domain.
- * Returns {state, change, error}; change: 'added' | 'replaced' | 'unchanged'.
+ * Adds op for domain: replaces any pending op for that domain; the same op
+ * again removes it (§8.4). Returns {state, change, error};
+ * change: 'added' | 'replaced' | 'cancelled'.
  */
 function stage(state, op, domain, ts) {
 	if (OPS.indexOf(op) < 0)
@@ -191,10 +218,14 @@ function stage(state, op, domain, ts) {
 	const idx = items.findIndex(i => i.domain == d);
 	let change;
 	if (idx >= 0) {
-		if (items[idx].op == op)
-			return { state: state, change: 'unchanged' };
-		items[idx] = { op: op, domain: d, ts: ts };
-		change = 'replaced';
+		if (items[idx].op == op) {
+			items.splice(idx, 1);
+			change = 'cancelled';
+		}
+		else {
+			items[idx] = { op: op, domain: d, ts: ts };
+			change = 'replaced';
+		}
 	}
 	else {
 		if (items.length >= MAX_PENDING)
@@ -364,7 +395,9 @@ return baseclass.extend({
 	normalizeDomain: normalizeDomain,
 	settle: settle,
 	failure: failure,
-	loggingState: loggingState,
+	pageState: pageState,
+	loggingElsewhere: loggingElsewhere,
+	viewOptions: viewOptions,
 	localDomains: localDomains,
 	rowOp: rowOp,
 	filterRows: filterRows,

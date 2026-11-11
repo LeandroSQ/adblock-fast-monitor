@@ -38,27 +38,45 @@ test('rpcError extracts JSON-RPC and ubus codes from LuCI RPCError messages', ()
   assert.equal(m.rpcError('boom').message, 'boom');
 });
 
-test('loggingState: query logging from info, in precedence order', () => {
-  const st = (r) => { const s = m.loggingState(r); return [s.state, s.reason, s.configured]; };
-  assert.deepEqual(st(err(-32002)), ['access-denied', null, null]);
-  assert.deepEqual(st(err(-32000)), ['unknown', null, null]);
-  assert.deepEqual(st(null), ['unknown', null, null]);
-  assert.deepEqual(st(ok(info({ adblock_fast: { installed: false } }))), ['adblock-fast-missing', null, true]);
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: false, instances: [inst({ dropin: true })] } }))),
-    ['unavailable', 'dnsmasq-not-running', true]);
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true }), inst({ logfacility_file: true })] } }))),
-    ['unavailable', 'dnsmasq-logs-to-file', true]);
-  assert.deepEqual(st(ok(info())), ['active', null, true]);
-  // turned on outside this app (luci-app-adblock-fast / dnsmasq logqueries)
-  assert.deepEqual(st(ok(info({ monitor: { query_logging: false }, dnsmasq: { running: true, instances: [inst({ uci_logqueries: true })] } }))),
-    ['active', null, false]);
-  assert.deepEqual(st(ok(info({ monitor: { query_logging: false }, dnsmasq: { running: true, instances: [inst()] } }))),
-    ['off', null, false]);
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ confdir: null })] } }))),
-    ['unavailable', 'confdir-invalid', true]);
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ confdir: 'relative' })] } }))),
-    ['unavailable', 'confdir-invalid', true]);
-  assert.deepEqual(st(ok(info({ monitor: {}, dnsmasq: null }))), ['off', null, null]);
+test('§8.5 pageState: first matching state wins', () => {
+  const st = (i, l, rows = false) => { const r = m.pageState(i, l, rows); return [r.state, r.reason]; };
+  const logOk = ok(null), logErr = m.failure(new Error('RPC call to log/read failed with ubus code 7: timeout'));
+  assert.deepEqual(st(err(-32002), logOk), ['access-denied', null]);
+  assert.deepEqual(st(ok(info({ adblock_fast: { installed: false } })), logOk), ['adblock-fast-missing', null]);
+  assert.deepEqual(st(ok(info({ monitor: { query_logging: false }, dnsmasq: { running: true, instances: [inst()] } })), logOk),
+    ['logging-off', null]);
+  // logging turned on elsewhere (dnsmasq logqueries, e.g. luci-app-adblock-fast) is not "off"
+  const elsewhere = ok(info({ monitor: { query_logging: false }, dnsmasq: { running: true, instances: [inst({ uci_logqueries: true })] } }));
+  assert.deepEqual(st(elsewhere, logOk), ['healthy', null]);
+  assert.equal(m.loggingElsewhere(elsewhere), true);
+  assert.equal(m.loggingElsewhere(ok(info())), false);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: false, instances: [inst({ dropin: true })] } })), logOk),
+    ['logging-unavailable', 'dnsmasq-not-running']);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true }), inst({ logfacility_file: true })] } })), logOk),
+    ['logging-unavailable', 'dnsmasq-logs-to-file']);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst()] } })), logOk),
+    ['logging-unavailable', 'logging-not-active']);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ confdir: null })] } })), logOk),
+    ['logging-unavailable', 'confdir-invalid']);
+  // an untargeted instance with a drop-in does not count; an untargeted bad confdir does not matter
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true, targeted: false }), inst({ targeted: true })] } })), logOk),
+    ['logging-unavailable', 'logging-not-active']);
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true, targeted: true }), inst({ confdir: null, targeted: false })] } })), logOk),
+    ['healthy', null]);
+  assert.deepEqual(st(ok(info()), logErr), ['error', null]);
+  assert.deepEqual(st(ok(info()), logErr, true), ['healthy', null]);   // keeps earlier rows
+  assert.deepEqual(st(ok(info()), null), ['loading', null]);
+  assert.deepEqual(st(err(-32000), logOk), ['healthy', null]);          // info failed: judge by the log
+  assert.deepEqual(st(null, null), ['loading', null]);
+});
+
+test('viewOptions: poll_interval clamped to 2..60 (default 2), router hidden unless exclude_router=false', () => {
+  const vo = (monitor) => m.viewOptions(ok(info({ monitor })));
+  assert.deepEqual(vo({ poll_interval: 5, exclude_router: true }), { interval: 5, hideRouter: true });
+  assert.deepEqual(vo({ poll_interval: 1 }), { interval: 2, hideRouter: true });
+  assert.deepEqual(vo({ poll_interval: 600, exclude_router: false }), { interval: 60, hideRouter: false });
+  assert.deepEqual(vo({ poll_interval: 'x' }), { interval: 2, hideRouter: true });
+  assert.deepEqual(m.viewOptions(err(-32002)), { interval: 2, hideRouter: true });
 });
 
 test('localDomains takes only non-empty strings from info.local_domains', () => {
@@ -94,7 +112,7 @@ test('§6.4 normalization in the UI matches the grammar', () => {
   }
 });
 
-test('§8.2 staging: allow and block only, replace, normalization, 64-item cap', () => {
+test('§8.4 staging: allow and block only, replace, same op again cancels, normalization, 64-item cap', () => {
   let s = m.emptyPending();
   let r = m.stage(s, 'block', 'Ads.Example.com.', 1);
   assert.equal(r.change, 'added');
@@ -103,7 +121,9 @@ test('§8.2 staging: allow and block only, replace, normalization, 64-item cap',
   r = m.stage(s, 'allow', 'ads.example.com', 2);
   assert.equal(r.change, 'replaced');
   assert.deepEqual(r.state.items, [{ op: 'allow', domain: 'ads.example.com', ts: 2 }]);
-  assert.equal(m.stage(s, 'block', 'ads.example.com', 9).change, 'unchanged');
+  r = m.stage(s, 'block', 'ads.example.com', 9);
+  assert.equal(r.change, 'cancelled');
+  assert.deepEqual(r.state.items, []);
   for (const op of ['unblock', 'unallow', 'nuke']) assert.equal(m.stage(s, op, 'x.example.com', 1).error, 'invalid-op', op);
   assert.equal(m.stage(s, 'block', 'not a domain', 1).error, 'invalid-domain');
   s = m.emptyPending();
@@ -123,8 +143,10 @@ test('§8.2 storage round-trip and hostile input', () => {
   const parsed = m.parsePending(m.serializePending(s));
   assert.deepEqual(parsed, s);
   assert.deepEqual(m.parsePending('{not json'), m.emptyPending());
-  assert.deepEqual(m.parsePending('{"v":2,"items":[]}'), m.emptyPending());
-  const hostile = m.parsePending(JSON.stringify({ v: 1,
+  assert.equal(m.STORAGE_KEY, 'adblock-fast-monitor.pending.v2');
+  // api-1 lists (pending.v1 shape, may hold unblock/unallow) are discarded
+  assert.deepEqual(m.parsePending('{"v":1,"items":[{"op":"block","domain":"a.example.com"}]}'), m.emptyPending());
+  const hostile = m.parsePending(JSON.stringify({ v: 2,
     items: [{ op: 'block', domain: '<img src=x>' }, { op: 'eval', domain: 'x.com' }, { op: 'block', domain: 'OK.com' },
       { op: 'allow', domain: 'ok.com' }, { op: 'unblock', domain: 'old.example.com' }, ...Array.from({ length: 100 }, (_, i) => ({ op: 'block', domain: `n${i}.com` }))],
     inflight: { job_id: '../../etc', items: [] } }));

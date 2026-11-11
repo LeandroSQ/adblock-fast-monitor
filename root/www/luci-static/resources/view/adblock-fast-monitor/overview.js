@@ -24,7 +24,7 @@ const callApply = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'ap
 	params: [ 'ops', 'confirm_rebuild', 'rebuild', 'dry_run' ], reject: true });
 const callJob = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'job', params: [ 'job_id' ], reject: true });
 
-const LOG_INTERVAL = 2;
+const INFO_INTERVAL = 30;
 const JOB_INTERVAL = 2;
 const MAX_ROWS = 500;
 const SETTINGS_PATH = 'admin/services/adblock-fast-monitor/settings';
@@ -40,20 +40,26 @@ const SOURCE_LABEL = {
 	dhcp: _('DHCP lease'), local: _('local name'), error: _('upstream error'),
 	upstream: _('upstream'), cache: _('cache'), auth: _('authoritative')
 };
-const LOGGING_TEXT = {
-	'active': _('DNS query logging is on: dnsmasq writes every query to the system log, and this page reads them from there.'),
-	'off': _('DNS query logging is off, so no queries are shown. Turn on "Log DNS queries" in Settings.'),
-	'unavailable': _('DNS query logging is not working.'),
+const STATE_TEXT = {
+	'loading': _('Loading…'),
+	'healthy': _('DNS query logging is on: dnsmasq writes every query to the system log, and this page reads them from there.'),
+	'logging-off': _('DNS query logging is off, so no queries are shown. Turn on "Log DNS queries" in Settings.'),
+	'logging-unavailable': _('DNS query logging is not working.'),
 	'adblock-fast-missing': _('adblock-fast is not installed. Install the adblock-fast package; this page only shows and edits its rules.'),
 	'access-denied': _('This account may not read the monitor status.'),
-	'unknown': _('The query logging state is unknown.')
+	'error': _('The system log cannot be read.')
+};
+const STATE_SEVERITY = {
+	'loading': 'notice', 'healthy': 'success', 'logging-off': 'warning', 'logging-unavailable': 'warning'
 };
 const REASON_TEXT = {
 	'dnsmasq-not-running': _('dnsmasq is not running.'),
+	'logging-not-active': _('No dnsmasq instance logs queries yet. Check "Log DNS queries" in Settings.'),
 	'dnsmasq-logs-to-file': _('dnsmasq writes its log to a file (log facility), so queries never reach the system log.'),
 	'confdir-invalid': _('A dnsmasq instance has an invalid configuration directory, so query logging cannot be enabled for it.')
 };
 const WARNING_TEXT = {
+	'query-logging-active': _('Every DNS query is written to the system log buffer, which pushes out other log messages sooner.'),
 	'logd-to-flash': _('The system log is also written to a file (log_file); query logging increases writes to that storage.'),
 	'logd-remote': _('The system log is sent to a remote host (log_ip); every DNS query is forwarded there.')
 };
@@ -108,9 +114,10 @@ function dataTable(label, captions, rows, placeholder) {
 	return E('table', { 'class': 'table', 'aria-label': label }, [ head ].concat(body));
 }
 
-function checkbox(id, label, onchange) {
+function checkbox(id, label, checked, onchange) {
 	return E('label', { 'for': id }, [
-		E('input', { 'type': 'checkbox', 'id': id, 'change': ev => onchange(ev.target.checked) }), ' ', T(label)
+		E('input', { 'type': 'checkbox', 'id': id, 'checked': checked ? '' : null,
+			'change': ev => onchange(ev.target.checked) }), ' ', T(label)
 	]);
 }
 
@@ -134,16 +141,19 @@ return view.extend({
 	render(infoResult) {
 		this.canWrite = L.hasViewPermission() === true;
 		this.infoResult = infoResult;
+		this.options = model.viewOptions(infoResult);
 		this.log = querylog.create({ max_rows: MAX_ROWS, pending_ttl_s: 10,
-			local_domains: model.localDomains(infoResult), hide_router: true });
-		this.display = { q: '', showRouter: false, showClient: false };
-		this.readError = null;
+			local_domains: model.localDomains(infoResult), hide_router: this.options.hideRouter });
+		this.display = { q: '', showRouter: !this.options.hideRouter, showClient: false };
+		this.logResult = null;
+		this.hasRows = false;
+		this.dismissed = {};
 		this.rowsKey = null;
 		this.job = null;
 		this.jobKey = null;
 		this.pending = model.parsePending(storageGet(model.STORAGE_KEY));
 		this.polling = false;
-		this.ticks = { log: L.bind(this.pollLog, this), job: L.bind(this.pollJob, this) };
+		this.ticks = { log: L.bind(this.pollLog, this), info: L.bind(this.pollInfo, this), job: L.bind(this.pollJob, this) };
 
 		const node = E('div', { 'class': 'cbi-map', 'id': 'abfm-overview' }, [
 			E('h2', {}, T(_('Adblock Fast Monitor'))),
@@ -155,9 +165,10 @@ return view.extend({
 			E('span', {}, T(_('Everyone who can open this page can read the whole system log through LuCI\'s standard log access, the same access that luci-app-adblock-fast and Status → System Log use. Grant this app only to administrators.')))
 		]));
 
-		this.loggingNode = E('div', { 'id': 'abfm-logging', 'role': 'status', 'aria-live': 'polite' });
-		node.appendChild(this.loggingNode);
-		node.appendChild(this.renderWarnings());
+		this.stateNode = E('div', { 'id': 'abfm-state', 'role': 'status', 'aria-live': 'polite' });
+		this.warningsNode = E('div', { 'id': 'abfm-warnings' });
+		node.appendChild(this.stateNode);
+		node.appendChild(this.warningsNode);
 
 		this.statsNode = E('div', { 'id': 'abfm-stats' });
 		this.missedNode = E('div', { 'id': 'abfm-missed' });
@@ -172,7 +183,8 @@ return view.extend({
 			node.appendChild(this.renderPendingSection());
 		node.appendChild(this.renderQueriesSection());
 
-		this.updateLogging();
+		this.updateState();
+		this.updateWarnings();
 		this.updateStats();
 		this.updatePending();
 		this.updateQueries();
@@ -195,7 +207,8 @@ return view.extend({
 		if (this.polling || document.visibilityState != 'visible')
 			return;
 		this.polling = true;
-		poll.add(this.ticks.log, LOG_INTERVAL);
+		poll.add(this.ticks.log, this.options.interval);
+		poll.add(this.ticks.info, INFO_INTERVAL);
 		if (this.watchedJob)
 			poll.add(this.ticks.job, JOB_INTERVAL);
 	},
@@ -205,6 +218,7 @@ return view.extend({
 			return;
 		this.polling = false;
 		poll.remove(this.ticks.log);
+		poll.remove(this.ticks.info);
 		poll.remove(this.ticks.job);
 	},
 
@@ -234,13 +248,27 @@ return view.extend({
 			if (r && r.refetch)
 				return this.readLog(r.refetch.lines).then(again => querylog.ingest(this.log, again));
 		}).then(() => {
-			this.readError = null;
+			this.logResult = model.settle(null);
+			this.hasRows = true;
 		}, err => {
-			this.readError = model.failure(err);
+			this.logResult = model.failure(err);
 		}).then(() => {
-			this.updateLogging();
+			this.updateState();
 			this.updateStats();
 			this.updateQueries();
+		});
+	},
+
+	/* info at load and every 30 s while visible (§8.5); the first tick is the load itself */
+	pollInfo() {
+		if (!this.infoSkipped) {
+			this.infoSkipped = true;
+			return Promise.resolve();
+		}
+		return callInfo().then(model.settle, model.failure).then(res => {
+			this.infoResult = res;
+			this.updateState();
+			this.updateWarnings();
 		});
 	},
 
@@ -255,30 +283,32 @@ return view.extend({
 			: _('Only queries still in the system log buffer (shared by every service) are shown.')) + ' ' + where;
 	},
 
-	updateLogging() {
-		const s = model.loggingState(this.infoResult);
-		const children = [ E('strong', {}, T(LOGGING_TEXT[s.state] || s.state)) ];
-		if (s.reason)
-			children.push(E('p', { 'data-reason': s.reason }, T(REASON_TEXT[s.reason] || s.reason)));
-		if (s.state == 'active' && s.configured === false)
-			children.push(E('p', {}, T(_('It was turned on outside this app (for example by luci-app-adblock-fast or the dnsmasq "Log queries" option).'))));
-		if (s.state == 'off' || s.state == 'unavailable')
+	updateState() {
+		const st = model.pageState(this.infoResult, this.logResult, this.hasRows);
+		const children = [ E('strong', {}, T(STATE_TEXT[st.state] || st.state)) ];
+		if (st.reason)
+			children.push(E('p', { 'data-reason': st.reason }, T(REASON_TEXT[st.reason] || st.reason)));
+		if (st.state == 'healthy' && model.loggingElsewhere(this.infoResult))
+			children.push(E('p', {}, T(_('dnsmasq\'s own "Log queries" option is on (for example set by luci-app-adblock-fast), so queries are logged whatever this app\'s setting is.'))));
+		if (st.state == 'logging-off' || st.state == 'logging-unavailable')
 			children.push(E('p', {}, [ E('a', { 'href': L.url(SETTINGS_PATH) }, T(_('Open settings'))) ]));
-		if (this.readError)
-			children.push(E('p', { 'id': 'abfm-read-error' }, T(_('The system log cannot be read: %s').format(this.readError.message))));
-		const severity = this.readError ? 'danger'
-			: (s.state == 'active') ? 'success'
-			: (s.state == 'off' || s.state == 'unknown') ? 'warning' : 'danger';
-		this.loggingNode.className = 'alert-message ' + severity;
-		this.loggingNode.setAttribute('data-state', s.state);
-		dom.content(this.loggingNode, children);
+		if (this.logResult && !this.logResult.ok)
+			children.push(E('p', { 'id': 'abfm-read-error' }, T(_('The system log cannot be read: %s').format(this.logResult.message))));
+		this.stateNode.className = 'alert-message ' + (STATE_SEVERITY[st.state] || 'danger');
+		this.stateNode.setAttribute('data-state', st.state);
+		this.stateNode.setAttribute('data-reason', st.reason || '');
+		dom.content(this.stateNode, children);
 	},
 
-	renderWarnings() {
+	updateWarnings() {
 		const info = (this.infoResult && this.infoResult.ok) ? this.infoResult.data : null;
-		const warnings = (info && Array.isArray(info.warnings)) ? info.warnings.filter(w => WARNING_TEXT[w]) : [];
-		return E('div', { 'id': 'abfm-warnings' }, warnings.map(w =>
-			E('div', { 'class': 'alert-message notice', 'data-warning': w }, T(WARNING_TEXT[w]))));
+		const warnings = (info && Array.isArray(info.warnings) ? info.warnings : [])
+			.filter(w => typeof(w) == 'string' && WARNING_TEXT[w] && !this.dismissed[w]);
+		dom.content(this.warningsNode, warnings.map(w => E('div', { 'class': 'alert-message notice', 'data-warning': w }, [
+			E('span', {}, T(WARNING_TEXT[w])), ' ',
+			E('button', { 'class': 'cbi-button cbi-button-neutral', 'aria-label': _('Dismiss note'),
+				'click': () => { this.dismissed[w] = true; this.updateWarnings(); } }, T(_('Dismiss')))
+		])));
 	},
 
 	updateStats() {
@@ -314,7 +344,7 @@ return view.extend({
 		this.queriesNode = E('div', { 'id': 'abfm-queries' });
 		return E('div', { 'class': 'cbi-section', 'id': 'abfm-queries-section' }, [
 			E('h3', {}, T(_('Last queries'))),
-			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first, up to %d queries. Queries made by the router itself (127.0.0.1, ::1) are hidden unless you show them.').format(MAX_ROWS))),
+			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first, up to %d queries. Queries made by the router itself (127.0.0.1, ::1) can be shown or hidden.').format(MAX_ROWS))),
 			E('div', { 'class': 'cbi-section-node' }, [
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title', 'for': 'abfm-filter' }, T(_('Filter domains'))),
@@ -323,8 +353,8 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-title' }, T(_('Display'))),
 					E('div', { 'class': 'cbi-value-field' }, [
-						checkbox('abfm-show-router', _('Show router queries'), v => { this.display.showRouter = v; this.updateStats(); this.updateQueries(); }), ' ',
-						checkbox('abfm-show-client', _('Show client column'), v => { this.display.showClient = v; this.updateQueries(); })
+						checkbox('abfm-show-router', _('Show router queries'), this.display.showRouter, v => { this.display.showRouter = v; this.updateStats(); this.updateQueries(); }), ' ',
+						checkbox('abfm-show-client', _('Show client column'), false, v => { this.display.showClient = v; this.updateQueries(); })
 					])
 				])
 			]),

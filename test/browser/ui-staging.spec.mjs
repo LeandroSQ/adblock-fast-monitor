@@ -10,7 +10,7 @@ import {
 
 test.describe.configure({ mode: 'serial' });
 
-const STORAGE = 'adblock-fast-monitor.pending.v1';
+const STORAGE = 'adblock-fast-monitor.pending.v2';
 
 function trackApply(page) {
   const calls = [];
@@ -98,6 +98,10 @@ test('row buttons stage changes that survive a reload; manual add, replace and d
 
   // per-row cancel, remove, and discard all
   await queryRow(page, 'ads.example.test').getByRole('button', { name: 'Cancel pending change for ads.example.test' }).click();
+  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+  // the same op again removes it (§8.4)
+  await stageManual(page, 'allow', 'ads.example.test');
+  await stageManual(page, 'allow', 'ads.example.test');
   await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
   await stageManual(page, 'allow', 'ads.example.test');
   await stageManual(page, 'block', 'tracker2.example.test');

@@ -1,7 +1,7 @@
 // T25 (docs/CONTRACT.md §8.2, §9): a read-only principal sees the queries but
 // no write controls; Settings loads and saves for an admin.
 import { expect, test } from '@playwright/test';
-import { admin, ensureHealthy, guest, guestWait, login, pending, queries, readonly, seeQuery, SETTINGS } from './lib/guest.mjs';
+import { admin, ensureHealthy, guest, guestWait, login, OVERVIEW, pending, queries, readonly, seeQuery, SETTINGS } from './lib/guest.mjs';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -18,7 +18,7 @@ test('read-only user: queries without write controls', async ({ page }) => {
   await login(page, readonly);
   await expect(page.locator('#abfm-disclaimer')).toBeVisible();
   const row = await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
-  await expect(page.locator('#abfm-logging')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('#abfm-state')).toHaveAttribute('data-state', 'healthy');
   await expect(page.locator('#abfm-read-error')).toHaveCount(0);
   await expect(page.getByRole('table', { name: 'Statistics' })).toBeVisible();
   await expect(page.locator('#abfm-pending-section')).toHaveCount(0);
@@ -52,6 +52,10 @@ test('admin: settings show only query logging, explain the other toggle, and sav
     guestWait('! grep -qs "^log-queries" /tmp/dnsmasq.*.d/*', 60);
     await page.reload();
     await expect(flag).not.toBeChecked();
+    // the dashboard says so and links to Settings
+    await page.goto(OVERVIEW);
+    await expect(page.locator('#abfm-state')).toHaveAttribute('data-state', 'logging-off');
+    await expect(page.locator('#abfm-state').getByRole('link', { name: 'Open settings' })).toHaveAttribute('href', /settings$/);
   } finally {
     guest('uci set adblock-fast-monitor.config.query_logging=1; uci commit adblock-fast-monitor');
   }

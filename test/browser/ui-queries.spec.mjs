@@ -15,9 +15,14 @@ test.beforeAll(() => ensureHealthy());
 test('real queries from a LAN client: decisions, sources, header and toggles', async ({ page }) => {
   const reads = trackLogReads(page);
   await login(page, admin);
-  await expect(page.locator('#abfm-logging')).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('#abfm-state')).toHaveAttribute('data-state', 'healthy');
   await expect(page.locator('#abfm-disclaimer')).toContainText('read the whole system log');
   await expect(page.locator('#abfm-disclaimer')).toContainText('only to administrators');
+  // informational note from info.warnings, dismissible
+  const note = page.locator('[data-warning="query-logging-active"]');
+  await expect(note).toBeVisible();
+  await note.getByRole('button', { name: 'Dismiss note' }).click();
+  await expect(note).toHaveCount(0);
   await expect(page.locator('#abfm-buffer-hint')).toContainText('System log buffer size');
   await expect(page.locator('#abfm-buffer-hint')).toContainText(/\(\d+ KiB, shared by every service\)/);
   // first read fetches the most the contract allows; LuCI's call shape

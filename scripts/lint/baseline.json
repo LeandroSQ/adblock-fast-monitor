@@ -1,7 +1,4 @@
 {
-  "README.md": {
-    "markdownlint/MD004": 1
-  },
   "docs/CONTRACT.md": {
     "markdownlint/MD012": 1,
     "markdownlint/MD032": 13,
@@ -161,9 +158,5 @@
   "test/shell/uci-defaults-migrate.test.sh": {
     "shellcheck/SC1090": 3,
     "shellcheck/SC1091": 1
-  },
-  "test/unit/docs-references.test.mjs": {
-    "eslint/@stylistic/brace-style": 2,
-    "eslint/@stylistic/indent": 1
   }
 }

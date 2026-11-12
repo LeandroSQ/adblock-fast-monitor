@@ -7,6 +7,7 @@
 'require dom';
 'require adblock-fast-monitor.model as model';
 'require adblock-fast-monitor.querylog as querylog';
+'require adblock-fast-monitor.chart as chart';
 
 /*
  * SPDX-License-Identifier: Apache-2.0
@@ -41,6 +42,9 @@ const JOB_INTERVAL = 2;
 const MAX_ROWS = 500;
 /* Rows in the DOM: the poll's DOM cost stays bounded whatever the query rate (P4). */
 const PAGE_SIZE = 50;
+/* The list scrolls inside its box, under a header that stays in view. */
+const LIST_STYLE = 'max-height:60vh;overflow-y:auto';
+const HEAD_STYLE = 'position:sticky;top:0;z-index:1;background:var(--background-color-high, #fff)';
 /* about 33 min of 2 s polls; then the old `abfm-poll` measures are dropped */
 const MAX_MEASURES = 1000;
 /* No keyboard, pointer or touch input for this long pauses polling (P0). */
@@ -556,8 +560,9 @@ return view.extend({
 	},
 
 	/*
-	 * "33 %" as LuCI's progress bar plus one sentence (model.summary). Built
-	 * once; a poll rewrites only the attributes and texts that changed (P4).
+	 * The blocked share as a donut in a LuCI card (.ifacebox, as on Status →
+	 * Overview) next to one sentence (model.summary). Built once; a poll
+	 * rewrites only the attributes and texts that changed (P4).
 	 */
 	updateStats() {
 		const s = querylog.stats(this.log, { show_router: false });
@@ -565,34 +570,22 @@ return view.extend({
 		const sum = model.summary(s, model.dnsModeNote(this.infoResult));
 		let v = this.statView;
 		if (!v) {
-			v = this.statView = {
-				fill: E('div', { 'style': 'width:0%' }),
-				text: textNode(),
-				pct: undefined, value: undefined, line: undefined
-			};
-			v.bar = E('div', { 'class': 'cbi-progressbar', 'role': 'progressbar', 'aria-label': _('Blocked queries'),
-				'aria-valuemin': '0', 'aria-valuemax': '100', 'title': '' }, [ v.fill ]);
+			v = this.statView = { donut: chart.donut(96), text: textNode(), line: undefined };
 			v.missed = E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]);
 			v.paused = E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ]);
 			this.missedNode = E('div', { 'id': 'abfm-missed', 'data-missed': '0', 'data-paused': '0' }, [ v.missed, v.paused ]);
 			dom.content(this.statsNode, [
-				E('h3', {}, T(_('Blocked'))),
-				E('div', { 'data-stat': 'blocked_pct' }, [ v.bar, E('p', {}, [ v.text ]) ]),
+				E('div', { 'data-stat': 'blocked_pct', 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:1em' }, [
+					E('div', { 'class': 'ifacebox', 'style': 'margin:0' }, [
+						E('div', { 'class': 'ifacebox-head' }, T(_('Blocked'))),
+						E('div', { 'class': 'ifacebox-body' }, [ v.donut.node ])
+					]),
+					E('p', { 'data-stat': 'text' }, [ v.text ])
+				]),
 				this.missedNode
 			]);
 		}
-		if (v.pct !== sum.pct) {
-			v.pct = sum.pct;
-			show(v.bar, sum.pct != null);
-			const w = (sum.pct == null) ? 0 : Math.max(0, Math.min(100, sum.pct));
-			v.fill.style.width = w + '%';
-			v.bar.setAttribute('aria-valuenow', String(Math.round(w)));
-		}
-		if (v.value !== sum.value) {
-			v.value = sum.value;
-			v.bar.setAttribute('title', sum.value || '');
-			v.bar.setAttribute('aria-valuetext', sum.value || '');
-		}
+		v.donut.update(sum.pct, sum.value, sum.label || sum.text);
 		if (v.line !== sum.text)
 			v.text.data = v.line = sum.text;
 
@@ -619,10 +612,12 @@ return view.extend({
 
 	renderQueriesSection() {
 		this.queriesTable = E('table', { 'class': 'table', 'aria-label': _('Last queries') });
-		this.queriesNode = E('div', { 'id': 'abfm-queries' }, [ this.queriesTable ]);
+		/* keyboard users scroll it too: focusable, named region (WCAG 2.1.1) */
+		this.queriesNode = E('div', { 'id': 'abfm-queries', 'style': LIST_STYLE, 'tabindex': '0',
+			'role': 'region', 'aria-label': _('Last queries') }, [ this.queriesTable ]);
 		this.queriesSection = E('div', { 'class': 'cbi-section', 'id': 'abfm-queries-section' }, [
 			E('h3', {}, T(_('Last queries'))),
-			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first. The list updates every 2 seconds while this page is open.'))),
+			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first, up to 50. The list updates every 2 seconds while this page is open.'))),
 			this.queriesNode
 		]);
 		return this.queriesSection;
@@ -655,20 +650,21 @@ return view.extend({
 			const tds = [
 				cell(_('Time'), [ E('time') ]),
 				cell(_('Domain'), [], 'abfm-domain'),
+				cell(_('Client'), [], 'abfm-client'),
 				cell(_('Result'), [], 'abfm-result')
 			];
 			if (this.canWrite)
 				tds.push(cell(_('Action'), [], 'cbi-section-actions'));
 			this.rowTemplate = E('tr', { 'class': 'tr' }, tds);
 			tds[0].firstChild.appendChild(textNode());
-			tds[1].appendChild(textNode());
-			tds[2].appendChild(textNode());
+			for (let i = 1; i < 4; i++)
+				tds[i].appendChild(textNode());
 		}
 		const tr = this.rowTemplate.cloneNode(true);
 		const tds = tr.children;
 		return { tr: tr, key: null, domain: null, valid: null, decision: null, vals: [],
-			text: [ tds[0].firstChild.firstChild, tds[1].firstChild, tds[2].firstChild ],
-			act: null, aria: null, ariaButton: null, actCell: this.canWrite ? tds[3] : null, buttons: {}, staged: null, inflight: null };
+			text: [ tds[0].firstChild.firstChild, tds[1].firstChild, tds[2].firstChild, tds[3].firstChild ],
+			act: null, aria: null, ariaButton: null, actCell: this.canWrite ? tds[4] : null, buttons: {}, staged: null, inflight: null };
 	},
 
 	/* "Decision (source)", formatted once per pair (a few dozen at most). */
@@ -702,7 +698,7 @@ return view.extend({
 			this.timeKey = r.time;
 			this.timeText = model.formatClock(r.time);
 		}
-		const vals = [ this.timeText, String(r.domain), this.resultLabel(r.decision, r.source) ];
+		const vals = [ this.timeText, String(r.domain), (r.client == null) ? '' : String(r.client), this.resultLabel(r.decision, r.source) ];
 		for (let i = 0; i < vals.length; i++) {
 			if (slot.vals[i] !== vals[i]) {
 				slot.vals[i] = vals[i];
@@ -808,7 +804,7 @@ return view.extend({
 		const layout = String(this.canWrite);
 		if (layout != this.queryLayout) {
 			this.queryLayout = layout;
-			const captions = [ _('Time'), _('Domain'), _('Result') ];
+			const captions = [ _('Time'), _('Domain'), _('Client'), _('Result') ];
 			if (this.canWrite)
 				captions.push(_('Action'));
 			this.queryCols = captions.length;
@@ -819,7 +815,7 @@ return view.extend({
 			this.rowTemplate = null;
 			this.queryPlaceholder = null;
 			dom.content(table, [ E('tr', { 'class': 'tr table-titles' },
-				captions.map(c => E('th', { 'class': 'th', 'scope': 'col' }, T(c)))) ]);
+				captions.map(c => E('th', { 'class': 'th', 'scope': 'col', 'style': HEAD_STYLE }, T(c)))) ]);
 		}
 
 		/* the row that holds keyboard focus, if any (only document state is read here) */

@@ -13,12 +13,14 @@ blocked, and lets you allow or block a name with one click.
 
 ## What you get
 
-- **Blocked %** of the recent queries, also on **Status → Overview**:
+- **Blocked %** of the recent queries as a small ring chart, also as a card
+  on **Status → Overview**:
 
-  ![The Adblock Fast Monitor section on Status → Overview](docs/images/status.png)
+  ![The Adblock Fast Monitor card on Status → Overview](docs/images/status.png)
 
-- **Recent queries:** time, name, and whether adblock-fast blocked or
-  allowed each one. The list updates by itself.
+- **Recent queries:** time, name, the client that asked, and whether
+  adblock-fast blocked or allowed each one. The list updates by itself and
+  scrolls in its own box.
 - **Block / Allow** on every row. Changes wait in a bar until you press
   **Apply and save**, so ten changes cost one rebuild, not ten. They go into
   adblock-fast's own **Allowed Domains** and **Blocked Domains** lists, so
@@ -117,9 +119,9 @@ package's: turning it on by hand costs the same. Details and method:
 - With logging on, every DNS query and the client's address go to the
   system log. If your log is also saved to a file or sent to another
   server, the queries go there too; the page warns you.
-- Nothing about your clients is stored on the router, and the page shows
-  no client addresses. Changes you have not applied (domain names only)
-  stay in your browser until you apply or discard them.
+- The page shows which client asked for each name. Nothing about your
+  clients is stored on the router. Changes you have not applied (domain
+  names only) stay in your browser until you apply or discard them.
 
 ## Uninstall
 

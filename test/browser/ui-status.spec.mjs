@@ -29,8 +29,12 @@ test('T23: the section shows the blocked share of the recent queries and links t
   const calls = trackAppCalls(page);
   await login(page, admin, STATUS);
   await expect(section(page)).toHaveAttribute('data-state', 'healthy', { timeout: 60_000 });
-  const bar = section(page).getByRole('progressbar', { name: 'Blocked queries' });
-  await expect(bar).toHaveAttribute('title', '75 %', { timeout: 30_000 });
+  // a LuCI card (.ifacebox) with the donut, its number inside and a text alternative
+  const card = section(page).locator('.ifacebox');
+  await expect(card.locator('.ifacebox-head')).toHaveText('Blocked queries');
+  const donut = card.getByRole('img', { name: '75 % of recent queries blocked' });
+  await expect(donut).toBeVisible({ timeout: 30_000 });
+  await expect(donut.locator('text')).toHaveText('75 %');
   await expect(section(page).locator('[data-stat="text"]')).toHaveText(/^3 of 4 queries blocked in the last \d+ (s|min)$/);
   await expect(section(page).getByRole('link', { name: 'Open Adblock Fast Monitor' })).toHaveAttribute('href', new RegExp(`${OVERVIEW}$`));
   // the section's own reads: 900 first, then bounded incremental reads on LuCI's status poll

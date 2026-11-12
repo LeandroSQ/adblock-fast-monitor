@@ -62,11 +62,16 @@ test('README screenshots', async ({ page }) => {
   // the Status → Overview section alone
   await page.goto(STATUS);
   const status = page.locator('.cbi-section').filter({ has: page.locator('#abfm-status[data-state="healthy"]') });
-  await expect(status.getByRole('progressbar')).toHaveAttribute('title', /%$/, { timeout: 60_000 });
-  // the stock image's attended-sysupgrade asks once whether to check for upgrades: close it
+  await expect(status.getByRole('img', { name: /% of recent queries blocked$/ })).toBeVisible({ timeout: 60_000 });
+  // the stock image's attended-sysupgrade asks once, a few seconds after load, whether to check
+  // for upgrades, and LuCI fades sections in: close the question whenever it shows, then shoot
   const ask = page.locator('.modal').getByText('Close', { exact: true });
-  if (await ask.waitFor({ timeout: 15_000 }).then(() => true, () => false)) await ask.click();
-  await expect(page.locator('body.modal-overlay-active')).toHaveCount(0);
   await status.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(5_000);
+  await expect.poll(async () => {
+    if (await ask.isVisible()) await ask.click();
+    return status.evaluate((n) => n.ownerDocument.defaultView.getComputedStyle(n).opacity + ' ' +
+      n.ownerDocument.body.classList.contains('modal-overlay-active'));
+  }, { timeout: 30_000 }).toBe('1 false');
   await status.screenshot({ path: new URL('status.png', OUT).pathname, animations: 'disabled' });
 });

@@ -22,11 +22,11 @@ test('read-only user: statistics and queries without write controls', async ({ p
   const row = await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
   await expect(page.locator('#abfm-state')).toHaveAttribute('data-state', 'healthy');
   await expect(page.locator('#abfm-read-error')).toHaveCount(0);
-  await expect(page.locator('[data-stat="blocked_pct"]').getByRole('progressbar')).toBeVisible();
+  await expect(page.locator('[data-stat="blocked_pct"]').getByRole('img', { name: /^\d+ % of recent queries blocked$/ })).toBeVisible();
   await expect(page.locator('#abfm-changes-section')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Apply|Discard|Allow|Block|Undo|query logging/ })).toHaveCount(0);
   await expect(row.getByRole('button')).toHaveCount(0);
-  await expect(queries(page).getByRole('columnheader')).toHaveText(['Time', 'Domain', 'Result']);
+  await expect(queries(page).getByRole('columnheader')).toHaveText(['Time', 'Domain', 'Client', 'Result']);
   await expect(page.locator('#abfm-logging')).toContainText('Query logging is on');
   await expect(page.getByText('Session expired')).toHaveCount(0);
 });

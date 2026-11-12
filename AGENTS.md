@@ -54,8 +54,8 @@ repeats this block byte for byte (checked by
    Keep the ACL's read and write grants separate (CONTRACT §9); write to
    adblock-fast UCI only via `apply`; never grant `log write` or
    `:subscribe`. The read grant exposes the whole system log, so the app is
-   for admins only (user docs say so). The client column is hidden by
-   default; nothing stores client addresses on the router. Never commit
+   for admins only (user docs say so). The page shows client addresses
+   (maintainer's choice); nothing stores them on the router. Never commit
    secrets, private keys, passwords, real DNS logs or client addresses
    (fixtures use reserved names and TEST-NET addresses).
 7. **No live systems.** Never SSH to or change a real router; use the QEMU

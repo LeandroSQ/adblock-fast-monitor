@@ -3,13 +3,15 @@
 'require rpc';
 'require adblock-fast-monitor.model as model';
 'require adblock-fast-monitor.querylog as querylog';
+'require adblock-fast-monitor.chart as chart';
 
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Status → Overview section (docs/CONTRACT.md §8.6): the share of recent DNS
- * queries adblock-fast blocked, read from the system log in the browser like
- * the app's page. LuCI's status page calls load() for every section on each
+ * Status → Overview section (docs/CONTRACT.md §8.6): a card (LuCI's
+ * .ifacebox, as the Port status and Network sections use) with the share of
+ * recent DNS queries adblock-fast blocked, read from the system log in the
+ * browser like the app's page. LuCI's status page calls load() for every section on each
  * of its polls (every 5 s), also in a hidden tab, so load() makes no request
  * while the tab is hidden or after 15 minutes without input (P0, P2), and
  * none for an account without this app's grant (it renders nothing then).
@@ -97,23 +99,18 @@ return baseclass.extend({
 			return node;
 		}
 		const s = res.summary;
-		const value = (s.pct == null) ? T('—') : [ E('div', { 'class': 'cbi-progressbar', 'title': s.value, 'role': 'progressbar',
-			'aria-label': _('Blocked queries'), 'aria-valuemin': '0', 'aria-valuemax': '100',
-			'aria-valuenow': String(Math.round(s.pct)), 'aria-valuetext': s.value },
-		[ E('div', { 'style': 'width:' + Math.max(0, Math.min(100, s.pct)) + '%' }) ]) ];
-		node.appendChild(E('table', { 'class': 'table' }, [
-			E('tr', { 'class': 'tr', 'data-stat': 'blocked_pct' }, [
-				E('td', { 'class': 'td left', 'width': '33%' }, T(_('Blocked'))),
-				E('td', { 'class': 'td left' }, value)
-			]),
-			E('tr', { 'class': 'tr' }, [
-				E('td', { 'class': 'td left', 'width': '33%' }, T(_('Recent DNS queries'))),
-				E('td', { 'class': 'td left', 'data-stat': 'text' }, T(s.text))
+		const donut = chart.donut(96);
+		donut.update(s.pct, s.value, s.label || s.text);
+		node.appendChild(E('div', { 'class': 'ifacebox', 'data-stat': 'blocked_pct',
+			'style': 'margin:.25em 0;width:12em;white-space:normal' }, [
+			E('div', { 'class': 'ifacebox-head' }, T(_('Blocked queries'))),
+			E('div', { 'class': 'ifacebox-body' }, [
+				donut.node,
+				E('p', { 'data-stat': 'text' }, T(s.text)),
+				res.paused ? E('p', { 'id': 'abfm-status-paused' }, T(_('Paused: this page has not been used for 15 minutes.'))) : '',
+				E('p', {}, [ link ])
 			])
 		]));
-		node.appendChild(E('p', {}, res.paused
-			? [ E('span', { 'id': 'abfm-status-paused' }, T(_('Paused: this page has not been used for 15 minutes.'))), ' ', link ]
-			: [ link ]));
 		return node;
 	}
 });

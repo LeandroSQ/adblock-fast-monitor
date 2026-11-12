@@ -48,6 +48,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | `/www/luci-static/resources/view/status/include/75_adblock-fast-monitor.js` | 0644 | Status → Overview section with the same statistics (§8.6) |
 | `/www/luci-static/resources/adblock-fast-monitor/querylog.js` | 0644 | pure log cursor, parser, correlator and classifier (§8.1–8.3) |
 | `/www/luci-static/resources/adblock-fast-monitor/model.js` | 0644 | pure UI logic: staging reducer (§8.4), state derivation (§8.5) |
+| `/www/luci-static/resources/adblock-fast-monitor/chart.js` | 0644 | the blocked-share donut (inline SVG) of the page and the Status section (§8.5, §8.6) |
 
 Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 
@@ -820,11 +821,23 @@ earlier data); `loading`. Every state except `healthy` is one notice
 Page layout, top to bottom: title and one line (what the page does; for
 administrators only, D6); the state notice; short notes only while they
 apply (DNS mode §8.3, log stalled, log unreadable, retrying, paused when
-idle); the statistics (LuCI's progress bar with the blocked percentage and
+idle); the statistics (a donut in a LuCI card, below, next to
 `"%s of %s queries blocked in the last %s"`, plus the missed and paused
 counts with the log buffer size, §8.1); the staged-changes bar and the job
-(§8.4); the last queries (Time, Domain, Result as "Decision (source)", and
-Block/Allow for admins); one line about query logging.
+(§8.4); the last queries (Time, Domain, Client, Result as "Decision
+(source)", and Block/Allow for admins) in a box of at most 60 % of the
+window height that scrolls on its own (focusable, named region "Last
+queries", so the keyboard scrolls it too) under a header row that stays in
+view; one line about query logging.
+
+The donut (`chart.js`) is an inline SVG built with
+`document.createElementNS`, as LuCI's realtime graphs do (LuCI has no chart
+widget): a ring whose arc is the blocked percentage, the value ("33 %")
+inside, `role="img"` with the accessible name "33 % of recent queries
+blocked" (or the reason no percentage is shown), the theme's
+`--primary-color-high` and `--border-color-medium` colours with fallbacks,
+and no animation. It sits in LuCI's `.ifacebox` card, the box the Port
+status and Network sections of Status → Overview use.
 
 The query-logging line: when this app's `query_logging` is on, it says that
 dnsmasq logs every query, also while the page is closed, with a "Turn off
@@ -847,9 +860,9 @@ All dynamic text goes through `E()` array children or text nodes. Views
 ### 8.6 Status → Overview section
 
 `view/status/include/75_adblock-fast-monitor.js` adds a section "Adblock
-Fast Monitor" to LuCI's Status → Overview: the same statistics as the page
-(progress bar and sentence, `abfm.model.summary`) over the queries it read
-itself, and a link to the page. LuCI's status page calls each section's
+Fast Monitor" to LuCI's Status → Overview: one `.ifacebox` card, "Blocked
+queries", with the same donut and sentence as the page (`abfm.model.summary`)
+over the queries it read itself, and a link to the page. LuCI's status page calls each section's
 `load()` on its own poll (`env.pollinterval`, 5 s), also in a hidden tab.
 The section therefore:
 
@@ -900,8 +913,9 @@ LuCI lists the include directory through the grant of
   on `adblock-fast`: writes happen only through `apply`, and `uci get`
   of it is refused (ubus status 6) like any other config outside the grant.
 - Privacy: no client address is stored anywhere on the router by this
-  package. The page shows **no client addresses** (it has no client
-  column), and it never lists router queries (`127.0.0.1`, `::1`).
+  package. The page **shows the client address of each query** (its Client
+  column, always on; the read grant already exposes them, D6), and it never
+  lists router queries (`127.0.0.1`, `::1`).
 
 ---
 

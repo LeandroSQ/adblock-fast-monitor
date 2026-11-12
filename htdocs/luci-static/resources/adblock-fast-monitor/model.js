@@ -499,9 +499,9 @@ function formatClock(epoch) {
 }
 
 /*
- * The one-line statistics of the page and of the Status → Overview include,
- * from querylog.stats(): {pct (number or null), value ("33 %", or null when
- * not shown), text}. dnsMode is dnsModeNote(): in the firewall modes the log
+ * The statistics of the page and of the Status → Overview include, from
+ * querylog.stats(): {pct (number or null), value ("33 %", or null when not
+ * shown), label (the donut's accessible name, when shown), text}. dnsMode is dnsModeNote(): in the firewall modes the log
  * cannot show blocks, so no percentage is given.
  */
 function summary(stats, dnsMode) {
@@ -515,7 +515,8 @@ function summary(stats, dnsMode) {
 	if (!answered)
 		return { pct: null, value: null, text: _('No queries yet.') };
 	const pct = (typeof(s.blocked_pct) == 'number' && isFinite(s.blocked_pct)) ? s.blocked_pct : Math.round(1000 * blocked / answered) / 10;
-	return { pct: pct, value: formatPct(pct),
+	const value = formatPct(pct);
+	return { pct: pct, value: value, label: fmt(_('%s of recent queries blocked'), value),
 		text: fmt(_('%s of %s queries blocked in the last %s'), formatCount(blocked), formatCount(answered), formatDuration(s.span_s)) };
 }
 

@@ -282,9 +282,9 @@ test('formatting: counts, percentages, durations, clock times', () => {
 test('summary: the one-line statistics of the page and the Status include', () => {
   const stats = (o) => ({ kept: 0, blocked: 0, allowed: 0, other: 0, no_answer: 0, pending: 0, blocked_pct: null, span_s: 0, ...o });
   assert.deepEqual(m.summary(stats({ kept: 13, blocked: 4, allowed: 8, other: 1, blocked_pct: 33.3, span_s: 8 }), null),
-    { pct: 33.3, value: '33 %', text: '4 of 12 queries blocked in the last 8 s' });
+    { pct: 33.3, value: '33 %', label: '33 % of recent queries blocked', text: '4 of 12 queries blocked in the last 8 s' });
   assert.deepEqual(m.summary(stats({ blocked: 1500, allowed: 500, blocked_pct: 75, span_s: 125 }), null),
-    { pct: 75, value: '75 %', text: '1,500 of 2,000 queries blocked in the last 2 min' });
+    { pct: 75, value: '75 %', label: '75 % of recent queries blocked', text: '1,500 of 2,000 queries blocked in the last 2 min' });
   // no answered query yet (only pending or other rows): no percentage
   assert.deepEqual(m.summary(stats({ kept: 2, other: 1, pending: 1 }), null), { pct: null, value: null, text: 'No queries yet.' });
   assert.deepEqual(m.summary(null, null), { pct: null, value: null, text: 'No queries yet.' });

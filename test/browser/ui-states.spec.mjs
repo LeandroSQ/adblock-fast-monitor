@@ -195,13 +195,14 @@ test('ipset/nftset mode: the page explains why everything is allowed and hides %
     await seeQuery(page, 'ads.example.test');
     const stat = page.locator('[data-stat="blocked_pct"]');
     await expect(stat).toContainText('Not shown: adblock-fast blocks in the firewall in this DNS mode.');
-    await expect(stat.getByRole('progressbar')).toBeHidden();
+    const donut = stat.getByRole('img', { name: 'Not shown: adblock-fast blocks in the firewall in this DNS mode.' });
+    await expect(donut.locator('text')).toHaveText('—');
   } finally {
     guest('uci set adblock-fast.config.dns=dnsmasq.servers; uci commit adblock-fast');
   }
   await page.reload();
   await expect(page.locator('#abfm-dns-mode')).toHaveCount(0);
-  await expect(page.locator('[data-stat="blocked_pct"]').getByRole('progressbar')).toHaveAttribute('title', /^\d+ %$/, { timeout: 30_000 });
+  await expect(page.locator('[data-stat="blocked_pct"]').getByRole('img', { name: /^\d+ % of recent queries blocked$/ })).toBeVisible({ timeout: 30_000 });
 });
 
 test('no Block for names the server protects (§6.5); allowing them is still offered', async ({ page }) => {

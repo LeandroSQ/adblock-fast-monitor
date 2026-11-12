@@ -579,18 +579,30 @@ Bounds and cadence:
   logd from ubus (§12; T10).
 - **First fetch** after load: `N = 900`.
 - **Polling:** every 2 s **only while**
-  `document.visibilityState === 'visible'`. LuCI's `poll` keeps running in a
-  hidden tab, so the view adds its poll function when the page becomes
-  visible and removes it on `visibilitychange` to hidden (P2: a hidden or
-  closed page makes 0 requests). At most one `log read` in flight.
-- **Adaptive N:** `N = clamp(16, 900, ceil(1.5 × entries in the last batch) + 16)`.
+  `document.visibilityState === 'visible'` **and the page is in use**: after
+  15 minutes without keyboard, pointer, wheel or touch input the page stops
+  polling and says so; the next input resumes it. LuCI's `poll` keeps
+  running in a hidden tab, so the view adds its poll function when the page
+  becomes visible and removes it on `visibilitychange` to hidden (P2: a
+  hidden or closed page makes 0 requests). At most one `log read` in flight
+  (a visibility flip that re-adds the poll function does not start a second
+  read). After a failed read, the n-th failure in a row waits 2^n polls
+  before the next try (4, 8, 16, then 32 s), and the page says it is
+  retrying.
+- **Adaptive N:** `N = clamp(16, 900, ceil(1.2 × entries in the last batch) + 16)`.
 - **Cursor** = the highest `id` ingested. Entries with `id ≤ cursor` are
   skipped.
 - **Gap:** if the oldest returned `id > cursor + 1` and `N < 900`, refetch
   once with `N = min(900, lastId − cursor + 16)`. A gap that remains is
   reported as "k log entries missed" (`missed`).
+- **Resume:** when polling restarts after the page was hidden or idle for
+  `p` polls, the first request asks once for
+  `clamp(16, 900, ceil(1.2 × last batch × p) + 16)` lines (the usual gap
+  refetch may follow). A gap that remains in that poll is reported as
+  `paused` ("k log entries were overwritten while updates were paused"), not
+  as missed.
 - **Reset:** if the newest `id < cursor`, logd restarted: drop the cursor and
-  the pending queries, keep the rows.
+  the pending queries (they become `no-answer`), keep the rows.
 - The window is whatever logd's ring still holds (`info.logd.size_kib`): with
   the default 128 KiB about 230–570 queries if nothing else logs. The page
   shows the span and the missed count and points to System → Logging → buffer
@@ -609,10 +621,16 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
   local_domains: [...], hide_router: true}` (`local_domains` from
   `info.local_domains`; router queries are hidden unless the page's "show
   router queries" checkbox is ticked).
-- `nextRequest(state)` → `{lines: N}` per §8.1 (900 on the first call). Pure.
+- `nextRequest(state)` → `{lines: N}` per §8.1: 900 first and after a gap or
+  logd restart, the resume size once after `resume()`, else
+  `clamp(ceil(1.2·last batch)+16, 16, 900)`. Pure.
+- `resume(state, polls)`: the next request is the resume size (§8.1
+  Resume), and a gap that remains in that poll counts as `paused`.
 - `ingest(state, reply)` with `reply = {log: [...]}` from `log read` →
-  `{added, missed, reset, refetch: {lines: N} | null}`. When `refetch` is not
-  `null` the caller performs that one refetch and ingests its reply too.
+  `{added, missed, paused, reset, refetch: {lines: N} | null}`. When `refetch`
+  is not `null` the caller performs that one refetch and ingests its reply
+  too. Entries of a reply that are not objects, or have non-numeric ids, are
+  skipped.
 - `rows(state, {show_router})` → newest first, at most `max_rows`:
   `{key, time (epoch s), domain, qtype, answers: [≤ 4 strings], decision,
   source, client, router: bool}`. `decision` is `'blocked'`, `'allowed'`,
@@ -628,17 +646,19 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
 - `stats(state, {show_router})` → over the rows `rows()` would return with
   the same option:
   `{kept, blocked, allowed, other, no_answer, pending, blocked_pct, span_s,
-  missed_total, dnsmasq_lost, rejected, since_open: {queries, blocked,
-  allowed}}`.
+  missed_total, dnsmasq_lost, paused_total, rejected, since_open: {queries,
+  blocked, allowed}}`.
   - `kept`: rows counted; `blocked`/`allowed`/`other`/`no_answer`/`pending`:
     rows per decision.
   - `blocked_pct = round(1000 · blocked / (blocked + allowed)) / 10`, or
     `null` when `blocked + allowed = 0` (P1 stat, shown with `kept` and
     `span_s`).
   - `span_s`: seconds between the oldest and newest counted row.
-  - `missed_total`: log ids skipped by gaps (§8.1); `dnsmasq_lost`: sum of
-    dnsmasq's `overflow: N log entries lost`; `rejected`: tagged lines that
-    looked like query-log lines but matched neither `BODY` nor `LOST`.
+  - `missed_total`: log ids skipped by gaps (§8.1) **plus** `dnsmasq_lost`;
+    `dnsmasq_lost` (the breakdown): sum of dnsmasq's `overflow: N log
+    entries lost`; `paused_total`: log ids overwritten while updates were
+    paused (§8.1 Resume); `rejected`: tagged lines that looked like
+    query-log lines but matched neither `BODY` nor `LOST`.
   - `since_open`: queries and decisions since the page was opened, not
     limited to the kept rows (router clients excluded when `hide_router`).
 
@@ -665,7 +685,7 @@ address. A tagged message that starts like a query-log line
 (counted); informational lines (`started, version …`, `read /etc/hosts …`)
 are ignored, except that `started, version` **resets** correlation (the
 serial restarts with every dnsmasq restart, i.e. every rebuild). `LOST` adds
-its count to `missed`.
+its count to `missed_total` (shown as missed entries) and to `dnsmasq_lost`.
 
 Correlation key: `pid:serial:client/port` (procd jails dnsmasq in a PID
 namespace, so every instance logs as `dnsmasq[1]`). A `query[T] … from`
@@ -722,6 +742,11 @@ user `address=/x/0.0.0.0`. Decisions mean "blocked by adblock-fast" only when
 `dnsmasq.conf`; in the `ipset`/`nftset` modes blocking happens in the
 firewall and the page says so.
 
+In the `ipset`/`nftset` modes the page shows a note (`#abfm-dns-mode`,
+`data-mode="firewall"`) and shows no blocked percentage; for
+`smartdns.*`/`unbound.*` the note says the blocking is not visible in the
+dnsmasq log (`data-mode="unsupported"`).
+
 **Untrusted strings.** `domain`, `answers` and `client` come from the network
 (a PTR answer is a name chosen by a remote rDNS owner and may contain `<`,
 `>`, `"`). They are rendered **only** as text: array children of `E()`, or
@@ -735,20 +760,28 @@ HTML string (T27).
   last failure), and the object may carry `inflight:{job_id,items}` so a
   reload resumes the job.
 - Row buttons: `Allow` on `blocked` rows, `Block` on `allowed` rows, except
-  that no `Block` is offered for a name equal to or under one of
-  `info.protected_suffixes` (the server would refuse it, §6.5). Adding an
-  op for D replaces any pending op for D; adding the same op again removes it.
+  that no `Block` is offered for a name equal to or under a protected name
+  (the server would refuse it, §6.5). The protected list the page uses is
+  the builtin set (`localhost arpa local internal invalid onion bind`) ∪
+  `info.local_domains` ∪ `info.protected_suffixes`; a manual `Block` of such
+  a name is refused in the browser too (`protected-domain`). Adding an op
+  for D replaces any pending op for D; adding the same op again removes it.
 - Domains are normalized as in §6.4 before they are stored.
 - **Apply.**
   1. `apply{dry_run:true}`. If the mode is `rebuild` (or the reply is
      `confirm-required`), show a `ui.showModal` confirmation that names the
      cost.
   2. `apply` with `confirm_rebuild` set from that confirmation.
-  3. When it returns `queued`, move the items to `inflight{job_id}`.
+  3. When it returns `queued`, move **exactly the ops that were sent** to
+     `inflight{job_id}`. Anything staged, replaced or synced from another
+     tab after the request stays pending.
   4. Poll `job` every 2 s until it is terminal (only while visible).
-  5. Items with `ok`, `skipped` or noop leave the list. `mismatch`,
-     `unverified` and failed items return to pending with their reason.
+  5. Items with `ok`, `skipped` or noop leave the list (for a noop apply,
+     only the sent items leave the list). `mismatch`, `unverified` and
+     failed items return to pending with their reason.
   6. `busy` → show the current job.
+- The view follows a job started from another tab (storage event with a new
+  `inflight`).
 - **Discard** clears the pending list.
 - Write controls (row buttons, Apply) are not rendered when
   `!L.hasViewPermission()` (luci.js L3259).
@@ -765,10 +798,17 @@ has `dropin` or `uci_logqueries` → `confdir-invalid` or
 `logging-not-active`); `healthy`; `error` (`log read` rejected with no
 earlier data); `loading`. `info.warnings` render as dismissible notes.
 
+In the healthy state, when this app's `query_logging` is on and the user may
+write, the page offers a "Turn off query logging" button that sets
+`query_logging=0` through LuCI's `uci` save + `ui.changes.apply` (same path
+as Settings). Settings: when `info.warnings` has `logd-to-flash` or
+`logd-remote`, the page shows the risk and asks for confirmation before a
+save turns query logging on.
+
 | Call | Cadence |
 | --- | --- |
 | `log read` | §8.1, while visible |
-| `info` | at load and every 30 s while visible |
+| `info` | at load and 30–35 s after the previous call while visible (checked every 5 s) |
 | `job` | every 2 s while a job is non-terminal and the page is visible |
 
 All dynamic text goes through `E()` array children or text nodes. Views

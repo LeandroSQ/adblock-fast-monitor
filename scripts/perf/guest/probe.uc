@@ -240,8 +240,8 @@ function rpcprobe(seconds, interval) {
 
 // `log read` exactly as the page calls it ({lines, stream:false,
 // oneshot:true}). The adaptive N is derived like the page does it: the ids
-// logged in 2 s (one poll interval) give the batch, N = clamp(1.5*batch+16,
-// 16, 900). Calls alternate between that N and the first-load N=900.
+// logged in 2 s (one poll interval) give the batch, N = clamp(ceil(1.2*batch)
+// + 16, 16, 900). Calls alternate between that N and the first-load N=900.
 function log_read(conn, n) {
 	let t = now_ms();
 	let r = conn.call('log', 'read', { lines: n, stream: false, oneshot: true });
@@ -262,7 +262,7 @@ function logbench(calls, interval) {
 	sleep(2000);
 	let b = log_read(conn, 1).reply;
 	let batch = (last_id(a) != null && last_id(b) != null) ? last_id(b) - last_id(a) : null;
-	let n_incr = batch == null ? 16 : max(16, min(900, int(1.5 * batch) + 16));
+	let n_incr = batch == null ? 16 : max(16, min(900, int((12 * batch + 9) / 10) + 16));
 	let t_incr = [], t_full = [], e_incr = [], e_full = [], errors = 0, sample = null;
 	for (let i = 0; i < calls; i++) {
 		let x = log_read(conn, n_incr);

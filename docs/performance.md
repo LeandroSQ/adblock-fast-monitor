@@ -207,7 +207,7 @@ measures (many small syslog writes and wakeups); see the results below.
 - **`log read` latency** (P3): the guest probe calls `log read {lines:N,
   stream:false, oneshot:true}` over ubus exactly as the page does. It first
   reads the newest id twice 2 s apart (one poll of the logged traffic) and
-  derives the page's adaptive N = clamp(1.5 × batch + 16, 16, 900): N ≈ 391
+  derives the page's adaptive N = clamp(⌈1.2 × batch⌉ + 16, 16, 900): N ≈ 316
   at 50 qps, 900 at 200 qps. It then alternates 20 calls at that N and 20
   at N = 900, 250 ms apart. p95 per repeat; the gate takes the median. The
   incremental budget applies when N < 900, otherwise the N = 900 budget.
@@ -223,15 +223,25 @@ measures (many small syslog writes and wakeups); see the results below.
   requests (the counter works) and polling must resume within 15 s of the
   page becoming visible. uhttpd/rpcd/ubusd/logd CPU ticks over both windows
   are recorded from the router side (informational).
-- **P4 browser time** comes from the page itself: the UI wraps each poll's
-  work in a performance measure named **`abfm-poll`**
-  (`performance.measure('abfm-poll', {start, detail: {entries, rows}})`,
-  where `entries` is the length of the `log read` reply and `rows` the
-  rows kept). The gate takes the p95 of all measures with ≥ 810 entries
-  (the first load is always N = 900 on a full ring; at 200 qps every poll
-  is). Without marks it falls back to the querylog module
-  (`adblock-fast-monitor/querylog.js`) timed in the page on a real
-  900-entry `log read` reply fetched with the page's session:
+- **P4 browser time** comes from the page itself. For every `log read`
+  reply that the page keeps (with a gap refetch, the refetch's reply), it
+  records one `performance.measure('abfm-poll', {start, end, detail:
+  {entries, rows, changed}})`. `start` is `performance.now()` when the
+  reply has arrived (network time excluded); `end` is taken in a task
+  queued from the next `requestAnimationFrame` callback after all DOM
+  updates of that poll, so the measure spans parse + classify + stats +
+  incremental table update + style, layout and paint of the next frame.
+  `entries` is the reply length, `rows` the rows kept, `changed` the table
+  rows created or removed (0 on an idle poll). A measure is dropped when
+  the page was hidden before the frame ran. At most 1000 measures are
+  kept; no marks are left behind. The gate takes the p95 over **all**
+  measures of the run (and requires at least one with ≥ 810 entries, so
+  the full first load is included), with the browser under a 4× CPU
+  throttle (CDP `Emulation.setCPUThrottlingRate` rate 4). The page pauses
+  polling after 15 minutes without input, so the driver moves the mouse
+  every 5 minutes during a hold. Without marks the gate falls back to the
+  querylog module (`adblock-fast-monitor/querylog.js`) timed in the page
+  on a real 900-entry `log read` reply fetched with the page's session:
   `create` + `ingest` + `rows` + `stats`, 20 times; the verdict then says
   "module only (no render)".
 - **dnsmasq restarts** = dnsmasq `started, version` lines logged after a

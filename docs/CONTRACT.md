@@ -643,6 +643,12 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
   chain has no further line. `show_router` defaults to `!hide_router`. All
   strings are raw (never escaped or altered); the UI renders them as text
   only.
+- `page(state, {show_router, match, offset, limit, upto})` → `{rows, total,
+  newer, latest}`: one page of `rows()` for the table, newest first. The
+  domain filter `match` (lower-cased substring) applies before paging; `limit` rows reach the
+  DOM (default 50; the page shows 50). `upto` freezes the view at a row key, so a later page stays stable
+  while new rows arrive. `newer` counts the rows that arrived since then, and
+  `latest` is the newest key.
 - `stats(state, {show_router})` → over the rows `rows()` would return with
   the same option:
   `{kept, blocked, allowed, other, no_answer, pending, blocked_pct, span_s,
@@ -891,7 +897,7 @@ guest's task-based CPU total. The OpenWrt kernels have no
 | P1 | package processes in every state: after install and after a boot, with `query_logging=0` and `=1`, in every load window (snapshots and 100–250 ms `/proc` watches); transient init-script invocations (≤ 10 s) at boot and while idle; rpcd RssAnon growth vs stock | 0 resident processes, except `job.uc` during an Apply (**hard**); transient invocations ≤ 2 per boot plus the boot start (rcS running `S18… boot`, ≤ 1), 0 while idle; rpcd RssAnon ≤ 1 MiB |
 | P2 | requests made by a hidden page (background tab or Page Visibility emulation) and by a closed page | 0 in 60 s each (**hard**); the visible control must poll, and polling must resume when shown |
 | P3 | one visible page polling every 2 s under 50 / 200 qps: CPU of uhttpd + ubusd + logd + rpcd vs the same load with no page; `log read` p95 (ubus, guest) | ≤ 1 / 2 pp [2 / 6]; p95 ≤ 50 ms at the adaptive N (incremental), ≤ 150 ms at N = 900 |
-| P4 | browser parse + classify + render per poll at 900 entries (`abfm-poll` performance measure; fallback: the querylog module timed in the page) | p95 ≤ 20 ms; ≤ 500 rows kept |
+| P4 | browser parse + classify + render per poll at 900 entries, to the next painted frame, 4× CPU throttle (`abfm-poll` performance measure) | p95 ≤ 20 ms; ≤ 500 rows kept, ≤ 50 in the DOM |
 | P5 | DNS p95 latency delta, query logging on vs off, same load | median(on p95) − median(off p95) ≤ max(2 ms [3 ms], measured noise floor), ≥ 3 runs per state, loss ≤ 0.5 % |
 | P6 | logd, dnsmasq, rpcd, uhttpd, ubusd CPU/RSS deltas, query logging on vs off, and on vs the package's drop-in written by hand with the package's switch off (dnsmasq's own logging) | on − off: each ≤ 4 pp CPU at 50 qps, ≤ 6 pp at 200 qps [each ≤ 4 / 12 pp, dnsmasq ≤ 10 / 12 pp]; RssAnon ≤ 256 KiB; on − hand-written ≤ run-to-run noise (≥ 0.5 pp) |
 | P7 | `info` round trip through ubus | p95 ≤ 50 ms |

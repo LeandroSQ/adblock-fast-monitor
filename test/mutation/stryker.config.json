@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "ABFM_FUZZ_RUNS=40 node --test test/unit/querylog.test.mjs test/unit/querylog-fixtures.test.mjs test/unit/querylog-property.test.mjs test/unit/ui-model.test.mjs"
+  },
+  "mutate": [
+    "htdocs/luci-static/resources/adblock-fast-monitor/querylog.js",
+    "htdocs/luci-static/resources/adblock-fast-monitor/model.js"
+  ],
+  "ignorePatterns": ["/*", "!/htdocs", "!/test", "!/package.json", "!/babel.config.json"],
+  "coverageAnalysis": "off",
+  "concurrency": 6,
+  "timeoutMS": 20000,
+  "reporters": ["clear-text", "progress", "json"],
+  "jsonReporter": { "fileName": ".local-validation/stryker/report.json" },
+  "tempDirName": ".local-validation/stryker/tmp",
+  "cleanTempDir": true,
+  "thresholds": { "high": 90, "low": 80, "break": 85 }
+}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// One-time differential test (design B-min risk 6): querylog.js must reach
+// One-time differential test (CONTRACT T05): querylog.js must reach
 // the same decision and source per correlation key `pid:serial:client/port`
 // as the ucode data plane it replaces (abfm.logparse + abfm.stats, with the
 // 10 s pending TTL), over the dnsmasq fixtures and the `log read` fixtures.
@@ -14,7 +14,7 @@ import { ql, fixture, fixtureText, replyFromLogread } from './querylog-load.mjs'
 // Intentional differences, by expectation file and key, with the reason.
 const DIFFERENCES = {
   'logread-restart': {
-    // B-min resets correlation on `started, version` (serials restart with
+    // querylog.js resets correlation on `started, version` (serials restart with
     // dnsmasq), so the query in flight is "no answer" at once; the daemon
     // kept it pending until its TTL, which this capture never reaches.
     '1:37:10.0.2.2/38032': { domain: 'err.example.test', decision: 'no-answer', source: null }

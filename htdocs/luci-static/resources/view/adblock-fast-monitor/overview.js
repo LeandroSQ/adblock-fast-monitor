@@ -3,13 +3,14 @@
 'require rpc';
 'require uci';
 'require ui';
-'require form';
 'require poll';
 'require dom';
 'require adblock-fast-monitor.model as model';
 'require adblock-fast-monitor.querylog as querylog';
 
 /*
+ * SPDX-License-Identifier: Apache-2.0
+ *
  * Dashboard (docs/CONTRACT.md §8): the last DNS queries, read from the system
  * log in the browser exactly like LuCI's System Log page (`log read`), parsed
  * by querylog.js, with Allow/Block buttons that stage changes in this browser
@@ -25,11 +26,17 @@ const callApply = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'ap
 const callJob = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'job', params: [ 'job_id' ], reject: true });
 
 const INFO_INTERVAL = 30;
+/* LuCI's poll runs a function when its tick count is a multiple of the interval: check often, call rarely. */
+const INFO_CHECK = 5;
 const JOB_INTERVAL = 2;
 const MAX_ROWS = 500;
 /* about 33 min of 2 s polls; then the old `abfm-poll` measures are dropped */
 const MAX_MEASURES = 1000;
+/* No keyboard, pointer or touch input for this long pauses polling (P0). */
+const IDLE_PAUSE_MS = 15 * 60 * 1000;
+const FILTER_DEBOUNCE_MS = 150;
 const SETTINGS_PATH = 'admin/services/adblock-fast-monitor/settings';
+const INPUT_EVENTS = [ 'pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart' ];
 
 const OP_LABEL = { allow: _('Allow'), block: _('Block'), unblock: _('Unblock'), unallow: _('Unallow') };
 const OP_BUTTON_CLASS = { allow: 'cbi-button cbi-button-positive', block: 'cbi-button cbi-button-negative' };
@@ -53,6 +60,10 @@ const STATE_TEXT = {
 };
 const STATE_SEVERITY = {
 	'loading': 'notice', 'healthy': 'success', 'logging-off': 'warning', 'logging-unavailable': 'warning'
+};
+const DNS_MODE_TEXT = {
+	'firewall': _('adblock-fast blocks in the firewall in this DNS mode (ipset/nftset): dnsmasq answers every query normally, so the list below shows blocked domains as allowed and no blocked percentage is computed. Allow and Block still change adblock-fast\'s rules.'),
+	'unsupported': _('adblock-fast uses a resolver other than dnsmasq in this DNS mode, so its blocking does not show up in the list below, and changes cannot be applied from this page.')
 };
 const REASON_TEXT = {
 	'dnsmasq-not-running': _('dnsmasq is not running.'),
@@ -106,6 +117,15 @@ function cell(title, content, extraClass) {
 	return E('td', { 'class': 'td' + (extraClass ? ' ' + extraClass : ''), 'data-title': title }, content);
 }
 
+function headerRow(captions) {
+	return E('tr', { 'class': 'tr table-titles' },
+		captions.map(c => E('th', { 'class': 'th', 'scope': 'col' }, T(c))));
+}
+
+function placeholderRow(colspan, text) {
+	return E('tr', { 'class': 'tr placeholder' }, [ E('td', { 'class': 'td', 'colspan': colspan }, T(text)) ]);
+}
+
 function dataTable(label, captions, rows, placeholder) {
 	const head = E('tr', { 'class': 'tr table-titles' },
 		captions.map(c => E('th', { 'class': 'th', 'scope': 'col' }, T(c))));
@@ -124,11 +144,22 @@ function checkbox(id, label, checked, onchange) {
 }
 
 function storageGet(key) {
-	try { return window.localStorage.getItem(key); } catch (e) { return null; }
+	try {
+		return window.localStorage.getItem(key);
+	}
+	catch (e) {
+		return null;
+	}
 }
 
 function storageSet(key, value) {
-	try { window.localStorage.setItem(key, value); return true; } catch (e) { return false; }
+	try {
+		window.localStorage.setItem(key, value);
+		return true;
+	}
+	catch (e) {
+		return false;
+	}
 }
 
 return view.extend({
@@ -143,21 +174,32 @@ return view.extend({
 	render(infoResult) {
 		this.canWrite = L.hasViewPermission() === true;
 		this.infoResult = infoResult;
-		this.options = model.viewOptions(infoResult);
+		this.infoAt = Date.now();
+		this.protect = model.protectedNames(infoResult);
 		this.log = querylog.create({ max_rows: MAX_ROWS, pending_ttl_s: 10,
-			local_domains: model.localDomains(infoResult), hide_router: this.options.hideRouter });
-		this.display = { q: '', showRouter: !this.options.hideRouter, showClient: false };
+			local_domains: model.localDomains(infoResult), hide_router: true });
+		this.display = { q: '', showRouter: false, showClient: false };
 		this.logResult = null;
 		this.hasRows = false;
 		this.logWatch = null;
 		this.measureCount = 0;
 		this.keptRows = 0;
 		this.dismissed = {};
-		this.rowsKey = null;
 		this.job = null;
 		this.jobKey = null;
+		this.stateKey = null;
+		this.statsKey = null;
+		this.queryRows = new Map();
+		this.queryLayout = null;
 		this.pending = model.parsePending(storageGet(model.STORAGE_KEY));
 		this.polling = false;
+		this.logBusy = false;
+		this.failures = 0;
+		this.skipPolls = 0;
+		this.stoppedAt = null;
+		this.idlePaused = false;
+		this.lastInput = Date.now();
+		this.visibility = 0;
 		this.ticks = { log: L.bind(this.pollLog, this), info: L.bind(this.pollInfo, this), job: L.bind(this.pollJob, this) };
 
 		const node = E('div', { 'class': 'cbi-map', 'id': 'abfm-overview' }, [
@@ -196,6 +238,8 @@ return view.extend({
 
 		document.addEventListener('visibilitychange', L.bind(this.handleVisibility, this));
 		window.addEventListener('storage', L.bind(this.handleStorage, this));
+		const onInput = L.bind(this.handleInput, this);
+		INPUT_EVENTS.forEach(t => window.addEventListener(t, onInput, { passive: true, capture: true }));
 
 		if (this.pending.inflight)
 			this.watchJob(this.pending.inflight.job_id);
@@ -206,14 +250,20 @@ return view.extend({
 		return node;
 	},
 
-	/* ---- polling: only while the page is visible (P0, CONTRACT §11 P2) ---- */
+	/* ---- polling: only while the page is visible and in use (P0, CONTRACT §11 P2) ---- */
 
 	startPolling() {
-		if (this.polling || document.visibilityState != 'visible')
+		if (this.polling || this.idlePaused || document.visibilityState != 'visible')
 			return;
 		this.polling = true;
-		poll.add(this.ticks.log, this.options.interval);
-		poll.add(this.ticks.info, INFO_INTERVAL);
+		if (this.stoppedAt != null) {
+			/* polls skipped while hidden or idle: fetch about that much once (§8.1) */
+			const interval = model.POLL_INTERVAL * 1000;
+			querylog.resume(this.log, Math.ceil((Date.now() - this.stoppedAt) / interval));
+			this.stoppedAt = null;
+		}
+		poll.add(this.ticks.log, model.POLL_INTERVAL);
+		poll.add(this.ticks.info, INFO_CHECK);
 		if (this.watchedJob)
 			poll.add(this.ticks.job, JOB_INTERVAL);
 	},
@@ -222,22 +272,37 @@ return view.extend({
 		if (!this.polling)
 			return;
 		this.polling = false;
+		this.stoppedAt = Date.now();
 		poll.remove(this.ticks.log);
 		poll.remove(this.ticks.info);
 		poll.remove(this.ticks.job);
 	},
 
 	handleVisibility() {
+		this.visibility++;
 		if (document.visibilityState == 'visible')
 			this.startPolling();
 		else
 			this.stopPolling();
 	},
 
+	/* Passive listener: one timestamp per event, no timer. */
+	handleInput() {
+		this.lastInput = Date.now();
+		if (this.idlePaused) {
+			this.idlePaused = false;
+			this.startPolling();
+			this.updateState();
+		}
+	},
+
 	handleStorage(ev) {
 		if (ev.key != model.STORAGE_KEY)
 			return;
 		this.pending = model.parsePending(ev.newValue);
+		/* another tab started a job: follow it here too */
+		if (this.pending.inflight && this.watchedJob != this.pending.inflight.job_id)
+			this.watchJob(this.pending.inflight.job_id);
 		this.updatePending();
 		this.updateQueries();
 	},
@@ -246,68 +311,105 @@ return view.extend({
 		return callLogRead(lines, false, true);
 	},
 
-	/* One `log read`, plus at most one refetch when querylog sees a gap. */
 	/*
-	 * One `log read`, plus at most one refetch when querylog sees a gap.
-	 * The ingest + render of the reply that is kept is timed as one
-	 * `abfm-poll` measure (P4, docs/performance.md), network time excluded.
+	 * One `log read`, plus at most one refetch when querylog sees a gap; never
+	 * two in flight (a visibility flip re-adds the poll function, §8.1).
+	 * Failed reads back off (model.backoffSkip); no input for IDLE_PAUSE_MS
+	 * pauses polling until the next input event.
+	 * P4 (docs/performance.md): `abfm-poll` spans from the arrival of the
+	 * reply that is kept (network time excluded; with a refetch, its reply)
+	 * through ingest, every DOM update, and the next rendered frame.
 	 */
 	pollLog() {
+		if (this.logBusy)
+			return Promise.resolve();
+		if (this.skipPolls > 0) {
+			this.skipPolls--;
+			return Promise.resolve();
+		}
+		if (Date.now() - this.lastInput >= IDLE_PAUSE_MS) {
+			this.idlePaused = true;
+			this.stopPolling();
+			this.updateState();
+			return Promise.resolve();
+		}
+		this.logBusy = true;
 		const now = () => Math.floor(Date.now() / 1000);
+		let t0 = 0;
 		return this.readLog(querylog.nextRequest(this.log).lines).then(reply => {
-			this.markPoll();
+			t0 = performance.now();
 			const r = querylog.ingest(this.log, reply) || {};
 			if (!r.refetch)
 				return { replies: [ reply ], kept: reply, reset: r.reset };
 			return this.readLog(r.refetch.lines).then(again => {
-				this.markPoll();
+				t0 = performance.now();
 				const r2 = querylog.ingest(this.log, again) || {};
 				return { replies: [ reply, again ], kept: again, reset: r.reset || r2.reset };
 			});
 		}).then(res => {
 			this.logResult = model.settle(null);
 			this.hasRows = true;
+			this.failures = 0;
 			this.logWatch = model.logWatch(this.logWatch, res.replies, res.reset === true, now());
 			return res;
 		}, err => {
 			this.logResult = model.failure(err);
+			this.skipPolls = model.backoffSkip(++this.failures);
 			return null;
 		}).then(res => {
 			this.updateState();
 			this.updateStats();
-			this.updateQueries();
+			const changed = this.updateQueries();
 			if (res)
-				this.measurePoll(res.kept);
+				this.measurePoll(t0, res.kept, changed);
+		}).finally(() => {
+			this.logBusy = false;
 		});
 	},
 
-	markPoll() {
-		try { performance.mark('abfm-poll-start'); } catch (e) {}
-	},
-
-	/* One mark/measure pair per poll; marks are cleared at once, measures capped (P0: bounded). */
-	measurePoll(reply) {
-		try {
-			const entries = (reply && Array.isArray(reply.log)) ? reply.log.length : 0;
-			if (++this.measureCount > MAX_MEASURES) {
-				performance.clearMeasures('abfm-poll');
-				this.measureCount = 1;
+	/*
+	 * One `abfm-poll` measure per kept reply, ended after the next frame has
+	 * been rendered (requestAnimationFrame, then a task). Dropped when the
+	 * page was hidden meanwhile (no frames run while hidden). Measures are
+	 * capped (P0: bounded); no marks are left behind.
+	 */
+	measurePoll(t0, reply, changed) {
+		if (typeof(performance) == 'undefined' || typeof(requestAnimationFrame) != 'function')
+			return;
+		const vis = this.visibility;
+		const detail = {
+			entries: (reply && Array.isArray(reply.log)) ? reply.log.length : 0,
+			rows: this.keptRows || 0,
+			changed: changed || 0
+		};
+		requestAnimationFrame(() => setTimeout(() => {
+			if (vis != this.visibility || document.visibilityState != 'visible')
+				return;
+			try {
+				if (++this.measureCount > MAX_MEASURES) {
+					performance.clearMeasures('abfm-poll');
+					this.measureCount = 1;
+				}
+				performance.measure('abfm-poll', { start: t0, end: performance.now(), detail: detail });
 			}
-			performance.measure('abfm-poll', { start: 'abfm-poll-start', detail: { entries: entries, rows: this.keptRows || 0 } });
-			performance.clearMarks('abfm-poll-start');
-		} catch (e) {}
+			catch (e) {}
+		}, 0));
 	},
 
-	/* info at load and every 30 s while visible (§8.5); the first tick is the load itself */
+	/* info at load and every 30 s while visible (§8.5) */
 	pollInfo() {
-		if (!this.infoSkipped) {
-			this.infoSkipped = true;
+		if (Date.now() - this.infoAt < INFO_INTERVAL * 1000)
 			return Promise.resolve();
-		}
+		this.infoAt = Date.now();
 		return callInfo().then(model.settle, model.failure).then(res => {
 			this.infoResult = res;
+			if (res.ok) {
+				this.protect = model.protectedNames(res);
+				this.updateQueries();
+			}
 			this.updateState();
 			this.updateWarnings();
+			this.updateStats();
 		});
 	},
 
@@ -329,25 +431,65 @@ return view.extend({
 		if (noActions != !!this.noActions) {
 			this.noActions = noActions;
 			this.updatePending();
+			this.updateQueries();
 		}
+		const info = (this.infoResult && this.infoResult.ok) ? this.infoResult.data : null;
+		const flags = {
+			elsewhere: st.state == 'healthy' && model.loggingElsewhere(this.infoResult),
+			ours: st.state == 'healthy' && this.canWrite && !!(info && info.monitor && info.monitor.query_logging === true),
+			settings: st.state == 'logging-off' || st.state == 'logging-unavailable',
+			stalled: st.state == 'healthy' && model.logStalled(this.logWatch, Math.floor(Date.now() / 1000)),
+			readError: (this.logResult && !this.logResult.ok) ? this.logResult.message : null,
+			dnsMode: model.dnsModeNote(this.infoResult),
+			paused: this.idlePaused,
+			backoff: this.failures > 0 && this.hasRows
+		};
+		/* re-rendered only on change, so the live region is not re-announced every poll */
+		const key = JSON.stringify([ st, flags ]);
+		if (key == this.stateKey)
+			return;
+		this.stateKey = key;
+
 		const children = [ E('strong', {}, T(STATE_TEXT[st.state] || st.state)) ];
 		if (st.reason)
 			children.push(E('p', { 'data-reason': st.reason }, T(REASON_TEXT[st.reason] || st.reason)));
-		if (st.state == 'healthy' && model.loggingElsewhere(this.infoResult))
+		if (flags.elsewhere)
 			children.push(E('p', {}, T(_('dnsmasq\'s own "Log queries" option is on (for example set by luci-app-adblock-fast), so queries are logged whatever this app\'s setting is.'))));
-		if (st.state == 'logging-off' || st.state == 'logging-unavailable')
+		if (flags.ours)
+			children.push(E('p', {}, [
+				E('span', {}, T(_('dnsmasq writes one line per DNS query to the system log while this is on, also when this page is closed.'))), ' ',
+				E('button', { 'class': 'cbi-button cbi-button-neutral', 'id': 'abfm-logging-off',
+					'click': ui.createHandlerFn(this, 'handleLoggingOff') }, T(_('Turn off query logging')))
+			]));
+		if (flags.settings)
 			children.push(E('p', {}, [ E('a', { 'href': L.url(SETTINGS_PATH) }, T(_('Open settings'))) ]));
-		if (st.state == 'healthy' && model.logStalled(this.logWatch, Math.floor(Date.now() / 1000)))
+		if (flags.dnsMode)
+			children.push(E('p', { 'id': 'abfm-dns-mode', 'data-mode': flags.dnsMode }, T(DNS_MODE_TEXT[flags.dnsMode])));
+		if (flags.stalled)
 			children.push(E('div', { 'class': 'alert-message warning', 'id': 'abfm-log-stalled' }, [
 				E('p', {}, T(_('The system log was restarted and dnsmasq has logged nothing since, so DNS query logging may have stopped.'))),
 				E('p', {}, T(_('If new queries do not appear, restart dnsmasq: System → Startup → dnsmasq → Restart, or run "/etc/init.d/dnsmasq restart".')))
 			]));
-		if (this.logResult && !this.logResult.ok)
-			children.push(E('p', { 'id': 'abfm-read-error' }, T(_('The system log cannot be read: %s').format(this.logResult.message))));
+		if (flags.paused)
+			children.push(E('p', { 'id': 'abfm-paused' }, T(_('Updates are paused because this page has not been used for 15 minutes. Move the mouse or press a key to resume.'))));
+		if (flags.readError)
+			children.push(E('p', { 'id': 'abfm-read-error' }, T(_('The system log cannot be read: %s').format(flags.readError))));
+		if (flags.backoff)
+			children.push(E('p', { 'id': 'abfm-retrying' }, T(_('Retrying less often until the system log can be read again.'))));
 		this.stateNode.className = 'alert-message ' + (STATE_SEVERITY[st.state] || 'danger');
 		this.stateNode.setAttribute('data-state', st.state);
 		this.stateNode.setAttribute('data-reason', st.reason || '');
 		dom.content(this.stateNode, children);
+	},
+
+	/* §3: the same change as unticking "Log DNS queries" in Settings, through LuCI's apply. */
+	handleLoggingOff() {
+		return uci.load('adblock-fast-monitor').then(() => {
+			uci.set('adblock-fast-monitor', 'config', 'query_logging', '0');
+			return uci.save();
+		}).then(() => ui.changes.apply(true)).catch(e => {
+			ui.addNotification(null, E('p', {}, T(_('Query logging could not be turned off: %s').format(e.message))), 'danger');
+		});
 	},
 
 	updateWarnings() {
@@ -365,14 +507,22 @@ return view.extend({
 		const s = querylog.stats(this.log, { show_router: this.display.showRouter });
 		this.keptRows = s.kept || 0;
 		const since = s.since_open || {};
+		const dnsMode = model.dnsModeNote(this.infoResult);
 		const rows = [
-			[ _('Blocked'), model.formatPct(s.blocked_pct), 'blocked_pct',
+			[ _('Blocked'), dnsMode ? _('not shown in this DNS mode') : model.formatPct(s.blocked_pct), 'blocked_pct',
 				_('%d queries over %s').format(s.kept || 0, model.formatDuration(s.span_s)) ],
 			[ _('Shown queries'), _('%s blocked, %s allowed, %s other, %s without answer').format(
 				model.formatCount(s.blocked), model.formatCount(s.allowed), model.formatCount(s.other), model.formatCount(s.no_answer)), 'kept' ],
 			[ _('Since page opened'), _('%s queries, %s blocked, %s allowed').format(
 				model.formatCount(since.queries), model.formatCount(since.blocked), model.formatCount(since.allowed)), 'since_open' ]
 		];
+		const missed = s.missed_total || 0;
+		const paused = s.paused_total || 0;
+		const key = JSON.stringify([ rows, missed, paused ]);
+		if (key == this.statsKey)
+			return;
+		this.statsKey = key;
+
 		dom.content(this.statsNode, [ E('table', { 'class': 'table', 'aria-label': _('Statistics') },
 			rows.map(r => E('tr', { 'class': 'tr', 'data-stat': r[2] }, [
 				E('th', { 'class': 'td left', 'scope': 'row', 'width': '33%' }, T(r[0])),
@@ -380,10 +530,16 @@ return view.extend({
 					r[3] ? [ ' ', E('span', { 'class': 'abfm-label' }, T(r[3])) ] : []))
 			]))) ]);
 
-		const missed = s.missed_total || 0;
 		this.missedNode.setAttribute('data-missed', String(missed));
-		dom.content(this.missedNode, missed ? [ E('div', { 'class': 'alert-message warning' },
-			T(_('%d log entries missed: the system log buffer was overwritten between refreshes, or dnsmasq reported lost entries.').format(missed))) ] : []);
+		this.missedNode.setAttribute('data-paused', String(paused));
+		const notes = [];
+		if (missed)
+			notes.push(E('div', { 'class': 'alert-message warning' },
+				T(_('%d log entries missed: the system log buffer was overwritten between refreshes, or dnsmasq reported lost entries.').format(missed))));
+		if (paused)
+			notes.push(E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap' },
+				T(_('%d log entries were overwritten while updates were paused (page hidden or not in use); they are not shown.').format(paused))));
+		dom.content(this.missedNode, notes);
 	},
 
 	/* ---- queries table ---------------------------------------------------------- */
@@ -391,8 +547,14 @@ return view.extend({
 	renderQueriesSection() {
 		const filter = E('input', { 'id': 'abfm-filter', 'class': 'cbi-input-text', 'type': 'search',
 			'maxlength': 253, 'placeholder': _('part of a domain'), 'autocomplete': 'off', 'spellcheck': 'false',
-			'input': ev => { this.display.q = ev.target.value; this.updateQueries(); } });
+			'input': ev => {
+				const q = ev.target.value;
+				clearTimeout(this.filterTimer);
+				this.filterTimer = setTimeout(() => { this.display.q = q; this.updateQueries(); }, FILTER_DEBOUNCE_MS);
+			} });
 		this.queriesNode = E('div', { 'id': 'abfm-queries' });
+		this.queriesTable = E('table', { 'class': 'table', 'aria-label': _('Last queries') });
+		this.queriesNode.appendChild(this.queriesTable);
 		return E('div', { 'class': 'cbi-section', 'id': 'abfm-queries-section' }, [
 			E('h3', {}, T(_('Last queries'))),
 			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first, up to %d queries. Queries made by the router itself (127.0.0.1, ::1) can be shown or hidden.').format(MAX_ROWS))),
@@ -413,65 +575,148 @@ return view.extend({
 		]);
 	},
 
-	actionsCell(row) {
-		const domain = row.domain;
+	/* What the Actions cell of a row shows: '', 'inflight', 'staged:<op>' or 'op:<op>'. */
+	actionState(row, ent) {
 		if (this.noActions)
-			return [];
-		const inflight = this.pending.inflight && this.pending.inflight.items.some(i => i.domain == domain);
-		if (inflight)
-			return [ E('em', {}, T(_('Applying…'))) ];
+			return '';
+		const domain = row.domain;
+		if (this.pending.inflight && this.pending.inflight.items.some(i => i.domain == domain))
+			return 'inflight';
 		const staged = model.pendingOp(this.pending, domain);
 		if (staged)
+			return 'staged:' + staged;
+		const op = model.rowOp(row.decision);
+		if (!op || !ent.valid || (op == 'block' && model.isProtected(this.protect, ent.valid)))
+			return '';
+		return 'op:' + op;
+	},
+
+	actionsCell(row, state) {
+		const domain = row.domain;
+		if (state == 'inflight')
+			return [ E('em', {}, T(_('Applying…'))) ];
+		if (state.indexOf('staged:') == 0) {
+			const staged = state.substring(7);
 			return [
 				E('span', { 'class': 'abfm-staged' }, T(_('Pending: %s').format(OP_LABEL[staged] || staged))), ' ',
 				E('button', { 'class': 'cbi-button cbi-button-neutral',
 					'aria-label': _('Cancel pending change for %s').format(domain),
 					'click': () => this.unstageDomain(domain) }, T(_('Cancel')))
 			];
-		const op = model.rowOp(row.decision);
-		if (!op || !model.normalizeDomain(domain))
-			return [];
-		return [ E('button', { 'class': OP_BUTTON_CLASS[op], 'data-op': op,
-			'aria-label': _('%s %s').format(OP_LABEL[op], domain),
-			'click': () => this.stageOp(op, domain) }, T(OP_LABEL[op])) ];
+		}
+		if (state.indexOf('op:') == 0) {
+			const op = state.substring(3);
+			return [ E('button', { 'class': OP_BUTTON_CLASS[op], 'data-op': op,
+				'aria-label': _('%s %s').format(OP_LABEL[op], domain),
+				'click': () => this.stageOp(op, domain) }, T(OP_LABEL[op])) ];
+		}
+		return [];
 	},
 
-	/* Rebuilt only when what it shows changed, so idle polls touch no DOM. */
+	queryRow(r, actions) {
+		const decision = Object.prototype.hasOwnProperty.call(DECISION_LABEL, r.decision) ? DECISION_LABEL[r.decision] : r.decision;
+		const result = r.source ? _('%s (%s)').format(decision, SOURCE_LABEL[r.source] || r.source) : decision;
+		const tds = [
+			cell(_('Time'), [ E('time', {}, T(model.formatTime(r.time))) ]),
+			cell(_('Domain'), T(r.domain), 'abfm-domain'),
+			cell(_('Type'), T(r.qtype)),
+			cell(_('Answer'), T((Array.isArray(r.answers) ? r.answers : []).join(', ')), 'abfm-answer'),
+			cell(_('Result'), T(result))
+		];
+		if (this.display.showClient)
+			tds.push(cell(_('Client'), T(r.client)));
+		if (this.canWrite)
+			tds.push(cell(_('Actions'), this.actionsCell(r, actions), 'cbi-section-actions'));
+		return E('tr', { 'class': 'tr', 'data-domain': r.domain, 'data-decision': r.decision,
+			'data-router': r.router ? 'true' : 'false' }, tds);
+	},
+
+	/*
+	 * Incremental update keyed by row key: rows whose content is unchanged
+	 * keep their DOM node (focus, selection), changed rows are replaced in
+	 * place, new rows are inserted and dropped rows removed. Row stripes are
+	 * fixed when a row is created, so prepending rows touches no other row.
+	 * A different filter, column set or router toggle rebuilds the table.
+	 * Returns the number of rows created or removed (0 on an idle poll).
+	 */
 	updateQueries() {
 		if (!this.queriesNode)
-			return;
+			return 0;
 		const all = querylog.rows(this.log, { show_router: this.display.showRouter });
 		const rows = model.filterRows(all, this.display.q);
-		const key = JSON.stringify([ rows.map(r => [ r.key, r.decision, r.answers ]), this.display,
-			this.canWrite ? [ this.pending.items, this.pending.inflight, !!this.noActions ] : null ]);
-		if (key == this.rowsKey)
-			return;
-		this.rowsKey = key;
+		const table = this.queriesTable;
+		const map = this.queryRows;
+		let changed = 0;
 
-		const captions = [ _('Time'), _('Domain'), _('Type'), _('Answer'), _('Result') ];
-		if (this.display.showClient)
-			captions.push(_('Client'));
-		if (this.canWrite)
-			captions.push(_('Actions'));
-		const trs = rows.map(r => {
-			const result = ((Object.prototype.hasOwnProperty.call(DECISION_LABEL, r.decision) ? DECISION_LABEL[r.decision] : r.decision)) +
-				(r.source ? ' (' + (SOURCE_LABEL[r.source] || r.source) + ')' : '');
-			const tds = [
-				cell(_('Time'), [ E('time', {}, T(model.formatTime(r.time))) ]),
-				cell(_('Domain'), T(r.domain), 'abfm-domain'),
-				cell(_('Type'), T(r.qtype)),
-				cell(_('Answer'), T((Array.isArray(r.answers) ? r.answers : []).join(', ')), 'abfm-answer'),
-				cell(_('Result'), T(result))
-			];
+		const layout = JSON.stringify([ this.display, this.canWrite ]);
+		if (layout != this.queryLayout) {
+			this.queryLayout = layout;
+			const captions = [ _('Time'), _('Domain'), _('Type'), _('Answer'), _('Result') ];
 			if (this.display.showClient)
-				tds.push(cell(_('Client'), T(r.client)));
+				captions.push(_('Client'));
 			if (this.canWrite)
-				tds.push(cell(_('Actions'), this.actionsCell(r), 'cbi-section-actions'));
-			return E('tr', { 'class': 'tr', 'data-domain': r.domain, 'data-decision': r.decision,
-				'data-router': r.router ? 'true' : 'false' }, tds);
+				captions.push(_('Actions'));
+			this.queryCols = captions.length;
+			changed += map.size;
+			map.clear();
+			this.queryPlaceholder = null;
+			dom.content(table, [ headerRow(captions) ]);
+		}
+
+		const keys = new Set();
+		rows.forEach(r => keys.add(r.key));
+		map.forEach((ent, k) => {
+			if (!keys.has(k)) {
+				ent.tr.remove();
+				map.delete(k);
+				changed++;
+			}
 		});
-		const placeholder = all.length ? _('No queries match the filter.') : _('No queries seen yet.');
-		dom.content(this.queriesNode, [ dataTable(_('Last queries'), captions, trs, placeholder) ]);
+
+		const fresh = [];
+		let prev = table.firstChild;
+		rows.forEach(r => {
+			let ent = map.get(r.key);
+			if (!ent) {
+				ent = { tr: null, sig: null, parity: 0, valid: model.normalizeDomain(r.domain) };
+				map.set(r.key, ent);
+				fresh.push(ent);
+			}
+			const actions = this.canWrite ? this.actionState(r, ent) : '';
+			const sig = r.decision + '\n' + r.source + '\n' + r.answers.join('\n') + '\n' + actions;
+			if (sig !== ent.sig) {
+				const tr = this.queryRow(r, actions);
+				if (ent.parity)
+					tr.classList.add('cbi-rowstyle-' + ent.parity);
+				if (ent.tr)
+					ent.tr.replaceWith(tr);
+				else
+					changed++;
+				ent.tr = tr;
+				ent.sig = sig;
+			}
+			if (prev.nextSibling !== ent.tr)
+				table.insertBefore(ent.tr, prev.nextSibling);
+			prev = ent.tr;
+		});
+
+		/* stripes for new rows continue from the older row below them */
+		for (let i = rows.length - 1; i >= 0; i--) {
+			const ent = map.get(rows[i].key);
+			if (ent.parity)
+				continue;
+			const below = (i + 1 < rows.length) ? map.get(rows[i + 1].key).parity : 2;
+			ent.parity = (below == 1) ? 2 : 1;
+			ent.tr.classList.add('cbi-rowstyle-' + ent.parity);
+		}
+
+		const text = rows.length ? null : (all.length ? _('No queries match the filter.') : _('No queries seen yet.'));
+		if (text != (this.queryPlaceholder && this.queryPlaceholder.textContent)) {
+			if (this.queryPlaceholder)
+				this.queryPlaceholder.remove();
+			this.queryPlaceholder = text ? table.appendChild(placeholderRow(this.queryCols, text)) : null;
+		}
+		return changed;
 	},
 
 	/* ---- staging ------------------------------------------------------------------ */
@@ -489,7 +734,7 @@ return view.extend({
 	},
 
 	stageOp(op, domain) {
-		const r = model.stage(this.pending, op, domain, Math.floor(Date.now() / 1000));
+		const r = model.stage(this.pending, op, domain, Math.floor(Date.now() / 1000), this.protect);
 		if (r.error) {
 			ui.addNotification(null, E('p', {}, T(_('Cannot stage "%s": %s').format(String(domain), errorText(r.error)))), 'warning');
 			return false;
@@ -599,7 +844,7 @@ return view.extend({
 				return this.applyError(reply);
 			const plan = model.applyPlan(confirmRequired ? Object.assign({}, reply, { mode: reply.mode || 'rebuild' }) : reply);
 			if (plan.noop) {
-				this.setPending(model.settleNoop(this.pending));
+				this.setPending(model.settleNoop(this.pending, ops));
 				ui.addNotification(null, E('p', {}, T(_('Nothing to change: the rules are already in place.'))), 'info');
 				return;
 			}
@@ -621,10 +866,10 @@ return view.extend({
 				return this.applyError(reply);
 			}
 			if (reply.noop || !reply.job_id) {
-				this.setPending(model.settleNoop(this.pending));
+				this.setPending(model.settleNoop(this.pending, ops));
 				return;
 			}
-			this.setPending(model.beginInflight(this.pending, reply.job_id));
+			this.setPending(model.beginInflight(this.pending, reply.job_id, ops));
 			this.job = { id: reply.job_id, state: reply.state || 'queued', mode: reply.mode, items: [] };
 			this.watchJob(reply.job_id);
 		});

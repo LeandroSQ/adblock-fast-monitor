@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T22 (§2 install) through LuCI only. Driven by
 // test/guest/package-luci-install.host.sh, which builds and serves a feed
 // signed with a throwaway key; skipped in ordinary browser runs.
@@ -26,7 +27,7 @@ function guest(command, { check = true } = {}) {
       '-o', 'StrictHostKeyChecking=no', '-o', `UserKnownHostsFile=${env.GUEST_RUN_DIR}/known_hosts`,
       '-o', 'LogLevel=ERROR', 'root@127.0.0.1', command], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
-    if (check) throw new Error(`guest command failed: ${command}\n${err.stdout}${err.stderr}`);
+    if (check) throw new Error(`guest command failed: ${command}\n${err.stdout}${err.stderr}`, { cause: err });
     return null;
   }
 }

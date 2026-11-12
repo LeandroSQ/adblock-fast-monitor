@@ -1,32 +1,41 @@
-// Executes the real LuCI resource root/www/luci-static/resources/adblock-fast-monitor/model.js
+// SPDX-License-Identifier: Apache-2.0
+// Executes the real LuCI resource htdocs/luci-static/resources/adblock-fast-monitor/model.js
 // the way luci.js loads it: the file is the body of a factory function
 // (window, document, L, ...requires) whose return value is a class that is
-// instantiated once. Only `baseclass.extend` is provided by the harness.
+// instantiated once. Only `baseclass.extend` and `_` are provided by the harness.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { loadLuci } from './querylog-load.mjs';
+import { validate } from '../browser/lib/schemas.mjs';
 
-const source = readFileSync(fileURLToPath(new URL(
-  '../../root/www/luci-static/resources/adblock-fast-monitor/model.js', import.meta.url)), 'utf8');
-const baseclass = { extend(proto) { return function Model() { Object.assign(this, proto); }; } };
-// eslint-disable-next-line no-new-func
-const Factory = new Function('window', 'document', 'L', 'baseclass', source);
-const Cls = Factory({}, {}, {}, baseclass);
-const m = new Cls();
+const m = loadLuci('adblock-fast-monitor/model.js');
 
 const ok = (data) => m.settle(data);
 const err = (code) => m.failure(new Error(`RPC call to x/y failed with error ${code}: msg`));
 const inst = (o = {}) => ({ section: 'cfg01411c', confdir: '/tmp/dnsmasq.cfg01411c.d', dropin: false,
-  uci_logqueries: false, logfacility_file: false, ...o });
+  uci_logqueries: false, running: true, logfacility_file: false, ...o });
+// The full api-2 `info` reply (docs/CONTRACT.md §6.1); checked against the schema below.
 const info = (over = {}) => ({
   api: 2, ok: true,
   monitor: { query_logging: true },
-  adblock_fast: { installed: true, enabled: true, status: 'statusSuccess', dns: 'dnsmasq.servers' },
-  dnsmasq: { running: true, instances: [inst({ dropin: true })] },
   local_domains: ['lan'],
+  protected_suffixes: ['localhost', 'arpa', 'local', 'internal', 'invalid', 'onion', 'bind', 'lan', 'openwrt'],
+  logd: { size_kib: 128 },
+  adblock_fast: { installed: true, enabled: true, status: 'statusSuccess', dns: 'dnsmasq.servers',
+    output_file: '/var/run/adblock-fast/dnsmasq.servers', output_exists: true, external_config: false, pending_uci_changes: false },
+  dnsmasq: { running: true, instances: [inst({ dropin: true })] },
   warnings: [],
   ...over
+});
+
+test('the info fixtures match the api-2 schema (S3), so they cannot drift from the real replies', () => {
+  assert.deepEqual(validate('info', info()), []);
+  assert.deepEqual(validate('info', info({ warnings: ['query-logging-active', 'logd-to-flash', 'logd-remote'],
+    dnsmasq: { running: false, instances: [inst({ confdir: null, reason: 'confdir-invalid', running: false })] } })), []);
+  // the schema is strict: removed api-1/api-2-draft fields and unknown warnings fail
+  assert.notDeepEqual(validate('info', info({ monitor: { query_logging: true, poll_interval: 2 } })), []);
+  assert.notDeepEqual(validate('info', info({ warnings: ['nope'] })), []);
+  assert.notDeepEqual(validate('info', { ...info(), api: 1 }), []);
 });
 
 test('rpcError extracts JSON-RPC and ubus codes from LuCI RPCError messages', () => {
@@ -58,10 +67,8 @@ test('§8.5 pageState: first matching state wins', () => {
     ['logging-unavailable', 'logging-not-active']);
   assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ confdir: null })] } })), logOk),
     ['logging-unavailable', 'confdir-invalid']);
-  // an untargeted instance with a drop-in does not count; an untargeted bad confdir does not matter
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true, targeted: false }), inst({ targeted: true })] } })), logOk),
-    ['logging-unavailable', 'logging-not-active']);
-  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true, targeted: true }), inst({ confdir: null, targeted: false })] } })), logOk),
+  // one instance with a drop-in is enough; a bad confdir elsewhere does not matter then
+  assert.deepEqual(st(ok(info({ dnsmasq: { running: true, instances: [inst({ dropin: true }), inst({ confdir: null })] } })), logOk),
     ['healthy', null]);
   assert.deepEqual(st(ok(info()), logErr), ['error', null]);
   assert.deepEqual(st(ok(info()), logErr, true), ['healthy', null]);   // keeps earlier rows
@@ -70,13 +77,45 @@ test('§8.5 pageState: first matching state wins', () => {
   assert.deepEqual(st(null, null), ['loading', null]);
 });
 
-test('viewOptions: poll_interval clamped to 2..60 (default 2), router hidden unless exclude_router=false', () => {
-  const vo = (monitor) => m.viewOptions(ok(info({ monitor })));
-  assert.deepEqual(vo({ poll_interval: 5, exclude_router: true }), { interval: 5, hideRouter: true });
-  assert.deepEqual(vo({ poll_interval: 1 }), { interval: 2, hideRouter: true });
-  assert.deepEqual(vo({ poll_interval: 600, exclude_router: false }), { interval: 60, hideRouter: false });
-  assert.deepEqual(vo({ poll_interval: 'x' }), { interval: 2, hideRouter: true });
-  assert.deepEqual(m.viewOptions(err(-32002)), { interval: 2, hideRouter: true });
+test('poll interval is fixed at 2 s (§8.1)', () => {
+  assert.equal(m.POLL_INTERVAL, 2);
+});
+
+test('§6.5 protected names: builtin list, local domains and info.protected_suffixes', () => {
+  const p = m.protectedNames(ok(info({ local_domains: ['lan', 'Home.Example'], protected_suffixes: ['localhost', 'router-name', 'HB.example.net', 7] })));
+  for (const d of ['x.internal', 'internal', 'a.b.home.arpa', 'localhost', 'z.local', '1.0.0.10.in-addr.arpa', 'x.onion',
+    'y.invalid', 'version.bind', 'printer.lan', 'nas.home.example', 'router-name', 'hb.example.net', 'x.hb.example.net']) {
+    assert.equal(m.isProtected(p, d), true, d);
+  }
+  for (const d of ['ads.example.test', 'internal.example.com', 'lan.example.com', 'notlan', 'xhb.example.net']) {
+    assert.equal(m.isProtected(p, d), false, d);
+  }
+  assert.equal(p.filter((d) => d === 'localhost').length, 1, 'de-duplicated');
+  // without info only the builtin list applies; hostile shapes are ignored
+  const bare = m.protectedNames(err(-32002));
+  assert.equal(m.isProtected(bare, 'x.internal'), true);
+  assert.equal(m.isProtected(bare, 'printer.lan'), false);
+  assert.equal(m.isProtected(m.protectedNames(ok(info({ protected_suffixes: 'lan', local_domains: null }))), 'x.lan'), false);
+  assert.equal(m.isProtected(null, 'x.internal'), false);
+  assert.equal(m.isProtected(bare, '__proto__'), false);
+  // staging a block of a protected name is refused; allowing it is not
+  assert.equal(m.stage(m.emptyPending(), 'block', 'X.Internal.', 1, p).error, 'protected-domain');
+  assert.equal(m.stage(m.emptyPending(), 'allow', 'x.internal', 1, p).change, 'added');
+  assert.equal(m.stage(m.emptyPending(), 'block', 'x.internal', 1).change, 'added');   // no list: the server decides
+});
+
+test('dnsModeNote: firewall modes and other resolvers are explained', () => {
+  const mode = (dns) => m.dnsModeNote(ok(info({ adblock_fast: { installed: true, dns } })));
+  assert.equal(mode('dnsmasq.ipset'), 'firewall');
+  assert.equal(mode('dnsmasq.nftset'), 'firewall');
+  assert.equal(mode('smartdns.domainset'), 'unsupported');
+  assert.equal(mode('unbound.adb_list'), 'unsupported');
+  for (const dns of ['dnsmasq.servers', 'dnsmasq.conf', 'dnsmasq.addnhosts', null, 7]) assert.equal(mode(dns), null, String(dns));
+  assert.equal(m.dnsModeNote(err(-32002)), null);
+});
+
+test('backoffSkip: failed log reads wait 2^n polls, capped at 32 s', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 50, -1, 'x'].map(m.backoffSkip), [0, 1, 3, 7, 15, 15, 15, 0, 0]);
 });
 
 test('localDomains takes only non-empty strings from info.local_domains', () => {
@@ -144,7 +183,7 @@ test('§8.2 storage round-trip and hostile input', () => {
   assert.deepEqual(parsed, s);
   assert.deepEqual(m.parsePending('{not json'), m.emptyPending());
   assert.equal(m.STORAGE_KEY, 'adblock-fast-monitor.pending.v2');
-  // api-1 lists (pending.v1 shape, may hold unblock/unallow) are discarded
+  // any other storage version is discarded
   assert.deepEqual(m.parsePending('{"v":1,"items":[{"op":"block","domain":"a.example.com"}]}'), m.emptyPending());
   const hostile = m.parsePending(JSON.stringify({ v: 2,
     items: [{ op: 'block', domain: '<img src=x>' }, { op: 'eval', domain: 'x.com' }, { op: 'block', domain: 'OK.com' },
@@ -191,14 +230,46 @@ test('§8.2 job settlement: ok/skipped leave, mismatch/unverified/failed return 
   assert.equal(marked.items[0].reason, 'protected-domain');
 });
 
+test('§8.4 in-flight batch is exactly the sent ops; items staged meanwhile stay pending', () => {
+  const A = 'a.example.com', B = 'b.example.com', C = 'c.example.com';
+  let s = m.stage(m.stage(m.emptyPending(), 'allow', A, 1).state, 'block', B, 2).state;
+  const ops = m.toOps(s);
+  // while the request runs: C staged (here or in another tab), B replaced by allow, A cancelled
+  s = m.stage(s, 'block', C, 3).state;
+  s = m.stage(s, 'allow', B, 4).state;
+  s = m.unstage(s, A);
+  const q = m.beginInflight(s, 'j1762747400-3f2a', ops);
+  assert.deepEqual(q.inflight.items, [{ op: 'allow', domain: A, ts: 0 }, { op: 'block', domain: B, ts: 0 }]);
+  assert.deepEqual(q.items.map((i) => [i.op, i.domain]), [['allow', B], ['block', C]]);
+  // the job ends applied with entries only for the sent items: C is still pending
+  const r = m.settleJob(q, { id: 'j1762747400-3f2a', state: 'applied', items: [{ domain: A, result: 'ok' }, { domain: B, result: 'ok' }] });
+  assert.deepEqual(r.done, [A, B]);
+  assert.deepEqual(r.state.items.map((i) => [i.op, i.domain]), [['allow', B], ['block', C]]);
+  // applied without per-item entries: the sent items leave, nothing else
+  const r2 = m.settleJob(m.beginInflight(m.stage(m.stage(m.emptyPending(), 'block', A, 1).state, 'block', C, 2).state,
+    'j1762747400-3f2a', [{ op: 'block', domain: A }]), { id: 'j1762747400-3f2a', state: 'applied', items: [] });
+  assert.deepEqual(r2.state.items.map((i) => i.domain), [C]);
+  // a noop reply removes only the sent items
+  const n = m.settleNoop(m.stage(s, 'allow', A, 5).state, ops);
+  assert.deepEqual(n.items.map((i) => [i.op, i.domain]), [['allow', B], ['block', C]]);
+  // without ops the whole list is the batch (resume path)
+  assert.deepEqual(m.beginInflight(s, 'j1762747400-3f2a').items, []);
+  assert.deepEqual(m.settleNoop(s).items, []);
+});
+
 test('applyPlan: confirmation needed for every rebuild, never for noop or persist-only', () => {
   assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['block:add'] }] }).needsConfirm, true);
-  // allow-only batches are rebuilds too (v1 never uses fast-allow)
-  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', may_escalate: false, plan: [{ change: ['allow:add'] }] }).needsConfirm, true);
+  // allow-only batches are rebuilds too
+  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: ['allow:add'] }] }).needsConfirm, true);
   assert.equal(m.applyPlan({ ok: true, mode: 'persist-only', plan: [{ change: ['allow:add'] }] }).needsConfirm, false);
   const noop = m.applyPlan({ ok: true, mode: 'rebuild', plan: [{ change: [] }] });
   assert.deepEqual([noop.noop, noop.needsConfirm], [true, false]);
   assert.equal(m.applyPlan({ ok: true, noop: true, job_id: null, plan: [] }).noop, true);
+});
+
+test('fmt fills %s in order and keeps %%', () => {
+  assert.equal(m.fmt('%s of %s = %s %%', 1, 2, 50), '1 of 2 = 50 %');
+  assert.equal(m.fmt('none'), 'none');
 });
 
 test('formatting: counts, percentages, durations, local times', () => {
@@ -236,4 +307,28 @@ test('logWatch/logStalled: notice after a logd restart with no dnsmasq line sinc
   // hostile shapes
   assert.deepEqual(m.logWatch(null, [null, { log: 'x' }, { log: [null, { msg: 7 }] }], true, 5), { resetAt: 5 });
   assert.equal(m.logStalled(null, 1e9), false);
+});
+
+test('edges: job id anchors, multi-digit codes, length limits, numeric parsing', () => {
+  for (const id of ['xj1762747400-3f2a', 'j1762747400-3f2aX', 'j176274740-3f2a', 'j1762747400-3F2A']) {
+    assert.equal(m.parsePending(JSON.stringify({ v: 2, items: [], inflight: { job_id: id, items: [] } })).inflight, null, id);
+  }
+  assert.equal(m.rpcError(new Error('RPC call to a/b failed with ubus code 10: x')).ubus, 10);
+  assert.equal(m.rpcError(new Error('RPC call to a/b failed with error -32602: x')).rpc, -32602);
+  const d253 = `${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(57)}.com`;
+  assert.equal(d253.length, 253);
+  assert.equal(m.normalizeDomain(d253), d253);
+  assert.equal(m.normalizeDomain(`a${d253}`), null);
+  assert.equal(m.normalizeDomain(`${'a.'.repeat(126)}c`), `${'a.'.repeat(126)}c`);   // 127 labels, 253 chars
+  assert.equal(m.normalizeDomain('a.12'), null);
+  assert.equal(m.normalizeDomain('a.1b'), 'a.1b');
+  assert.equal(m.normalizeDomain('a.b1'), 'a.b1');
+  for (const v of [true, false, '', null, undefined, 'x', NaN]) assert.equal(m.formatCount(v), '0', String(v));
+  assert.equal(m.formatTime(0), '—');
+  assert.equal(m.formatTime(true), '—');
+  assert.deepEqual(m.parsePending({ v: 2, items: [{ op: 'block', domain: 'a.example.com', ts: '5', reason: 'x'.repeat(100) }] }).items,
+    [{ op: 'block', domain: 'a.example.com', ts: 5, reason: 'x'.repeat(64) }]);
+  assert.deepEqual(m.markError(m.emptyPending(), null), m.emptyPending());
+  assert.equal(m.applyPlan(null).mode, null);
+  assert.equal(m.applyPlan({ ok: true, mode: 'rebuild', plan: [] }).noop, false);
 });

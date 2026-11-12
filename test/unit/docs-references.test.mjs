@@ -131,12 +131,6 @@ function applyToOf(file) {
 // An entry the file no longer names fails, so the list cannot go stale;
 // delete entries once the path exists.
 const notYet = {
-  // Web assets move from root/www/ to htdocs/ (luci.mk installs htdocs/ to /www).
-  'AGENTS.md': ['htdocs/'],
-  'CLAUDE.md': ['htdocs/**'],
-  '.github/instructions/luci-js.instructions.md': [
-    'htdocs/**', 'htdocs/luci-static/resources/adblock-fast-monitor/model.js'
-  ],
   // Created by the maintainer when the signing key is generated (keys/README.md).
   'keys/README.md': ['keys/adblock-fast-monitor.pem', 'keys/adblock-fast-monitor-2027.pem']
 };
@@ -222,7 +216,7 @@ function matrix() {
 
 // T-IDs whose §13 files do not name them yet. Shrink only: a row leaves this
 // list once one of its files names the ID (e.g. a `T07: …` test title).
-const unnamedIds = new Set(['T01', 'T02', 'T03', 'T04', 'T05', 'T27', 'T28', 'T29']);
+const unnamedIds = new Set(['T05']);
 
 test('T-IDs in tests are defined in CONTRACT §13 and each row\'s files name its ID', () => {
   const rows = matrix();
@@ -246,7 +240,7 @@ test('T-IDs in tests are defined in CONTRACT §13 and each row\'s files name its
 
 // Files (by name, so a move keeps the entry) whose § references still use an
 // older section numbering. Shrink only.
-const staleSectionFiles = new Set(['querylog.js', 'querylog.test.mjs', 'ui-staging.spec.mjs']);
+const staleSectionFiles = new Set();
 
 test('every § reference names a CONTRACT section (or a §14 item)', () => {
   const contract = read('docs/CONTRACT.md');
@@ -270,7 +264,7 @@ test('every § reference names a CONTRACT section (or a §14 item)', () => {
 
 test('glob matcher semantics', () => {
   const g = (p, s) => globToRegExp(p).test(s);
-  assert.ok(g('root/www/**', 'root/www/a/b.js'));
+  assert.ok(g('htdocs/**', 'htdocs/a/b.js'));
   assert.ok(g('test/ucode/**/*.test.uc', 'test/ucode/a.test.uc'));
   assert.ok(g('test/ucode/**/*.test.uc', 'test/ucode/x/y/a.test.uc'));
   assert.ok(!g('test/guest/*.sh', 'test/guest/lib/x.sh'));

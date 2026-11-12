@@ -30,6 +30,8 @@ const INFO_INTERVAL = 30;
 const INFO_CHECK = 5;
 const JOB_INTERVAL = 2;
 const MAX_ROWS = 500;
+/* Rows in the DOM: the poll's DOM cost stays bounded whatever the query rate (P4). */
+const PAGE_SIZE = 50;
 /* about 33 min of 2 s polls; then the old `abfm-poll` measures are dropped */
 const MAX_MEASURES = 1000;
 /* No keyboard, pointer or touch input for this long pauses polling (P0). */
@@ -191,6 +193,8 @@ return view.extend({
 		this.statsKey = null;
 		this.queryRows = new Map();
 		this.queryLayout = null;
+		this.view = { page: 0, upto: null, latest: 0, total: 0 };
+		this.pagerKey = null;
 		this.pending = model.parsePending(storageGet(model.STORAGE_KEY));
 		this.polling = false;
 		this.logBusy = false;
@@ -380,6 +384,7 @@ return view.extend({
 		const detail = {
 			entries: (reply && Array.isArray(reply.log)) ? reply.log.length : 0,
 			rows: this.keptRows || 0,
+			shown: this.queryRows.size,
 			changed: changed || 0
 		};
 		requestAnimationFrame(() => setTimeout(() => {
@@ -550,14 +555,26 @@ return view.extend({
 			'input': ev => {
 				const q = ev.target.value;
 				clearTimeout(this.filterTimer);
-				this.filterTimer = setTimeout(() => { this.display.q = q; this.updateQueries(); }, FILTER_DEBOUNCE_MS);
+				this.filterTimer = setTimeout(() => { this.display.q = q; this.showPage(0); }, FILTER_DEBOUNCE_MS);
 			} });
 		this.queriesNode = E('div', { 'id': 'abfm-queries' });
 		this.queriesTable = E('table', { 'class': 'table', 'aria-label': _('Last queries') });
+		this.newQueriesNode = E('div', { 'id': 'abfm-new-queries', 'class': 'alert-message notice', 'style': 'display:none' }, [
+			E('span', {}, T('')), ' ',
+			E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': () => this.showPage(0) }, T(_('Show newest')))
+		]);
+		this.pageNewer = E('button', { 'class': 'cbi-button', 'id': 'abfm-page-newer', 'disabled': '',
+			'click': () => this.showPage(this.view.page - 1) }, T(_('« Newer')));
+		this.pageOlder = E('button', { 'class': 'cbi-button', 'id': 'abfm-page-older', 'disabled': '',
+			'click': () => this.showPage(this.view.page + 1) }, T(_('Older »')));
+		this.pageInfo = E('span', { 'id': 'abfm-page-info' }, T(''));
+		this.queriesNode.appendChild(this.newQueriesNode);
 		this.queriesNode.appendChild(this.queriesTable);
+		this.queriesNode.appendChild(E('div', { 'class': 'right', 'id': 'abfm-pager' },
+			[ this.pageNewer, ' ', this.pageInfo, ' ', this.pageOlder ]));
 		return E('div', { 'class': 'cbi-section', 'id': 'abfm-queries-section' }, [
 			E('h3', {}, T(_('Last queries'))),
-			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first, up to %d queries. Queries made by the router itself (127.0.0.1, ::1) can be shown or hidden.').format(MAX_ROWS))),
+			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first, up to %d queries, %d per page. Queries made by the router itself (127.0.0.1, ::1) can be shown or hidden.').format(MAX_ROWS, PAGE_SIZE))),
 			E('div', { 'class': 'cbi-section-node' }, [
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title', 'for': 'abfm-filter' }, T(_('Filter domains'))),
@@ -566,7 +583,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-title' }, T(_('Display'))),
 					E('div', { 'class': 'cbi-value-field' }, [
-						checkbox('abfm-show-router', _('Show router queries'), this.display.showRouter, v => { this.display.showRouter = v; this.updateStats(); this.updateQueries(); }), ' ',
+						checkbox('abfm-show-router', _('Show router queries'), this.display.showRouter, v => { this.display.showRouter = v; this.updateStats(); this.showPage(0); }), ' ',
 						checkbox('abfm-show-client', _('Show client column'), false, v => { this.display.showClient = v; this.updateQueries(); })
 					])
 				])
@@ -632,23 +649,51 @@ return view.extend({
 	},
 
 	/*
-	 * Incremental update keyed by row key: rows whose content is unchanged
-	 * keep their DOM node (focus, selection), changed rows are replaced in
-	 * place, new rows are inserted and dropped rows removed. Row stripes are
-	 * fixed when a row is created, so prepending rows touches no other row.
-	 * A different filter, column set or router toggle rebuilds the table.
-	 * Returns the number of rows created or removed (0 on an idle poll).
+	 * Page 0 is live: new queries shift in at the top. Leaving it freezes
+	 * the view at the queries seen so far (querylog.page `upto`), so later
+	 * pages do not move while queries arrive; "N new queries" leads back.
+	 */
+	showPage(n) {
+		const page = Math.max(0, Math.floor(n) || 0);
+		if (page == 0)
+			this.view.upto = null;
+		else if (this.view.page == 0)
+			this.view.upto = this.view.latest;
+		this.view.page = page;
+		this.updateQueries();
+	},
+
+	/*
+	 * Incremental update of one page (at most PAGE_SIZE rows) keyed by row
+	 * key: rows whose content is unchanged keep their DOM node (focus,
+	 * selection), changed rows are replaced in place, new rows are inserted
+	 * and dropped rows removed, with no layout reads in between, so the
+	 * browser lays out once. Row stripes are fixed when a row is created, so
+	 * prepending rows touches no other row. A different column set rebuilds
+	 * the table. Returns the number of rows created, replaced or removed
+	 * (0 on an idle poll); bounded by 2 * PAGE_SIZE.
 	 */
 	updateQueries() {
 		if (!this.queriesNode)
 			return 0;
-		const all = querylog.rows(this.log, { show_router: this.display.showRouter });
-		const rows = model.filterRows(all, this.display.q);
+		const v = this.view;
+		const opts = { show_router: this.display.showRouter, match: this.display.q, limit: PAGE_SIZE };
+		let res = querylog.page(this.log, Object.assign({ offset: v.page * PAGE_SIZE, upto: v.upto }, opts));
+		if (v.page > 0 && res.rows.length == 0) {
+			/* the frozen rows left the ring: show the last page that still has rows */
+			v.page = Math.max(0, Math.ceil(res.total / PAGE_SIZE) - 1);
+			if (v.page == 0)
+				v.upto = null;
+			res = querylog.page(this.log, Object.assign({ offset: v.page * PAGE_SIZE, upto: v.upto }, opts));
+		}
+		v.latest = res.latest;
+		v.total = res.total;
+		const rows = res.rows;
 		const table = this.queriesTable;
 		const map = this.queryRows;
 		let changed = 0;
 
-		const layout = JSON.stringify([ this.display, this.canWrite ]);
+		const layout = JSON.stringify([ this.display.showClient, this.canWrite ]);
 		if (layout != this.queryLayout) {
 			this.queryLayout = layout;
 			const captions = [ _('Time'), _('Domain'), _('Type'), _('Answer'), _('Result') ];
@@ -673,14 +718,12 @@ return view.extend({
 			}
 		});
 
-		const fresh = [];
 		let prev = table.firstChild;
 		rows.forEach(r => {
 			let ent = map.get(r.key);
 			if (!ent) {
 				ent = { tr: null, sig: null, parity: 0, valid: model.normalizeDomain(r.domain) };
 				map.set(r.key, ent);
-				fresh.push(ent);
 			}
 			const actions = this.canWrite ? this.actionState(r, ent) : '';
 			const sig = r.decision + '\n' + r.source + '\n' + r.answers.join('\n') + '\n' + actions;
@@ -690,10 +733,9 @@ return view.extend({
 					tr.classList.add('cbi-rowstyle-' + ent.parity);
 				if (ent.tr)
 					ent.tr.replaceWith(tr);
-				else
-					changed++;
 				ent.tr = tr;
 				ent.sig = sig;
+				changed++;
 			}
 			if (prev.nextSibling !== ent.tr)
 				table.insertBefore(ent.tr, prev.nextSibling);
@@ -710,13 +752,31 @@ return view.extend({
 			ent.tr.classList.add('cbi-rowstyle-' + ent.parity);
 		}
 
-		const text = rows.length ? null : (all.length ? _('No queries match the filter.') : _('No queries seen yet.'));
+		const text = rows.length ? null : ((this.display.q && this.keptRows) ? _('No queries match the filter.') : _('No queries seen yet.'));
 		if (text != (this.queryPlaceholder && this.queryPlaceholder.textContent)) {
 			if (this.queryPlaceholder)
 				this.queryPlaceholder.remove();
 			this.queryPlaceholder = text ? table.appendChild(placeholderRow(this.queryCols, text)) : null;
 		}
+		this.updatePager(rows.length, res.newer);
 		return changed;
+	},
+
+	/* Pager and "N new queries"; text nodes only change when their text does. */
+	updatePager(shown, newer) {
+		const v = this.view;
+		const first = v.page * PAGE_SIZE;
+		const fresh = (v.page > 0) ? newer : 0;
+		const key = [ v.page, shown, v.total, fresh ].join(':');
+		if (key == this.pagerKey)
+			return;
+		this.pagerKey = key;
+		this.pageInfo.textContent = shown ? _('Queries %d–%d of %d').format(first + 1, first + shown, v.total) : '';
+		this.pageNewer.disabled = (v.page == 0);
+		this.pageOlder.disabled = (first + shown >= v.total);
+		this.newQueriesNode.style.display = fresh ? '' : 'none';
+		this.newQueriesNode.setAttribute('data-new', String(fresh));
+		this.newQueriesNode.firstChild.textContent = fresh ? _('%d new queries since this page was shown.').format(fresh) : '';
 	},
 
 	/* ---- staging ------------------------------------------------------------------ */

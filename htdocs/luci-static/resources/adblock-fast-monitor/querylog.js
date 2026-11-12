@@ -33,6 +33,14 @@
  *       source: §8.3 attribution or null. key is opaque and unique
  *       (`epoch:pid:serial:client/port`, epoch = dnsmasq restarts seen).
  *       show_router defaults to !hide_router.
+ *   page(state, {show_router, match, offset, limit (1..max_rows, 50),
+ *        upto}) -> {rows, total, newer, latest}: one page of rows(),
+ *       newest first, of the rows whose domain contains `match`
+ *       (lower-cased); only rows not newer than `upto` (a `latest` value
+ *       of an earlier call) when it is set, so a later page does not shift
+ *       while queries arrive. total: matching rows up to `upto`; newer:
+ *       matching rows after it; latest: the current insertion counter.
+ *       Builds row objects for the page only.
  *   stats(state, {show_router}) -> {kept, blocked, allowed, other,
  *       no_answer, pending, blocked_pct (null if blocked+allowed = 0),
  *       span_s, missed_total (gaps + dnsmasq_lost), dnsmasq_lost,
@@ -235,7 +243,7 @@ function line(st, entry) {
 		if (qtype.indexOf(']') >= 0 || st.entries.has(key))
 			return 0;
 		const e = {
-			key, timeMs, domain: ev.name, qtype, answers: [], cname: false,
+			key, seq: ++st.seq, timeMs, domain: ev.name, qtype, answers: [], cname: false,
 			decision: 'pending', source: null, client: ev.client,
 			router: ROUTER[ev.client] === true
 		};
@@ -269,6 +277,20 @@ function line(st, entry) {
 	return 0;
 }
 
+function rowOf(e) {
+	return {
+		key: e.key,
+		time: Math.floor(e.timeMs / 1000),
+		domain: e.domain,
+		qtype: e.qtype,
+		answers: e.answers.length === 0 && e.cname ? [ '<CNAME>' ] : e.answers.slice(),
+		decision: e.decision,
+		source: e.source,
+		client: e.client,
+		router: e.router
+	};
+}
+
 function visible(st, opts) {
 	const show = opts && opts.show_router != null ? !!opts.show_router : !st.hideRouter;
 	const out = [];
@@ -299,6 +321,7 @@ return baseclass.extend({
 			resumeLines: null,     // size of the first request after resume()
 			refetching: false,     // the next reply answers a refetch
 			epoch: 0,
+			seq: 0,                // entries ever opened (page() anchors)
 			entries: new Map(),    // key -> entry, oldest first, at most maxRows
 			pending: new Map(),    // subset of entries without an answer, oldest first
 			missedTotal: 0, dnsmasqLost: 0, pausedTotal: 0, rejected: 0,
@@ -378,21 +401,37 @@ return baseclass.extend({
 	rows(st, opts) {
 		const list = visible(st, opts);
 		const out = new Array(list.length);
-		for (let i = list.length - 1, j = 0; i >= 0; i--, j++) {
-			const e = list[i];
-			out[j] = {
-				key: e.key,
-				time: Math.floor(e.timeMs / 1000),
-				domain: e.domain,
-				qtype: e.qtype,
-				answers: e.answers.length === 0 && e.cname ? [ '<CNAME>' ] : e.answers.slice(),
-				decision: e.decision,
-				source: e.source,
-				client: e.client,
-				router: e.router
-			};
-		}
+		for (let i = list.length - 1, j = 0; i >= 0; i--, j++)
+			out[j] = rowOf(list[i]);
 		return out;
+	},
+
+	page(st, opts) {
+		opts = opts || {};
+		const show = opts.show_router != null ? !!opts.show_router : !st.hideRouter;
+		const match = typeof opts.match === 'string' ? opts.match.trim().toLowerCase() : '';
+		const lim = Math.floor(+opts.limit);
+		const limit = lim > 0 ? Math.min(lim, st.maxRows) : 50;
+		const off = Math.floor(+opts.offset);
+		const offset = off > 0 ? off : 0;
+		const up = opts.upto == null ? NaN : +opts.upto;
+		const upto = up === up ? up : Infinity;
+		const all = Array.from(st.entries.values());
+		const rows = [];
+		let total = 0, newer = 0;
+		for (let i = all.length - 1; i >= 0; i--) {
+			const e = all[i];
+			if ((e.router && !show) || (match !== '' && e.domain.indexOf(match) < 0))
+				continue;
+			if (e.seq > upto) {
+				newer++;
+				continue;
+			}
+			if (total >= offset && rows.length < limit)
+				rows.push(rowOf(e));
+			total++;
+		}
+		return { rows, total, newer, latest: st.seq };
 	},
 
 	stats(st, opts) {

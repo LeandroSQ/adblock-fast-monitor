@@ -6,7 +6,7 @@
  *
  * Pure UI logic for the Adblock Fast Monitor views (docs/CONTRACT.md §8):
  * RPC error mapping, the page state (§8.5), view options from `info`, the
- * client-side staging reducer (§8.4), the row filter and display formatting. No DOM, no
+ * client-side staging reducer (§8.4) and display formatting. No DOM, no
  * RPC, no timers, so the same file is loaded unchanged by the host unit tests.
  */
 
@@ -229,14 +229,6 @@ function localDomains(infoResult) {
 /* The staging op a row offers for its decision, or null. */
 function rowOp(decision) {
 	return Object.prototype.hasOwnProperty.call(ROW_OP, decision) ? ROW_OP[decision] : null;
-}
-
-/* Lower-cased substring filter on the domain; '' keeps every row. */
-function filterRows(rows, query) {
-	const q = String(query == null ? '' : query).trim().toLowerCase();
-	if (!q.length)
-		return rows;
-	return rows.filter(r => isObject(r) && typeof(r.domain) == 'string' && r.domain.toLowerCase().indexOf(q) >= 0);
 }
 
 /* ---- §8.2 staging reducer ------------------------------------------------ */
@@ -525,7 +517,6 @@ return baseclass.extend({
 	logStalled: logStalled,
 	localDomains: localDomains,
 	rowOp: rowOp,
-	filterRows: filterRows,
 	emptyPending: emptyPending,
 	parsePending: parsePending,
 	serializePending: serializePending,

@@ -13,5 +13,13 @@
           "processes": ["logd", "dnsmasq", "rpcd", "uhttpd", "ubusd"] },
   "P7": { "info_p95_ms": 50 },
   "P8": { "apply_max_ms": 200, "rpcd_block_max_ms": 200 },
-  "P10": { "boot": 0, "enable": 1, "save": 0 }
+  "P10": { "boot": 0, "enable": 1, "save": 0 },
+  "accelerators": {
+    "$comment": "Per-accelerator handling (docs/performance.md → Budgets). The top-level numbers apply unless the run's accelerator overrides them. hvf (armsr-armv8, Apple silicon) is the run of record. tcg is a smoke run: report_only metrics are computed and reported but do not decide the verdict. Other accelerators (kvm) use the top-level numbers.",
+    "hvf": { "of_record": true,
+             "override": { "P3": { "cpu_delta_pp": { "50": 1, "200": 2 } },
+                           "P5": { "p95_delta_floor_ms": 2 },
+                           "P6": { "cpu_delta_pp": { "50": 4, "200": 6 }, "cpu_delta_pp_by_process": { "dnsmasq": { "50": 4, "200": 6 } } } } },
+    "tcg": { "of_record": false, "report_only": ["P5", "P6"] }
+  }
 }

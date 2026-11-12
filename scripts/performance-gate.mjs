@@ -15,7 +15,7 @@ import { join, relative, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const perfRoot = join(root, '.local-validation', 'perf');
-const budgets = JSON.parse(readFileSync(join(root, 'scripts/perf/budgets.json'), 'utf8'));
+const budgetFile = JSON.parse(readFileSync(join(root, 'scripts/perf/budgets.json'), 'utf8'));
 const CLK_TCK = 100; // USER_HZ on OpenWrt (x86/64 and armsr-armv8)
 const PKG = 'adblock-fast-monitor';
 const requireMeasured = process.env.PERFORMANCE_REQUIRE_MEASURED === '1';
@@ -52,6 +52,20 @@ if (!existsSync(join(runDir, 'run.json'))) {
   process.exit(1);
 }
 const run = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
+
+// Effective budgets for the run's accelerator (budgets.json → accelerators):
+// the top-level numbers merged with the accelerator's override; its
+// report_only metrics are judged and reported but do not decide the verdict.
+const accel = (() => {
+  try { return JSON.parse(readFileSync(join(rawDir, 'meta-host.json'), 'utf8')).accel ?? null; } catch { return null; }
+})();
+const merge = (base, over) => (over && typeof over === 'object' && !Array.isArray(over) && base && typeof base === 'object'
+  ? Object.fromEntries([...new Set([...Object.keys(base), ...Object.keys(over)])].map(k => [k, k in over ? merge(base[k], over[k]) : base[k]]))
+  : over ?? base);
+const accelPolicy = budgetFile.accelerators?.[accel] ?? {};
+const budgets = merge(Object.fromEntries(Object.entries(budgetFile).filter(([k]) => k !== 'accelerators')), accelPolicy.override ?? {});
+const reportOnly = accelPolicy.report_only ?? [];
+const ofRecord = accelPolicy.of_record === true;
 
 // ---------------------------------------------------------------- helpers
 function load(name) {
@@ -499,9 +513,9 @@ const pollStats = b => {
 
 // ---------------------------------------------------------------- verdict
 const order = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P10'];
-const failed = order.filter(id => metrics[id]?.verdict !== 'PASS');
+const failed = order.filter(id => metrics[id]?.verdict !== 'PASS' && !reportOnly.includes(id));
 const summary = {
-  run: relative(root, runDir), measured_at: run.finished_at,
+  run: relative(root, runDir), measured_at: run.finished_at, of_record: ofRecord, report_only: reportOnly, budgets_applied: budgets,
   environment: { accel: meta.accel, guest: meta.guest ?? 'x86', guest_target: meta.guest_target ?? 'x86-64', guest_cpus: meta.guest_cpus, guest_memory_mib: meta.guest_memory_mib,
     host: meta.host_uname, package_file: meta.package_file, package_sha256: meta.package_sha256, page: meta.page,
     browser: meta.browser, repeats: meta.repeats, load_seconds: meta.load_seconds, hidden_seconds: meta.hidden_seconds, rates: meta.rates },
@@ -526,7 +540,8 @@ const noise = Object.fromEntries(rates.map(q => {
   }];
 }));
 summary.noise = noise;
-const verdict = { verdict: failed.length ? 'FAIL' : 'PASS', failed, run: summary.run, accel: meta.accel ?? null, repeats,
+const verdict = { verdict: failed.length ? 'FAIL' : 'PASS', failed, run: summary.run, accel: meta.accel ?? null, of_record: ofRecord,
+  report_only: reportOnly, repeats,
   per_metric: Object.fromEntries(order.map(id => [id, metrics[id]?.verdict ?? 'NOT_MEASURED'])),
   p4_scope: metrics.P4?.scope ?? null, invalid_windows: summary.windows.invalid, noise };
 writeFileSync(join(runDir, 'summary.json'), `${JSON.stringify(summary, null, 1)}\n`);
@@ -553,7 +568,8 @@ function brief(id, m) {
 console.log(`P0 performance gate: ${summary.run} (${summary.environment.guest_target}, accel ${meta.accel ?? '?'}, ${repeats} repeats)`);
 for (const id of order) {
   const m = metrics[id] ?? { verdict: 'NOT_MEASURED' };
-  console.log(`  ${id.padEnd(4)} ${m.verdict.padEnd(12)} ${m.reason ?? brief(id, m)}`);
+  const tag = reportOnly.includes(id) ? ' [report only]' : '';
+  console.log(`  ${id.padEnd(4)} ${m.verdict.padEnd(12)} ${m.reason ?? brief(id, m)}${tag}`);
 }
 for (const [q, n] of Object.entries(noise)) {
   console.log(`  noise @${q} qps (${meta.accel ?? '?'}, spread over ${repeats} repeats): P3 CPU page ${n.p3_cpu_page_spread_pp} / no page ${n.p3_cpu_nopage_spread_pp} pp,` +
@@ -562,6 +578,6 @@ for (const [q, n] of Object.entries(noise)) {
 }
 if (summary.windows.invalid) console.log(`  invalid windows (excluded): ${summary.windows.invalid} of ${summary.windows.checked}: ${summary.windows.list.slice(0, 3).map(w => `${w.file}: ${w.reasons.join(', ')}`).join('; ')}`);
 if (summary.harness_errors.length) console.log(`  harness errors: ${summary.harness_errors.join('; ')}`);
-console.log(`${verdict.verdict}: ${failed.length ? `${failed.join(', ')} not within budget or not measured` : 'all P0 budgets met'}` +
+console.log(`${verdict.verdict}${ofRecord ? ' (run of record)' : ` (not of record: accelerator ${accel ?? '?'})`}: ${failed.length ? `${failed.join(', ')} not within budget or not measured` : (reportOnly.length ? `all gated budgets met (report only: ${reportOnly.map(id => `${id} ${metrics[id]?.verdict ?? 'NOT_MEASURED'}`).join(', ')})` : 'all P0 budgets met')}` +
   ` (details: ${relative(root, join(runDir, 'summary.json'))})`);
 process.exit(failed.length ? 1 : 0);

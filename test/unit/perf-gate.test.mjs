@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { INIT_RELOAD, INIT_RUNNING, p6Files, passingFiles, proc, root, scratch, snapshot, baseProcs, toggle, watch, writeRun } from './helpers/perf-run.mjs';
+import { INIT_RELOAD, INIT_RUNNING, dnsLoad, p6Files, passingFiles, proc, root, scratch, snapshot, baseProcs, toggle, watch, writeRun } from './helpers/perf-run.mjs';
 
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -157,4 +157,51 @@ test('T26: P1 counts the boot start apart from trigger invocations, with its own
     f['p1-after-boot-on-watch'] = bootWatch([{ pid: 990, ppid: 1, cmdline: S18, first_ms: 20000, last_ms: 20100, samples: 2 }]);
   }));
   assert.equal(twice.verdict.per_metric.P1, 'FAIL');
+});
+
+// P5: three off and on load runs per rate with the given p95 (ms).
+const p5Files = (off, on) => {
+  const files = {};
+  [['off', off], ['on', on]].forEach(([st, v]) => v.forEach((p95, i) => { files[`load-${st}-50-r${i + 1}`] = dnsLoad(p95); }));
+  return files;
+};
+const withAccel = (accel, extra) => {
+  const f = { ...passingFiles(), ...extra };
+  f['meta-host'] = { ...f['meta-host'], accel };
+  return f;
+};
+
+test('T26: under hvf (run of record) the accelerated budgets apply: P5 floor 2 ms, P6 dnsmasq 4 pp', () => {
+  const p5 = p5Files([2, 2.1, 2.05], [4.5, 4.55, 4.5]);
+  const hvf = gate(withAccel('hvf', p5));
+  assert.equal(hvf.verdict.of_record, true);
+  assert.equal(hvf.metric('P5').rates['50'].allowed_delta_ms, 2);
+  assert.equal(hvf.verdict.per_metric.P5, 'FAIL');
+  assert.ok(hvf.verdict.failed.includes('P5'));
+  const p6 = p6Files({ off: [spec(1), spec(1), spec(1)], manual: [spec(6), spec(6), spec(6)], on: [spec(6), spec(6), spec(6)] });
+  const h6 = gate(withAccel('hvf', p6));
+  assert.equal(h6.metric('P6').rates['50'].dnsmasq.budget_pp, 4);
+  assert.equal(h6.verdict.per_metric.P6, 'FAIL');
+});
+
+test('T26: without an override (kvm) the top-level budgets apply and gate', () => {
+  const kvm = gate(withAccel('kvm', p5Files([2, 2.1, 2.05], [4.5, 4.55, 4.5])));
+  assert.equal(kvm.verdict.of_record, false);
+  assert.equal(kvm.metric('P5').rates['50'].allowed_delta_ms, 3);
+  assert.equal(kvm.verdict.per_metric.P5, 'PASS');
+  const p6 = gate(withAccel('kvm', p6Files({ off: [spec(1), spec(1), spec(1)], manual: [spec(12), spec(12), spec(12)], on: [spec(12), spec(12), spec(12)] })));
+  assert.equal(p6.verdict.per_metric.P6, 'FAIL');
+  assert.ok(p6.verdict.failed.includes('P6'));
+});
+
+test('T26: under TCG (smoke) P5 and P6 are judged and reported but do not decide the verdict', () => {
+  // p6Files writes neutral load runs; the P5 runs go on top of them.
+  const g = gate(withAccel('tcg', { ...p6Files({ off: [spec(1), spec(1), spec(1)], manual: [spec(12), spec(12), spec(12)],
+    on: [spec(12), spec(12), spec(12)] }), ...p5Files([2, 2.1, 2.05], [6, 6.1, 6]) }));
+  assert.deepEqual(g.verdict.report_only, ['P5', 'P6']);
+  assert.equal(g.verdict.per_metric.P5, 'FAIL');
+  assert.equal(g.verdict.per_metric.P6, 'FAIL');
+  assert.ok(!g.verdict.failed.includes('P5') && !g.verdict.failed.includes('P6'));
+  assert.ok(g.verdict.failed.includes('P7'), 'other metrics still gate');
+  assert.match(g.out, /P6 .*\[report only\]/);
 });

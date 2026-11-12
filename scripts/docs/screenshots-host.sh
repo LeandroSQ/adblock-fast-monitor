@@ -18,7 +18,7 @@ npx playwright install --with-deps chromium >/dev/null
 MONITOR_BASE_URL="$GUEST_HTTP_URL" \
 	npx playwright test --config scripts/docs/playwright.config.mjs
 status=0
-for png in docs/images/overview.png docs/images/apply.png; do
+for png in docs/images/overview.png docs/images/apply.png docs/images/status.png; do
 	size="$(wc -c <"$png" | tr -d ' ')"
 	printf '%s: %s bytes\n' "$png" "$size"
 	((size < 300 * 1024)) || { echo "$png is over 300 KB" >&2; status=1; }

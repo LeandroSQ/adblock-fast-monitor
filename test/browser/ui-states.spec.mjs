@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// T23 (docs/CONTRACT.md §8.5): each dashboard state rendered from a real
-// guest condition created over SSH, and restored afterwards. `healthy`,
-// `logging-off` and the query-logging-active note are covered in
-// ui-queries.spec.mjs and ui-acl.spec.mjs.
+// T23 (docs/CONTRACT.md §8.5): each page state rendered from a real guest
+// condition created over SSH, and restored afterwards; the query-logging
+// line and its risks. `healthy` is covered in ui-queries.spec.mjs and
+// turning logging off and on in ui-acl.spec.mjs.
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import {
-  admin, dnsQuery, ensureHealthy, fakeDnsmasq, guest, guestWait, login, queries, queryRow, readonly, seeQuery, SETTINGS,
-  trackCalls, waitAdblockFast
+  admin, dnsQuery, ensureHealthy, fakeDnsmasq, guest, guestWait, login, queries, queryRow, readonly, seeQuery,
+  stageFromRow, trackCalls, waitAdblockFast
 } from './lib/guest.mjs';
 
 test.describe.configure({ mode: 'serial' });
@@ -30,7 +30,7 @@ test('logging-unavailable(dnsmasq-not-running): dnsmasq stopped', async ({ page 
     await login(page, admin);
     await expectState(page, 'logging-unavailable', 'dnsmasq-not-running');
     await expect(state(page)).toContainText('dnsmasq is not running.');
-    await expect(state(page).getByRole('link', { name: 'Open settings' })).toBeVisible();
+    await expect(state(page)).toHaveClass(/alert-message warning/);
   } finally {
     guest('/etc/init.d/dnsmasq start');
   }
@@ -60,7 +60,7 @@ test('logging-unavailable(logging-not-active): query logging on but no drop-in i
     guest('rm -f /tmp/dnsmasq.*.d/adblock-fast-monitor.conf');
     await login(page, admin);
     await expectState(page, 'logging-unavailable', 'logging-not-active');
-    await expect(state(page)).toContainText('No dnsmasq instance logs queries yet');
+    await expect(state(page)).toContainText('Query logging is on, but no dnsmasq instance logs queries yet');
   } finally {
     guest('/etc/init.d/adblock-fast-monitor restart');
   }
@@ -84,8 +84,7 @@ test('adblock-fast-missing: no actions are offered', async ({ page }) => {
     await expect(state(page)).toContainText('adblock-fast is not installed');
     await expect(queryRow(page, 'ads.example.test')).toBeVisible({ timeout: 30_000 });
     await expect(queries(page).getByRole('button', { name: /^(Allow|Block) / })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Add to pending' })).toBeDisabled();
-    await expect(page.getByRole('button', { name: 'Apply changes' })).toBeDisabled();
+    await expect(page.locator('#abfm-changes')).toBeHidden();
   } finally {
     guest('[ -x /etc/init.d/adblock-fast ] || mv /root/abfm-adblock-fast.init /etc/init.d/adblock-fast');
   }
@@ -129,7 +128,8 @@ test('log-stalled notice: logd restarted, dnsmasq silent since, recovered by a d
     guestWait('! grep -qs "^log-queries" /tmp/dnsmasq.*.d/* && pidof dnsmasq >/dev/null', 60);
     await login(page, admin);
     await expectState(page, 'healthy');
-    await expect(state(page)).toContainText('"Log queries" option is on');
+    await expect(page.locator('#abfm-logging-elsewhere')).toContainText('dnsmasq\'s own settings');
+    await expect(page.locator('#abfm-logging').getByRole('button')).toHaveCount(0);
     await seeQuery(page, 'before.up.example.test');
     await expect(page.locator('#abfm-log-stalled')).toHaveCount(0);
 
@@ -151,21 +151,17 @@ test('log-stalled notice: logd restarted, dnsmasq silent since, recovered by a d
   ensureHealthy();
 });
 
-test('warnings from info are shown and dismissible (log_file, log_ip)', async ({ page }) => {
+test('the query-logging line names the risks when the system log leaves RAM (log_file, log_ip)', async ({ page }) => {
   try {
     guest('uci set system.@system[0].log_file=/root/abfm-test-syslog; uci set system.@system[0].log_ip=192.0.2.1; uci commit system');
     await login(page, admin);
-    for (const w of ['logd-to-flash', 'logd-remote']) {
-      const note = page.locator(`[data-warning="${w}"]`);
-      await expect(note).toBeVisible();
-      await note.getByRole('button', { name: 'Dismiss note' }).click();
-      await expect(note).toHaveCount(0);
-    }
+    await expect(page.locator('#abfm-logging [data-warning="logd-to-flash"]')).toContainText('persistent storage');
+    await expect(page.locator('#abfm-logging [data-warning="logd-remote"]')).toContainText('remote log server');
   } finally {
     guest('uci -q delete system.@system[0].log_file; uci -q delete system.@system[0].log_ip; uci commit system');
   }
   await page.reload();
-  await expect(page.locator('[data-warning="logd-to-flash"], [data-warning="logd-remote"]')).toHaveCount(0);
+  await expect(page.locator('[data-warning]')).toHaveCount(0);
 });
 
 test('info is refreshed every 30 s while visible: a stopped dnsmasq shows without a reload', async ({ page }) => {
@@ -197,14 +193,15 @@ test('ipset/nftset mode: the page explains why everything is allowed and hides %
     await expect(note).toHaveAttribute('data-mode', 'firewall');
     await expect(note).toContainText('blocks in the firewall');
     await seeQuery(page, 'ads.example.test');
-    await expect(page.locator('[data-stat="blocked_pct"]')).toContainText('not shown in this DNS mode');
-    await expect(page.locator('[data-stat="blocked_pct"]')).not.toContainText('%');
+    const stat = page.locator('[data-stat="blocked_pct"]');
+    await expect(stat).toContainText('Not shown: adblock-fast blocks in the firewall in this DNS mode.');
+    await expect(stat.getByRole('progressbar')).toBeHidden();
   } finally {
     guest('uci set adblock-fast.config.dns=dnsmasq.servers; uci commit adblock-fast');
   }
   await page.reload();
   await expect(page.locator('#abfm-dns-mode')).toHaveCount(0);
-  await expect(page.locator('[data-stat="blocked_pct"]')).toContainText('%', { timeout: 30_000 });
+  await expect(page.locator('[data-stat="blocked_pct"]').getByRole('progressbar')).toHaveAttribute('title', /^\d+ %$/, { timeout: 30_000 });
 });
 
 test('no Block for names the server protects (§6.5); allowing them is still offered', async ({ page }) => {
@@ -222,12 +219,6 @@ test('no Block for names the server protects (§6.5); allowing them is still off
     await expect(queryRow(page, d).getByRole('button')).toHaveCount(0);
   }
   await expect(queryRow(page, 'ads.svc.internal').getByRole('button', { name: 'Allow ads.svc.internal' })).toBeVisible();
-  // a name the server would refuse is not stageable by hand either
-  await page.getByLabel('Domain', { exact: true }).fill('printer.internal');
-  await page.getByLabel('Change', { exact: true }).selectOption('block');
-  await page.getByRole('button', { name: 'Add to pending' }).click();
-  await expect(page.locator('.alert-message').filter({ hasText: 'Protected domain' })).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Pending changes' }).locator('tr[data-domain]')).toHaveCount(0);
 });
 
 // rpcd computes a session's grants at login: the ACL file is changed, rpcd
@@ -249,49 +240,25 @@ test('access-denied: the account may not call info', async ({ page }) => {
   guestWait('ubus list luci.adblock-fast-monitor >/dev/null 2>&1', 30);
 });
 
-test('Settings explain dnsmasq\'s own logqueries option when it is on', async ({ page }) => {
+test('logging-off: Turn on query logging asks first while the system log leaves RAM (log_ip)', async ({ page }) => {
   try {
-    guest('uci set dhcp.@dnsmasq[0].logqueries=1; uci commit dhcp');
-    await login(page, admin, SETTINGS);
-    await expect(page.locator('#view')).toContainText('dnsmasq query logging is already on in the dnsmasq configuration');
-  } finally {
-    guest('uci -q delete dhcp.@dnsmasq[0].logqueries; uci commit dhcp');
-  }
-});
-
-test('dashboard "Turn off query logging" applies query_logging=0 through LuCI', async ({ page }) => {
-  try {
+    guest('uci set adblock-fast-monitor.config.query_logging=0; uci commit adblock-fast-monitor; /etc/init.d/adblock-fast-monitor restart; uci set system.@system[0].log_ip=192.0.2.1; uci commit system');
     await login(page, admin);
-    await expectState(page, 'healthy');
-    await page.getByRole('button', { name: 'Turn off query logging' }).click();
-    await expect.poll(() => guest('uci -q get adblock-fast-monitor.config.query_logging').trim(), { timeout: 120_000 }).toBe('0');
-    expect(guest('uci -q changes adblock-fast-monitor').trim()).toBe('');
-    guestWait('! grep -qs "^log-queries" /tmp/dnsmasq.*.d/*', 60);
-    await page.goto(page.url());
     await expectState(page, 'logging-off');
-    await expect(page.getByRole('button', { name: 'Turn off query logging' })).toHaveCount(0);
-  } finally {
-    guest('uci set adblock-fast-monitor.config.query_logging=1; uci commit adblock-fast-monitor');
-  }
-  ensureHealthy();
-});
-
-test('Settings ask before turning logging on while the system log leaves RAM (log_ip)', async ({ page }) => {
-  try {
-    guest('uci set adblock-fast-monitor.config.query_logging=0; uci commit adblock-fast-monitor; uci set system.@system[0].log_ip=192.0.2.1; uci commit system');
-    await login(page, admin, SETTINGS);
-    await expect(page.locator('#abfm-logging-risks [data-risk="logd-remote"]')).toBeVisible();
-    const flag = page.locator('[data-name="query_logging"] input[type="checkbox"]');
-    await flag.check();
-    await page.locator('.cbi-page-actions').getByText('Save & Apply', { exact: true }).click();
+    await expect(state(page)).toContainText('DNS query logging is off, so no queries can be shown.');
+    // nothing to show: the statistics and the list are hidden
+    await expect(page.locator('#abfm-stats')).toBeHidden();
+    await expect(page.locator('#abfm-queries-section')).toBeHidden();
+    await state(page).getByRole('button', { name: 'Turn on query logging' }).click();
     const modal = page.locator('.modal');
-    await expect(modal).toContainText('remote log server');
+    await expect(modal.locator('[data-risk="logd-remote"]')).toContainText('remote log server');
     await modal.getByRole('button', { name: 'Cancel' }).click();
     expect(guest('uci -q get adblock-fast-monitor.config.query_logging').trim()).toBe('0');
     expect(guest('uci -q changes adblock-fast-monitor').trim()).toBe('');
-    await page.locator('.cbi-page-actions').getByText('Save & Apply', { exact: true }).click();
+    await state(page).getByRole('button', { name: 'Turn on query logging' }).click();
     await modal.getByRole('button', { name: 'Turn on' }).click();
     await expect.poll(() => guest('uci -q get adblock-fast-monitor.config.query_logging').trim(), { timeout: 120_000 }).toBe('1');
+    guestWait('grep -qs "^log-queries" /tmp/dnsmasq.*.d/*', 60);
   } finally {
     guest('uci -q delete system.@system[0].log_ip; uci commit system; uci set adblock-fast-monitor.config.query_logging=1; uci commit adblock-fast-monitor');
   }
@@ -308,31 +275,24 @@ async function axe(page, include, exclude = []) {
   return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 }
 
-test('accessibility: no axe violations in the dashboard, its dialog and Settings', async ({ page }) => {
+test('accessibility: no axe violations on the page, its changes bar, its dialog and the logging-off state', async ({ page }) => {
   await login(page, admin);
   await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
   expect(await axe(page, '#abfm-overview')).toEqual([]);
-  // pending list and the confirmation dialog
+  // the changes bar and the confirmation dialog
   await queryRow(page, 'ads.example.test').getByRole('button', { name: 'Allow ads.example.test' }).click();
+  await stageFromRow(page, 'block', 'axe.up.example.test');
   expect(await axe(page, '#abfm-overview')).toEqual([]);
-  await page.getByRole('button', { name: 'Apply changes' }).click();
+  await page.getByRole('button', { name: 'Apply and save' }).click();
   await expect(page.locator('.modal')).toBeVisible();
   expect(await axe(page, '.modal')).toEqual([]);
   await page.locator('.modal').getByRole('button', { name: 'Cancel' }).click();
-  // the Enter key in the add field stages like the button
-  await page.getByLabel('Domain', { exact: true }).fill('enter.example.test');
-  await page.getByLabel('Domain', { exact: true }).press('Enter');
-  await expect(page.getByRole('table', { name: 'Pending changes' }).locator('tr[data-domain="enter.example.test"]')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Discard all' }).click();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
   try {
     guest('uci set adblock-fast-monitor.config.query_logging=0; uci commit adblock-fast-monitor; /etc/init.d/adblock-fast-monitor restart');
     await page.reload();
     await expectState(page, 'logging-off');
     expect(await axe(page, '#abfm-overview')).toEqual([]);
-    await page.goto(SETTINGS);
-    await page.locator('[data-name="query_logging"]').waitFor();
-    // luci-base's form.Flag renders its checkbox with an empty <label for>; that widget is LuCI's, not this app's
-    expect(await axe(page, '#view .cbi-map', ['[data-name="query_logging"] input[type="checkbox"]'])).toEqual([]);
   } finally {
     guest('uci set adblock-fast-monitor.config.query_logging=1; uci commit adblock-fast-monitor');
   }

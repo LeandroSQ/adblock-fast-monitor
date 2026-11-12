@@ -11,10 +11,12 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Dashboard (docs/CONTRACT.md §8): the last DNS queries, read from the system
- * log in the browser exactly like LuCI's System Log page (`log read`), parsed
- * by querylog.js, with Allow/Block buttons that stage changes in this browser
- * and one explicit Apply (one adblock-fast rebuild).
+ * The app's one page (docs/CONTRACT.md §8): statistics, the last DNS
+ * queries read from the system log in the browser exactly like LuCI's
+ * System Log page (`log read`) and parsed by querylog.js, a Block or Allow
+ * button per row that stages the change in this browser, and one
+ * "Apply and save" that writes adblock-fast's own Allowed/Blocked Domains
+ * lists and rebuilds its block lists once (§6.3, §7).
  * Every dynamic value is inserted as a text node (arrays passed to E()/dom).
  */
 
@@ -43,60 +45,60 @@ const PAGE_SIZE = 50;
 const MAX_MEASURES = 1000;
 /* No keyboard, pointer or touch input for this long pauses polling (P0). */
 const IDLE_PAUSE_MS = 15 * 60 * 1000;
-const FILTER_DEBOUNCE_MS = 150;
-const SETTINGS_PATH = 'admin/services/adblock-fast-monitor/settings';
 const INPUT_EVENTS = [ 'pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart' ];
 
-const OP_LABEL = { allow: _('Allow'), block: _('Block'), unblock: _('Unblock'), unallow: _('Unallow') };
-/* per-row labels, translated once (P4: a poll rewrites up to 50 of them) */
+const OP_LABEL = { allow: _('Allow'), block: _('Block') };
+/* per-row texts, translated once (P4: a poll rewrites up to 50 of them) */
 const OP_ARIA = _('%s %s');
-const CANCEL_ARIA = _('Cancel pending change for %s');
+const UNDO_ARIA = _('Undo: %s %s');
+/* a staged row offers one button that takes the change back */
+const UNDO_LABEL = { allow: _('Undo allow'), block: _('Undo block') };
 const OP_BUTTON_CLASS = { allow: 'cbi-button cbi-button-positive', block: 'cbi-button cbi-button-negative' };
 const DECISION_LABEL = {
 	blocked: _('Blocked'), allowed: _('Allowed'), other: _('Other'), 'no-answer': _('No answer'),
-	pending: _('Waiting for answer')
+	pending: _('Waiting')
 };
+/* Where the answer came from, shown next to the decision (§8.3). */
 const SOURCE_LABEL = {
-	config: _('dnsmasq rule'), addnhosts: _('adblock-fast hosts'), hosts: _('hosts file'),
+	config: _('dnsmasq rule'), addnhosts: _('block list'), hosts: _('hosts file'),
 	dhcp: _('DHCP lease'), local: _('local name'), error: _('upstream error'),
 	upstream: _('upstream'), cache: _('cache'), auth: _('authoritative')
 };
 const STATE_TEXT = {
 	'loading': _('Loading…'),
-	'healthy': _('DNS query logging is on: dnsmasq writes every query to the system log, and this page reads them from there.'),
-	'logging-off': _('DNS query logging is off, so no queries are shown. Turn on "Log DNS queries" in Settings.'),
+	'logging-off': _('DNS query logging is off, so no queries can be shown.'),
 	'logging-unavailable': _('DNS query logging is not working.'),
-	'adblock-fast-missing': _('adblock-fast is not installed. Install the adblock-fast package; this page only shows and edits its rules.'),
+	'adblock-fast-missing': _('adblock-fast is not installed. Install the adblock-fast package; this page only shows and changes its rules.'),
 	'access-denied': _('This account may not read the monitor status.'),
 	'error': _('The system log cannot be read.')
 };
-const STATE_SEVERITY = {
-	'loading': 'notice', 'healthy': 'success', 'logging-off': 'warning', 'logging-unavailable': 'warning'
-};
+const STATE_SEVERITY = { 'loading': 'notice', 'logging-off': 'notice', 'logging-unavailable': 'warning' };
 const DNS_MODE_TEXT = {
-	'firewall': _('adblock-fast blocks in the firewall in this DNS mode (ipset/nftset): dnsmasq answers every query normally, so the list below shows blocked domains as allowed and no blocked percentage is computed. Allow and Block still change adblock-fast\'s rules.'),
-	'unsupported': _('adblock-fast uses a resolver other than dnsmasq in this DNS mode, so its blocking does not show up in the list below, and changes cannot be applied from this page.')
+	'firewall': _('In this DNS mode (ipset/nftset) adblock-fast blocks in the firewall, so dnsmasq answers every query and the list shows blocked domains as allowed. Block and Allow still change adblock-fast\'s lists.'),
+	'unsupported': _('In this DNS mode adblock-fast does not use dnsmasq, so its blocking is not visible here and changes cannot be applied from this page.')
 };
 const REASON_TEXT = {
 	'dnsmasq-not-running': _('dnsmasq is not running.'),
-	'logging-not-active': _('No dnsmasq instance logs queries yet. Check "Log DNS queries" in Settings.'),
+	'logging-not-active': _('Query logging is on, but no dnsmasq instance logs queries yet.'),
 	'dnsmasq-logs-to-file': _('dnsmasq writes its log to a file (log facility), so queries never reach the system log.'),
-	'confdir-invalid': _('A dnsmasq instance has an invalid configuration directory, so query logging cannot be enabled for it.')
+	'confdir-invalid': _('A dnsmasq instance has an invalid configuration directory, so query logging cannot be turned on for it.')
 };
-const WARNING_TEXT = {
-	'query-logging-active': _('Every DNS query is written to the system log buffer, which pushes out other log messages sooner.'),
-	'logd-to-flash': _('The system log is also written to a file (log_file); query logging increases writes to that storage.'),
-	'logd-remote': _('The system log is sent to a remote host (log_ip); every DNS query is forwarded there.')
+const RISK_TEXT = {
+	'logd-to-flash': _('The system log is also written to a file on persistent storage, so every DNS query adds a write to that storage.'),
+	'logd-remote': _('The system log is sent to a remote log server, so every DNS query, with the client address, is sent there.')
 };
-const JOB_STATE_TEXT = {
-	queued: _('Queued'), applying: _('Applying'), verifying: _('Verifying DNS answers'),
-	applied: _('Applied'), partial: _('Partially applied'), failed: _('Failed')
+const JOB_TEXT = {
+	queued: _('Saving and rebuilding the block lists… This can take a few minutes.'),
+	applying: _('Saving and rebuilding the block lists… This can take a few minutes.'),
+	verifying: _('Checking the new DNS answers…'),
+	applied: _('Applied and saved.'),
+	partial: _('Applied and saved, but some domains did not change as expected. They are back in the list of changes.'),
+	failed: _('Not applied.')
 };
-const JOB_MODE_TEXT = {
-	'rebuild': _('full rebuild'), 'persist-only': _('saved only (adblock-fast is disabled)')
-};
+const SAVED_ONLY_TEXT = _('Saved. adblock-fast is disabled, so the change takes effect when it is enabled.');
 const RESULT_TEXT = {
-	pending: _('Pending'), ok: _('OK'), mismatch: _('Mismatch'), unverified: _('Unverified'), skipped: _('Skipped')
+	pending: _('checking…'), ok: _('done'), mismatch: _('did not change'), unverified: _('saved, not checked'),
+	skipped: _('saved')
 };
 const ERROR_TEXT = {
 	'invalid-domain': _('Invalid domain name'), 'protected-domain': _('Protected domain'),
@@ -107,13 +109,13 @@ const ERROR_TEXT = {
 	'pending-uci-changes': _('the adblock-fast configuration has uncommitted changes made on the command line (uci) or by adblock-fast itself; commit or revert them (see "uci changes adblock-fast") and apply again'),
 	'busy': _('Another change is being applied'), 'uci-error': _('Could not save the adblock-fast configuration'),
 	'spawn-failed': _('Could not start the apply job'),
-	'rebuild-failed': _('The block list rebuild failed'),
+	'rebuild-failed': _('The block list rebuild failed; the domains are saved, apply again to retry'),
 	'interrupted': _('The job was interrupted'), 'start-timeout': _('The job did not start'),
 	'lock-failed': _('The job could not take its lock'), 'not-found': _('The job is no longer known (router restarted?)'),
 	'still-listed': _('Still on a downloaded list; use Allow'), 'parent-blocked': _('A parent domain is still blocked'),
 	'not-blocked': _('Still resolves'), 'dns-error': _('DNS lookup failed'),
-	'dns-mode-unsupported': _('Not verifiable in this DNS mode'), 'mismatch': _('Mismatch'),
-	'unverified': _('Unverified'), 'partial': _('Partially applied'), 'failed': _('Failed'),
+	'dns-mode-unsupported': _('Not verifiable in this DNS mode'), 'mismatch': _('Did not change'),
+	'unverified': _('Not checked'), 'partial': _('Partly applied'), 'failed': _('Failed'),
 	'too-many': _('Too many pending changes (maximum 64)'), 'invalid-op': _('Invalid change')
 };
 
@@ -134,30 +136,14 @@ function cell(title, content, extraClass) {
 	return E('td', { 'class': 'td' + (extraClass ? ' ' + extraClass : ''), 'data-title': title }, content);
 }
 
-function headerRow(captions) {
-	return E('tr', { 'class': 'tr table-titles' },
-		captions.map(c => E('th', { 'class': 'th', 'scope': 'col' }, T(c))));
-}
-
 function placeholderRow(colspan, text) {
 	return E('tr', { 'class': 'tr placeholder' }, [ E('td', { 'class': 'td', 'colspan': colspan }, T(text)) ]);
 }
 
-function dataTable(label, captions, rows, placeholder) {
-	const head = E('tr', { 'class': 'tr table-titles' },
-		captions.map(c => E('th', { 'class': 'th', 'scope': 'col' }, T(c))));
-	const body = rows.length ? rows.map((r, i) => {
-		r.classList.add('cbi-rowstyle-' + ((i % 2) ? 2 : 1));
-		return r;
-	}) : [ E('tr', { 'class': 'tr placeholder' }, [ E('td', { 'class': 'td', 'colspan': captions.length }, T(placeholder)) ]) ];
-	return E('table', { 'class': 'table', 'aria-label': label }, [ head ].concat(body));
-}
-
-function checkbox(id, label, checked, onchange) {
-	return E('label', { 'for': id }, [
-		E('input', { 'type': 'checkbox', 'id': id, 'checked': checked ? '' : null,
-			'change': ev => onchange(ev.target.checked) }), ' ', T(label)
-	]);
+function show(node, visible) {
+	const display = visible ? '' : 'none';
+	if (node.style.display != display)
+		node.style.display = display;
 }
 
 function storageGet(key) {
@@ -193,21 +179,20 @@ return view.extend({
 		this.infoResult = infoResult;
 		this.infoAt = Date.now();
 		this.protect = model.protectedNames(infoResult);
+		/* router queries (127.0.0.1, ::1; e.g. the job's own checks) are never listed */
 		this.log = querylog.create({ max_rows: MAX_ROWS, pending_ttl_s: 10,
 			local_domains: model.localDomains(infoResult), hide_router: true });
-		this.display = { q: '', showRouter: false, showClient: false };
 		this.logResult = null;
 		this.hasRows = false;
 		this.logWatch = null;
 		this.measureCount = 0;
 		this.keptRows = 0;
-		this.dismissed = {};
 		this.job = null;
 		this.jobKey = null;
 		this.stateKey = null;
-		this.statsKey = null;
-		this.statCells = null;
-		this.missedNotes = null;
+		this.notesKey = null;
+		this.missedKey = null;
+		this.statView = null;
 		this.queryRows = new Map();
 		this.querySlots = [];
 		this.slotPool = [];
@@ -215,8 +200,6 @@ return view.extend({
 		this.resultLabels = new Map();
 		this.queryCreated = 0;
 		this.queryLayout = null;
-		this.view = { page: 0, upto: null, latest: 0, total: 0 };
-		this.pagerKey = null;
 		this.pending = model.parsePending(storageGet(model.STORAGE_KEY));
 		this.polling = false;
 		this.logBusy = false;
@@ -230,34 +213,26 @@ return view.extend({
 
 		const node = E('div', { 'class': 'cbi-map', 'id': 'abfm-overview' }, [
 			E('h2', {}, T(_('Adblock Fast Monitor'))),
-			E('div', { 'class': 'cbi-map-descr' }, T(_('The last DNS queries answered by dnsmasq, and whether adblock-fast blocked them. Allow or block a domain, then apply all changes at once.')))
+			E('div', { 'class': 'cbi-map-descr' }, [
+				E('span', {}, T(_('Recent DNS queries and whether adblock-fast blocked them. Block or allow a domain, then click "Apply and save".'))), ' ',
+				E('span', { 'id': 'abfm-disclaimer' }, T(_('For administrators only: this page can read the whole system log.')))
+			])
 		]);
 
-		node.appendChild(E('div', { 'class': 'alert-message notice', 'id': 'abfm-disclaimer' }, [
-			E('strong', {}, T(_('For administrators only.'))), ' ',
-			E('span', {}, T(_('Everyone who can open this page can read the whole system log through LuCI\'s standard log access, the same access that luci-app-adblock-fast and Status → System Log use. Grant this app only to administrators.')))
-		]));
-
 		this.stateNode = E('div', { 'id': 'abfm-state', 'role': 'status', 'aria-live': 'polite' });
-		this.warningsNode = E('div', { 'id': 'abfm-warnings' });
+		this.notesNode = E('div', { 'id': 'abfm-notes' });
 		node.appendChild(this.stateNode);
-		node.appendChild(this.warningsNode);
+		node.appendChild(this.notesNode);
 
-		this.statsNode = E('div', { 'id': 'abfm-stats' });
-		this.missedNode = E('div', { 'id': 'abfm-missed' });
-		node.appendChild(E('div', { 'class': 'cbi-section', 'id': 'abfm-stats-section' }, [
-			E('h3', {}, T(_('Statistics'))),
-			this.statsNode,
-			this.missedNode,
-			E('div', { 'class': 'cbi-section-descr', 'id': 'abfm-buffer-hint' }, T(this.bufferHint()))
-		]));
-
+		this.statsNode = E('div', { 'class': 'cbi-section', 'id': 'abfm-stats' });
+		node.appendChild(this.statsNode);
 		if (this.canWrite)
-			node.appendChild(this.renderPendingSection());
+			node.appendChild(this.renderChanges());
 		node.appendChild(this.renderQueriesSection());
+		this.loggingNode = E('div', { 'class': 'cbi-section-descr', 'id': 'abfm-logging' });
+		node.appendChild(this.loggingNode);
 
 		this.updateState();
-		this.updateWarnings();
 		this.updateStats();
 		this.updatePending();
 		this.updateQueries();
@@ -436,22 +411,23 @@ return view.extend({
 				this.updateQueries();
 			}
 			this.updateState();
-			this.updateWarnings();
 			this.updateStats();
 		});
 	},
 
-	/* ---- header ------------------------------------------------------------- */
+	/* ---- state, notes and the query-logging line ----------------------------------- */
 
-	bufferHint() {
-		const info = (this.infoResult && this.infoResult.ok) ? this.infoResult.data : null;
-		const kib = (info && info.logd && typeof(info.logd.size_kib) == 'number') ? info.logd.size_kib : null;
-		const where = _('To keep more, raise "System log buffer size" in System → System → Logging.');
-		return (kib != null
-			? _('Only queries still in the system log buffer (%d KiB, shared by every service) are shown.').format(kib)
-			: _('Only queries still in the system log buffer (shared by every service) are shown.')) + ' ' + where;
+	infoData() {
+		return (this.infoResult && this.infoResult.ok) ? this.infoResult.data : null;
 	},
 
+	/*
+	 * §8.5 state. The healthy page shows no banner; every other state is
+	 * one notice with what to do. Short notes (DNS mode, a stalled or
+	 * unreadable log, paused updates) appear only while they apply.
+	 * Re-rendered only on change, so the live region is not re-announced
+	 * every poll.
+	 */
 	updateState() {
 		const st = model.pageState(this.infoResult, this.logResult, this.hasRows);
 		/* §8.5: no actions without adblock-fast */
@@ -461,190 +437,198 @@ return view.extend({
 			this.updatePending();
 			this.updateQueries();
 		}
-		const info = (this.infoResult && this.infoResult.ok) ? this.infoResult.data : null;
 		const flags = {
-			elsewhere: st.state == 'healthy' && model.loggingElsewhere(this.infoResult),
-			ours: st.state == 'healthy' && this.canWrite && !!(info && info.monitor && info.monitor.query_logging === true),
-			settings: st.state == 'logging-off' || st.state == 'logging-unavailable',
+			source: model.loggingSource(this.infoResult),
+			risks: model.loggingRisks(this.infoResult),
 			stalled: st.state == 'healthy' && model.logStalled(this.logWatch, Math.floor(Date.now() / 1000)),
 			readError: (this.logResult && !this.logResult.ok) ? this.logResult.message : null,
 			dnsMode: model.dnsModeNote(this.infoResult),
 			paused: this.idlePaused,
 			backoff: this.failures > 0 && this.hasRows
 		};
-		/* re-rendered only on change, so the live region is not re-announced every poll */
-		const key = JSON.stringify([ st, flags ]);
+		const key = JSON.stringify([ st, flags, this.canWrite ]);
 		if (key == this.stateKey)
 			return;
 		this.stateKey = key;
 
-		const children = [ E('strong', {}, T(STATE_TEXT[st.state] || st.state)) ];
-		if (st.reason)
-			children.push(E('p', { 'data-reason': st.reason }, T(REASON_TEXT[st.reason] || st.reason)));
-		if (flags.elsewhere)
-			children.push(E('p', {}, T(_('dnsmasq\'s own "Log queries" option is on (for example set by luci-app-adblock-fast), so queries are logged whatever this app\'s setting is.'))));
-		if (flags.ours)
-			children.push(E('p', {}, [
-				E('span', {}, T(_('dnsmasq writes one line per DNS query to the system log while this is on, also when this page is closed.'))), ' ',
-				E('button', { 'class': 'cbi-button cbi-button-neutral', 'id': 'abfm-logging-off',
-					'click': ui.createHandlerFn(this, 'handleLoggingOff') }, T(_('Turn off query logging')))
-			]));
-		if (flags.settings)
-			children.push(E('p', {}, [ E('a', { 'href': L.url(SETTINGS_PATH) }, T(_('Open settings'))) ]));
+		this.stateNode.setAttribute('data-state', st.state);
+		this.stateNode.setAttribute('data-reason', st.reason || '');
+		if (st.state == 'healthy') {
+			this.stateNode.className = '';
+			dom.content(this.stateNode, []);
+		}
+		else {
+			const children = [ E('strong', {}, T(STATE_TEXT[st.state] || st.state)) ];
+			if (st.reason)
+				children.push(E('p', { 'data-reason': st.reason }, T(REASON_TEXT[st.reason] || st.reason)));
+			if (st.state == 'logging-off') {
+				if (this.canWrite)
+					children.push(E('p', {}, [ E('button', { 'class': 'cbi-button cbi-button-action', 'id': 'abfm-logging-on',
+						'click': ui.createHandlerFn(this, 'handleLoggingOn') }, T(_('Turn on query logging'))) ]));
+				else
+					children.push(E('p', {}, T(_('An administrator can turn it on on this page.'))));
+			}
+			if (flags.readError && st.state == 'error')
+				children.push(E('p', { 'id': 'abfm-read-error' }, T(flags.readError)));
+			this.stateNode.className = 'alert-message ' + (STATE_SEVERITY[st.state] || 'danger');
+			dom.content(this.stateNode, children);
+		}
+		show(this.statsNode, st.state != 'logging-off');
+		show(this.queriesSection, st.state != 'logging-off');
+
+		const notes = [];
 		if (flags.dnsMode)
-			children.push(E('p', { 'id': 'abfm-dns-mode', 'data-mode': flags.dnsMode }, T(DNS_MODE_TEXT[flags.dnsMode])));
+			notes.push(E('div', { 'class': 'alert-message notice', 'id': 'abfm-dns-mode', 'data-mode': flags.dnsMode },
+				T(DNS_MODE_TEXT[flags.dnsMode])));
 		if (flags.stalled)
-			children.push(E('div', { 'class': 'alert-message warning', 'id': 'abfm-log-stalled' }, [
+			notes.push(E('div', { 'class': 'alert-message warning', 'id': 'abfm-log-stalled' }, [
 				E('p', {}, T(_('The system log was restarted and dnsmasq has logged nothing since, so DNS query logging may have stopped.'))),
 				E('p', {}, T(_('If new queries do not appear, restart dnsmasq: System → Startup → dnsmasq → Restart, or run "/etc/init.d/dnsmasq restart".')))
 			]));
 		if (flags.paused)
-			children.push(E('p', { 'id': 'abfm-paused' }, T(_('Updates are paused because this page has not been used for 15 minutes. Move the mouse or press a key to resume.'))));
-		if (flags.readError)
-			children.push(E('p', { 'id': 'abfm-read-error' }, T(_('The system log cannot be read: %s').format(flags.readError))));
+			notes.push(E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused' },
+				T(_('Updates are paused because this page has not been used for 15 minutes. Move the mouse or press a key to resume.'))));
+		if (flags.readError && st.state != 'error')
+			notes.push(E('div', { 'class': 'alert-message warning', 'id': 'abfm-read-error' },
+				T(_('The system log cannot be read: %s').format(flags.readError))));
 		if (flags.backoff)
-			children.push(E('p', { 'id': 'abfm-retrying' }, T(_('Retrying less often until the system log can be read again.'))));
-		this.stateNode.className = 'alert-message ' + (STATE_SEVERITY[st.state] || 'danger');
-		this.stateNode.setAttribute('data-state', st.state);
-		this.stateNode.setAttribute('data-reason', st.reason || '');
-		dom.content(this.stateNode, children);
+			notes.push(E('div', { 'class': 'alert-message warning', 'id': 'abfm-retrying' },
+				T(_('Retrying less often until the system log can be read again.'))));
+		dom.content(this.notesNode, notes);
+
+		/* one line about the switch that makes dnsmasq log every query, and its risks */
+		const line = [];
+		if (flags.source == 'ours') {
+			line.push(E('span', {}, T(_('Query logging is on: dnsmasq writes every DNS query to the system log, also while this page is closed.'))));
+			if (this.canWrite)
+				line.push(' ', E('button', { 'class': 'cbi-button cbi-button-neutral', 'id': 'abfm-logging-off',
+					'click': ui.createHandlerFn(this, 'handleLoggingOff') }, T(_('Turn off query logging'))));
+		}
+		else if (flags.source == 'elsewhere') {
+			line.push(E('span', { 'id': 'abfm-logging-elsewhere' },
+				T(_('Query logging is on in dnsmasq\'s own settings (for example turned on by luci-app-adblock-fast).'))));
+		}
+		if (flags.source == 'ours' || flags.source == 'elsewhere')
+			flags.risks.forEach(w => line.push(' ', E('strong', { 'data-warning': w }, T(RISK_TEXT[w]))));
+		dom.content(this.loggingNode, line);
 	},
 
-	/* §3: the same change as unticking "Log DNS queries" in Settings, through LuCI's apply. */
-	handleLoggingOff() {
+	/* §3: query_logging through LuCI's own save and apply; the init script does the rest. */
+	setLogging(on) {
 		return uci.load('adblock-fast-monitor').then(() => {
-			uci.set('adblock-fast-monitor', 'config', 'query_logging', '0');
+			uci.set('adblock-fast-monitor', 'config', 'query_logging', on ? '1' : '0');
 			return uci.save();
 		}).then(() => ui.changes.apply(true)).catch(e => {
-			ui.addNotification(null, E('p', {}, T(_('Query logging could not be turned off: %s').format(e.message))), 'danger');
+			ui.addNotification(null, E('p', {}, T(_('Query logging could not be changed: %s').format(e.message))), 'danger');
 		});
 	},
 
-	updateWarnings() {
-		const info = (this.infoResult && this.infoResult.ok) ? this.infoResult.data : null;
-		const warnings = (info && Array.isArray(info.warnings) ? info.warnings : [])
-			.filter(w => typeof(w) == 'string' && WARNING_TEXT[w] && !this.dismissed[w]);
-		dom.content(this.warningsNode, warnings.map(w => E('div', { 'class': 'alert-message notice', 'data-warning': w }, [
-			E('span', {}, T(WARNING_TEXT[w])), ' ',
-			E('button', { 'class': 'cbi-button cbi-button-neutral', 'aria-label': _('Dismiss note'),
-				'click': () => { this.dismissed[w] = true; this.updateWarnings(); } }, T(_('Dismiss')))
-		])));
+	handleLoggingOff() {
+		return this.setLogging(false);
 	},
 
+	/* Asks first when the system log leaves RAM (§6.1 logd-to-flash, logd-remote). */
+	handleLoggingOn() {
+		const risks = model.loggingRisks(this.infoResult);
+		if (!risks.length)
+			return this.setLogging(true);
+		return new Promise(resolve => {
+			ui.showModal(_('Turn on DNS query logging?'), [
+				E('div', { 'class': 'alert-message warning' }, risks.map(w => E('p', { 'data-risk': w }, T(RISK_TEXT[w])))),
+				E('div', { 'class': 'right' }, [
+					E('button', { 'class': 'cbi-button', 'click': () => { ui.hideModal(); resolve(false); } }, T(_('Cancel'))), ' ',
+					E('button', { 'class': 'cbi-button cbi-button-positive', 'id': 'abfm-confirm-logging',
+						'click': () => { ui.hideModal(); resolve(true); } }, T(_('Turn on')))
+				])
+			]);
+		}).then(ok => ok ? this.setLogging(true) : null);
+	},
+
+	/* ---- statistics ----------------------------------------------------------------- */
+
+	missedText(missed) {
+		const info = this.infoData();
+		const kib = (info && info.logd && typeof(info.logd.size_kib) == 'number') ? info.logd.size_kib : null;
+		return (kib != null
+			? _('%d log entries were missed: queries came faster than the system log (%d KiB, shared by every service) keeps them.').format(missed, kib)
+			: _('%d log entries were missed: queries came faster than the system log keeps them.').format(missed)) +
+			' ' + _('To keep more, raise "System log buffer size" in System → System → Logging.');
+	},
+
+	/*
+	 * "33 %" as LuCI's progress bar plus one sentence (model.summary). Built
+	 * once; a poll rewrites only the attributes and texts that changed (P4).
+	 */
 	updateStats() {
-		const s = querylog.stats(this.log, { show_router: this.display.showRouter });
+		const s = querylog.stats(this.log, { show_router: false });
 		this.keptRows = s.kept || 0;
-		const since = s.since_open || {};
-		const dnsMode = model.dnsModeNote(this.infoResult);
-		const rows = [
-			[ _('Blocked'), dnsMode ? _('not shown in this DNS mode') : model.formatPct(s.blocked_pct), 'blocked_pct',
-				_('%d queries over %s').format(s.kept || 0, model.formatDuration(s.span_s)) ],
-			[ _('Shown queries'), _('%s blocked, %s allowed, %s other, %s without answer').format(
-				model.formatCount(s.blocked), model.formatCount(s.allowed), model.formatCount(s.other), model.formatCount(s.no_answer)), 'kept' ],
-			[ _('Since page opened'), _('%s queries, %s blocked, %s allowed').format(
-				model.formatCount(since.queries), model.formatCount(since.blocked), model.formatCount(since.allowed)), 'since_open' ]
-		];
+		const sum = model.summary(s, model.dnsModeNote(this.infoResult));
+		let v = this.statView;
+		if (!v) {
+			v = this.statView = {
+				fill: E('div', { 'style': 'width:0%' }),
+				text: textNode(),
+				pct: undefined, value: undefined, line: undefined
+			};
+			v.bar = E('div', { 'class': 'cbi-progressbar', 'role': 'progressbar', 'aria-label': _('Blocked queries'),
+				'aria-valuemin': '0', 'aria-valuemax': '100', 'title': '' }, [ v.fill ]);
+			v.missed = E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]);
+			v.paused = E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ]);
+			this.missedNode = E('div', { 'id': 'abfm-missed', 'data-missed': '0', 'data-paused': '0' }, [ v.missed, v.paused ]);
+			dom.content(this.statsNode, [
+				E('h3', {}, T(_('Blocked'))),
+				E('div', { 'data-stat': 'blocked_pct' }, [ v.bar, E('p', {}, [ v.text ]) ]),
+				this.missedNode
+			]);
+		}
+		if (v.pct !== sum.pct) {
+			v.pct = sum.pct;
+			show(v.bar, sum.pct != null);
+			const w = (sum.pct == null) ? 0 : Math.max(0, Math.min(100, sum.pct));
+			v.fill.style.width = w + '%';
+			v.bar.setAttribute('aria-valuenow', String(Math.round(w)));
+		}
+		if (v.value !== sum.value) {
+			v.value = sum.value;
+			v.bar.setAttribute('title', sum.value || '');
+			v.bar.setAttribute('aria-valuetext', sum.value || '');
+		}
+		if (v.line !== sum.text)
+			v.text.data = v.line = sum.text;
+
 		const missed = s.missed_total || 0;
 		const paused = s.paused_total || 0;
-
-		/* built once; afterwards a poll rewrites only the texts that changed (P4) */
-		if (!this.statCells) {
-			this.statCells = rows.map(() => ({ value: E('span', { 'class': 'abfm-value' }, [ textNode() ]), label: null, vals: [] }));
-			dom.content(this.statsNode, [ E('table', { 'class': 'table', 'aria-label': _('Statistics') },
-				rows.map((r, i) => {
-					const c = this.statCells[i];
-					const td = E('td', { 'class': 'td left' }, [ c.value ]);
-					if (r[3] != null) {
-						c.label = E('span', { 'class': 'abfm-label' }, [ textNode() ]);
-						td.appendChild(document.createTextNode(' '));
-						td.appendChild(c.label);
-					}
-					return E('tr', { 'class': 'tr', 'data-stat': r[2] }, [
-						E('th', { 'class': 'td left', 'scope': 'row', 'width': '33%' }, T(r[0])), td ]);
-				})) ]);
-		}
-		rows.forEach((r, i) => {
-			const c = this.statCells[i];
-			if (c.vals[0] !== r[1])
-				c.value.firstChild.data = c.vals[0] = r[1];
-			if (c.label && c.vals[1] !== r[3])
-				c.label.firstChild.data = c.vals[1] = r[3];
-		});
-
 		const key = missed + ':' + paused;
-		if (key == this.statsKey)
+		if (key == this.missedKey)
 			return;
-		this.statsKey = key;
+		this.missedKey = key;
 		this.missedNode.setAttribute('data-missed', String(missed));
 		this.missedNode.setAttribute('data-paused', String(paused));
-		if (!this.missedNotes) {
-			this.missedNotes = {
-				missed: E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]),
-				paused: E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ])
-			};
-			dom.content(this.missedNode, [ this.missedNotes.missed, this.missedNotes.paused ]);
-		}
-		/* at a high query rate the count changes every poll: only its text is rewritten */
-		const notes = this.missedNotes;
-		this.setNote(notes.missed, missed ? _('%d log entries missed: the system log buffer was overwritten between refreshes, or dnsmasq reported lost entries.').format(missed) : '');
-		this.setNote(notes.paused, paused ? _('%d log entries were overwritten while updates were paused (page hidden or not in use); they are not shown.').format(paused) : '');
+		this.setNote(v.missed, missed ? this.missedText(missed) : '');
+		this.setNote(v.paused, paused ? _('%d log entries were overwritten while updates were paused (page hidden or not in use); they are not shown.').format(paused) : '');
 	},
 
 	/* A note is shown while it has text; unchanged text or visibility is not written again. */
 	setNote(node, text) {
 		if (node.firstChild.data !== text)
 			node.firstChild.data = text;
-		const display = text ? '' : 'none';
-		if (node.style.display != display)
-			node.style.display = display;
+		show(node, !!text);
 	},
 
-	/* ---- queries table ---------------------------------------------------------- */
+	/* ---- the last queries ------------------------------------------------------------ */
 
 	renderQueriesSection() {
-		const filter = E('input', { 'id': 'abfm-filter', 'class': 'cbi-input-text', 'type': 'search',
-			'maxlength': 253, 'placeholder': _('part of a domain'), 'autocomplete': 'off', 'spellcheck': 'false',
-			'input': ev => {
-				const q = ev.target.value;
-				clearTimeout(this.filterTimer);
-				this.filterTimer = setTimeout(() => { this.display.q = q; this.showPage(0); }, FILTER_DEBOUNCE_MS);
-			} });
-		this.queriesNode = E('div', { 'id': 'abfm-queries' });
 		this.queriesTable = E('table', { 'class': 'table', 'aria-label': _('Last queries') });
-		this.newQueriesNode = E('div', { 'id': 'abfm-new-queries', 'class': 'alert-message notice', 'style': 'display:none' }, [
-			E('span', {}, T('')), ' ',
-			E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': () => this.showPage(0) }, T(_('Show newest')))
-		]);
-		this.pageNewer = E('button', { 'class': 'cbi-button', 'id': 'abfm-page-newer', 'disabled': '',
-			'click': () => this.showPage(this.view.page - 1) }, T(_('« Newer')));
-		this.pageOlder = E('button', { 'class': 'cbi-button', 'id': 'abfm-page-older', 'disabled': '',
-			'click': () => this.showPage(this.view.page + 1) }, T(_('Older »')));
-		this.pageInfo = E('span', { 'id': 'abfm-page-info' }, T(''));
-		this.queriesNode.appendChild(this.newQueriesNode);
-		this.queriesNode.appendChild(this.queriesTable);
-		this.queriesNode.appendChild(E('div', { 'class': 'right', 'id': 'abfm-pager' },
-			[ this.pageNewer, ' ', this.pageInfo, ' ', this.pageOlder ]));
-		return E('div', { 'class': 'cbi-section', 'id': 'abfm-queries-section' }, [
+		this.queriesNode = E('div', { 'id': 'abfm-queries' }, [ this.queriesTable ]);
+		this.queriesSection = E('div', { 'class': 'cbi-section', 'id': 'abfm-queries-section' }, [
 			E('h3', {}, T(_('Last queries'))),
-			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first, up to %d queries, %d per page. Queries made by the router itself (127.0.0.1, ::1) can be shown or hidden.').format(MAX_ROWS, PAGE_SIZE))),
-			E('div', { 'class': 'cbi-section-node' }, [
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title', 'for': 'abfm-filter' }, T(_('Filter domains'))),
-					E('div', { 'class': 'cbi-value-field' }, [ filter ])
-				]),
-				E('div', { 'class': 'cbi-value' }, [
-					E('div', { 'class': 'cbi-value-title' }, T(_('Display'))),
-					E('div', { 'class': 'cbi-value-field' }, [
-						checkbox('abfm-show-router', _('Show router queries'), this.display.showRouter, v => { this.display.showRouter = v; this.updateStats(); this.showPage(0); }), ' ',
-						checkbox('abfm-show-client', _('Show client column'), false, v => { this.display.showClient = v; this.updateQueries(); })
-					])
-				])
-			]),
+			E('div', { 'class': 'cbi-section-descr' }, T(_('Newest first. The list updates every 2 seconds while this page is open.'))),
 			this.queriesNode
 		]);
+		return this.queriesSection;
 	},
 
-	/* What the Actions cell of a row shows: '', 'inflight', 'staged:<op>' or 'op:<op>'. */
+	/* What the action cell of a row shows: '', 'inflight', 'staged:<op>' or 'op:<op>'. */
 	actionState(row, slot) {
 		if (this.noActions)
 			return '';
@@ -663,34 +647,28 @@ return view.extend({
 	/*
 	 * A row slot: one <tr> of the queries table and the text nodes of its
 	 * cells, reused for whatever row sits at its place (updateQueries).
-	 * Cells are cloned from one template per column set; buttons read the
-	 * slot's current domain when clicked.
+	 * Cells are cloned from one template; buttons read the slot's current
+	 * domain when clicked.
 	 */
 	newSlot() {
 		if (!this.rowTemplate) {
 			const tds = [
 				cell(_('Time'), [ E('time') ]),
 				cell(_('Domain'), [], 'abfm-domain'),
-				cell(_('Type'), []),
-				cell(_('Answer'), [], 'abfm-answer'),
-				cell(_('Result'), [])
+				cell(_('Result'), [], 'abfm-result')
 			];
-			if (this.display.showClient)
-				tds.push(cell(_('Client'), []));
 			if (this.canWrite)
-				tds.push(cell(_('Actions'), [], 'cbi-section-actions'));
+				tds.push(cell(_('Action'), [], 'cbi-section-actions'));
 			this.rowTemplate = E('tr', { 'class': 'tr' }, tds);
-			[ tds[0].firstChild ].concat(tds.slice(1, this.canWrite ? -1 : tds.length))
-				.forEach(n => n.appendChild(textNode()));
+			tds[0].firstChild.appendChild(textNode());
+			tds[1].appendChild(textNode());
+			tds[2].appendChild(textNode());
 		}
 		const tr = this.rowTemplate.cloneNode(true);
 		const tds = tr.children;
-		const slot = { tr: tr, key: null, domain: null, valid: null, decision: null, router: null, vals: [], text: [],
-			act: null, aria: null, ariaButton: null, actCell: this.canWrite ? tds[tds.length - 1] : null, buttons: {}, staged: null, inflight: null };
-		slot.text.push(tds[0].firstChild.firstChild);
-		for (let i = 1; i < tds.length - (this.canWrite ? 1 : 0); i++)
-			slot.text.push(tds[i].firstChild);
-		return slot;
+		return { tr: tr, key: null, domain: null, valid: null, decision: null, vals: [],
+			text: [ tds[0].firstChild.firstChild, tds[1].firstChild, tds[2].firstChild ],
+			act: null, aria: null, ariaButton: null, actCell: this.canWrite ? tds[3] : null, buttons: {}, staged: null, inflight: null };
 	},
 
 	/* "Decision (source)", formatted once per pair (a few dozen at most). */
@@ -720,25 +698,11 @@ return view.extend({
 			slot.tr.setAttribute('data-decision', r.decision);
 			changed = true;
 		}
-		const router = r.router ? 'true' : 'false';
-		if (slot.router !== router) {
-			slot.router = router;
-			slot.tr.setAttribute('data-router', router);
-			changed = true;
-		}
 		if (r.time !== this.timeKey) {
 			this.timeKey = r.time;
-			this.timeText = model.formatTime(r.time);
+			this.timeText = model.formatClock(r.time);
 		}
-		const vals = [
-			this.timeText,
-			String(r.domain),
-			String(r.qtype == null ? '' : r.qtype),
-			(Array.isArray(r.answers) ? r.answers : []).join(', '),
-			this.resultLabel(r.decision, r.source)
-		];
-		if (this.display.showClient)
-			vals.push(r.client == null ? '' : String(r.client));
+		const vals = [ this.timeText, String(r.domain), this.resultLabel(r.decision, r.source) ];
 		for (let i = 0; i < vals.length; i++) {
 			if (slot.vals[i] !== vals[i]) {
 				slot.vals[i] = vals[i];
@@ -752,10 +716,10 @@ return view.extend({
 	},
 
 	/*
-	 * Actions cell. Its controls are made once per slot and kept: one button
+	 * Action cell. Its controls are made once per slot and kept: one button
 	 * per operation (so a row never changes a button's class, which would
-	 * restyle it and start the theme's border transition), the pending note
-	 * with its Cancel button, and the "Applying…" note. The cell's children
+	 * restyle it and start the theme's border transition), the Undo button
+	 * of a staged change, and the "Applying…" note. The cell's children
 	 * are swapped only when the state differs; labels follow the slot's
 	 * domain. Returns true if anything changed.
 	 */
@@ -774,17 +738,17 @@ return view.extend({
 			else if (state.indexOf('staged:') == 0) {
 				if (!slot.staged)
 					slot.staged = {
-						label: E('span', { 'class': 'abfm-staged' }, [ textNode() ]),
-						button: E('button', { 'class': 'cbi-button cbi-button-neutral',
-							'click': () => this.unstageDomain(slot.domain) }, T(_('Cancel'))),
+						button: E('button', { 'class': 'cbi-button cbi-button-neutral', 'data-staged': '',
+							'click': () => this.unstageDomain(slot.domain) }, [ textNode() ]),
 						op: null
 					};
 				const staged = state.substring(7);
 				if (slot.staged.op !== staged) {
 					slot.staged.op = staged;
-					slot.staged.label.firstChild.data = _('Pending: %s').format(OP_LABEL[staged] || staged);
+					slot.staged.button.setAttribute('data-staged', staged);
+					slot.staged.button.firstChild.data = UNDO_LABEL[staged] || staged;
 				}
-				nodes = [ slot.staged.label, ' ', slot.staged.button ];
+				nodes = [ slot.staged.button ];
 			}
 			else if (state.indexOf('op:') == 0) {
 				const op = state.substring(3);
@@ -803,8 +767,9 @@ return view.extend({
 			aria = OP_ARIA.format(OP_LABEL[op], domain);
 		}
 		else if (state.indexOf('staged:') == 0) {
+			const op = state.substring(7);
 			button = slot.staged.button;
-			aria = CANCEL_ARIA.format(domain);
+			aria = UNDO_ARIA.format(OP_LABEL[op] || op, domain);
 		}
 		if (button && (slot.aria !== aria || slot.ariaButton !== button)) {
 			button.setAttribute('aria-label', aria);
@@ -816,65 +781,36 @@ return view.extend({
 	},
 
 	/*
-	 * Page 0 is live: new queries shift in at the top. Leaving it freezes
-	 * the view at the queries seen so far (querylog.page `upto`), so later
-	 * pages do not move while queries arrive; "N new queries" leads back.
-	 */
-	showPage(n) {
-		const page = Math.max(0, Math.floor(n) || 0);
-		if (page == 0)
-			this.view.upto = null;
-		else if (this.view.page == 0)
-			this.view.upto = this.view.latest;
-		this.view.page = page;
-		this.updateQueries();
-	},
-
-	/*
-	 * Update of one page (at most PAGE_SIZE rows). The table keeps one slot
-	 * (a <tr> and the text nodes of its cells) per shown row, by position:
-	 * a poll writes each row into the slot at its place, and a write only
-	 * touches the text nodes and attributes whose value differs. A page
-	 * that shifts therefore costs text writes only: no row is created,
-	 * moved or restyled (stripes are fixed per position), and nothing reads
-	 * layout, so the browser lays out once (P4). Slots are created only
-	 * while the page grows (the first page is built in one fragment and
-	 * inserted once) and kept for reuse while it is short; a different
-	 * column set rebuilds the table. Keyboard focus in a row follows that
-	 * row's key, and leaves the table when the row leaves the page.
-	 * Returns the number of rows written or removed (0 on an idle poll),
-	 * at most PAGE_SIZE; this.queryCreated counts the slots created.
+	 * Update of the list (the newest PAGE_SIZE rows). The table keeps one
+	 * slot (a <tr> and the text nodes of its cells) per shown row, by
+	 * position: a poll writes each row into the slot at its place, and a
+	 * write only touches the text nodes and attributes whose value differs.
+	 * A list that shifts therefore costs text writes only: no row is
+	 * created, moved or restyled (stripes are fixed per position), and
+	 * nothing reads layout, so the browser lays out once (P4). Slots are
+	 * created only while the list grows (the first fill is built in one
+	 * fragment and inserted once) and kept for reuse while it is short.
+	 * Keyboard focus in a row follows that row's key, and leaves the table
+	 * when the row leaves the list. Returns the number of rows written or
+	 * removed (0 on an idle poll), at most PAGE_SIZE; this.queryCreated
+	 * counts the slots created.
 	 */
 	updateQueries() {
 		if (!this.queriesNode)
 			return 0;
-		const v = this.view;
-		const opts = { show_router: this.display.showRouter, match: this.display.q, limit: PAGE_SIZE };
-		let res = querylog.page(this.log, Object.assign({ offset: v.page * PAGE_SIZE, upto: v.upto }, opts));
-		if (v.page > 0 && res.rows.length == 0) {
-			/* the frozen rows left the ring: show the last page that still has rows */
-			v.page = Math.max(0, Math.ceil(res.total / PAGE_SIZE) - 1);
-			if (v.page == 0)
-				v.upto = null;
-			res = querylog.page(this.log, Object.assign({ offset: v.page * PAGE_SIZE, upto: v.upto }, opts));
-		}
-		v.latest = res.latest;
-		v.total = res.total;
-		const rows = res.rows;
+		const rows = querylog.page(this.log, { show_router: false, limit: PAGE_SIZE }).rows;
 		const table = this.queriesTable;
 		const map = this.queryRows;
 		const slots = this.querySlots;
 		let changed = 0;
 		this.queryCreated = 0;
 
-		const layout = JSON.stringify([ this.display.showClient, this.canWrite ]);
+		const layout = String(this.canWrite);
 		if (layout != this.queryLayout) {
 			this.queryLayout = layout;
-			const captions = [ _('Time'), _('Domain'), _('Type'), _('Answer'), _('Result') ];
-			if (this.display.showClient)
-				captions.push(_('Client'));
+			const captions = [ _('Time'), _('Domain'), _('Result') ];
 			if (this.canWrite)
-				captions.push(_('Actions'));
+				captions.push(_('Action'));
 			this.queryCols = captions.length;
 			changed += slots.length;
 			map.clear();
@@ -882,7 +818,8 @@ return view.extend({
 			this.slotPool = [];
 			this.rowTemplate = null;
 			this.queryPlaceholder = null;
-			dom.content(table, [ headerRow(captions) ]);
+			dom.content(table, [ E('tr', { 'class': 'tr table-titles' },
+				captions.map(c => E('th', { 'class': 'th', 'scope': 'col' }, T(c)))) ]);
 		}
 
 		/* the row that holds keyboard focus, if any (only document state is read here) */
@@ -942,38 +879,20 @@ return view.extend({
 			}
 		}
 
-		const text = rows.length ? null : ((this.display.q && this.keptRows) ? _('No queries match the filter.') : _('No queries seen yet.'));
+		const text = rows.length ? null : _('No queries seen yet.');
 		if (text != (this.queryPlaceholder && this.queryPlaceholder.textContent)) {
 			if (this.queryPlaceholder)
 				this.queryPlaceholder.remove();
 			this.queryPlaceholder = text ? table.appendChild(placeholderRow(this.queryCols, text)) : null;
 		}
-		this.updatePager(rows.length, res.newer);
 		return changed;
 	},
 
-	/* Pager and "N new queries"; text nodes only change when their text does. */
-	updatePager(shown, newer) {
-		const v = this.view;
-		const first = v.page * PAGE_SIZE;
-		const fresh = (v.page > 0) ? newer : 0;
-		const key = [ v.page, shown, v.total, fresh ].join(':');
-		if (key == this.pagerKey)
-			return;
-		this.pagerKey = key;
-		this.pageInfo.textContent = shown ? _('Queries %d–%d of %d').format(first + 1, first + shown, v.total) : '';
-		this.pageNewer.disabled = (v.page == 0);
-		this.pageOlder.disabled = (first + shown >= v.total);
-		this.newQueriesNode.style.display = fresh ? '' : 'none';
-		this.newQueriesNode.setAttribute('data-new', String(fresh));
-		this.newQueriesNode.firstChild.textContent = fresh ? _('%d new queries since this page was shown.').format(fresh) : '';
-	},
-
-	/* ---- staging ------------------------------------------------------------------ */
+	/* ---- staged changes (§8.4) ------------------------------------------------------------ */
 
 	savePending() {
 		if (!storageSet(model.STORAGE_KEY, model.serializePending(this.pending)))
-			ui.addNotification(null, E('p', {}, T(_('Pending changes could not be saved in this browser; they are lost when the page is closed.'))), 'warning');
+			ui.addNotification(null, E('p', {}, T(_('Changes could not be kept in this browser; they are lost when the page is closed.'))), 'warning');
 	},
 
 	setPending(state) {
@@ -986,7 +905,7 @@ return view.extend({
 	stageOp(op, domain) {
 		const r = model.stage(this.pending, op, domain, Math.floor(Date.now() / 1000), this.protect);
 		if (r.error) {
-			ui.addNotification(null, E('p', {}, T(_('Cannot stage "%s": %s').format(String(domain), errorText(r.error)))), 'warning');
+			ui.addNotification(null, E('p', {}, T(_('Cannot change "%s": %s').format(String(domain), errorText(r.error)))), 'warning');
 			return false;
 		}
 		this.setPending(r.state);
@@ -997,56 +916,43 @@ return view.extend({
 		this.setPending(model.unstage(this.pending, domain));
 	},
 
-	renderPendingSection() {
-		this.pendingNode = E('div', { 'id': 'abfm-pending' });
-		this.jobNode = E('div', { 'id': 'abfm-job', 'role': 'status', 'aria-live': 'polite' });
+	/* The changes bar: shown only while something is staged; the job's progress below it. */
+	renderChanges() {
+		this.changesTitle = textNode();
+		this.pendingNode = E('ul', { 'id': 'abfm-pending', 'aria-label': _('Pending changes') });
 		this.applyButton = E('button', { 'class': 'cbi-button cbi-button-apply', 'id': 'abfm-apply',
-			'click': ui.createHandlerFn(this, 'handleApply') }, T(_('Apply changes')));
+			'click': ui.createHandlerFn(this, 'handleApply') }, T(_('Apply and save')));
 		this.discardButton = E('button', { 'class': 'cbi-button cbi-button-reset', 'id': 'abfm-discard',
-			'click': () => this.setPending(model.discard(this.pending)) }, T(_('Discard all')));
-
-		const input = E('input', { 'id': 'abfm-add-domain', 'class': 'cbi-input-text', 'type': 'text',
-			'maxlength': 253, 'placeholder': 'ads.example.com', 'autocomplete': 'off', 'spellcheck': 'false' });
-		const op = E('select', { 'id': 'abfm-add-op', 'class': 'cbi-input-select', 'aria-label': _('Change') },
-			model.OPS.map(o => E('option', { 'value': o, 'selected': (o == 'block') ? '' : null }, T(OP_LABEL[o]))));
-		const add = this.addButton = E('button', { 'class': 'cbi-button cbi-button-add', 'id': 'abfm-add',
-			'click': () => { if (this.stageOp(op.value, input.value)) input.value = ''; } }, T(_('Add to pending')));
-		input.addEventListener('keydown', ev => { if (ev.key == 'Enter') add.click(); });
-
-		return E('div', { 'class': 'cbi-section', 'id': 'abfm-pending-section' }, [
-			E('h3', {}, T(_('Pending changes'))),
-			E('div', { 'class': 'cbi-section-descr' }, T(_('Changes are kept in this browser until you apply them. Apply sends all of them at once and rebuilds the adblock-fast block lists one time.'))),
+			'click': () => this.setPending(model.discard(this.pending)) }, T(_('Discard')));
+		this.changesNode = E('div', { 'class': 'alert-message notice', 'id': 'abfm-changes', 'style': 'display:none' }, [
+			E('strong', {}, [ this.changesTitle ]),
 			this.pendingNode,
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title', 'for': 'abfm-add-domain' }, T(_('Domain'))),
-				E('div', { 'class': 'cbi-value-field' }, [ input, ' ', op, ' ', add ])
-			]),
-			E('div', { 'class': 'right' }, [ this.discardButton, ' ', this.applyButton ]),
-			this.jobNode
+			E('div', { 'class': 'right' }, [ this.discardButton, ' ', this.applyButton ])
 		]);
+		this.jobNode = E('div', { 'id': 'abfm-job', 'role': 'status', 'aria-live': 'polite' });
+		return E('div', { 'id': 'abfm-changes-section' }, [ this.changesNode, this.jobNode ]);
 	},
 
 	updatePending() {
 		if (!this.pendingNode)
 			return;
 		const items = this.pending.items;
-		const rows = items.map(i => E('tr', { 'class': 'tr', 'data-domain': i.domain, 'data-op': i.op }, [
-			cell(_('Domain'), T(i.domain), 'abfm-domain'),
-			cell(_('Change'), T(OP_LABEL[i.op])),
-			cell(_('Note'), T(i.reason ? _('Last attempt: %s').format(errorText(i.reason)) : '')),
-			cell(_('Actions'), [ E('button', { 'class': 'cbi-button cbi-button-remove',
+		this.changesTitle.data = _('Changes not applied yet: %d').format(items.length);
+		dom.content(this.pendingNode, items.map(i => E('li', { 'data-domain': i.domain, 'data-op': i.op }, [
+			E('span', {}, T(_('%s %s').format(OP_LABEL[i.op], i.domain))),
+			i.reason ? E('em', {}, T(' ' + _('(last attempt: %s)').format(errorText(i.reason)))) : '',
+			' ',
+			E('button', { 'class': 'cbi-button cbi-button-remove',
 				'aria-label': _('Remove pending change for %s').format(i.domain),
-				'click': () => this.unstageDomain(i.domain) }, T(_('Remove'))) ], 'cbi-section-actions')
-		]));
-		dom.content(this.pendingNode, [ dataTable(_('Pending changes'), [ _('Domain'), _('Change'), _('Note'), _('Actions') ],
-			rows, _('No pending changes.')) ]);
+				'click': () => this.unstageDomain(i.domain) }, T(_('Remove')))
+		])));
+		show(this.changesNode, items.length > 0);
 		this.applyButton.disabled = !items.length || !!this.pending.inflight || !!this.applying || !!this.noActions;
-		this.addButton.disabled = !!this.noActions;
 		this.discardButton.disabled = !items.length;
 		this.updateJob();
 	},
 
-	/* ---- apply (§8.2): dry run → confirm → apply → job ------------------------------- */
+	/* ---- Apply and save (§8.4): dry run → confirm → apply → job ---------------------------- */
 
 	applyError(reply) {
 		const e = (reply && reply.error) || {};
@@ -1067,15 +973,16 @@ return view.extend({
 		const list = (plan.plan || []).filter(p => Array.isArray(p.change) && p.change.length).map(p =>
 			E('li', {}, T(_('%s %s').format(OP_LABEL[p.op] || p.op, p.domain))));
 		return new Promise(resolve => {
-			ui.showModal(_('Apply changes'), [
-				E('div', { 'class': 'alert-message warning' }, [
-					E('p', {}, T(_('This rebuilds the adblock-fast block lists: all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes.')))
-				]),
+			ui.showModal(_('Apply and save'), [
+				E('p', {}, T(_('The domains are saved in adblock-fast\'s Allowed Domains and Blocked Domains lists, the same lists its own settings page shows.'))),
 				list.length ? E('ul', {}, list) : '',
+				E('div', { 'class': 'alert-message warning' }, [
+					E('p', {}, T(_('adblock-fast then rebuilds its block lists: all lists are downloaded again, DNS restarts briefly, and this can take a few minutes.')))
+				]),
 				E('div', { 'class': 'right' }, [
 					E('button', { 'class': 'cbi-button', 'click': () => { ui.hideModal(); resolve(false); } }, T(_('Cancel'))), ' ',
 					E('button', { 'class': 'cbi-button cbi-button-apply', 'id': 'abfm-confirm-apply',
-						'click': () => { ui.hideModal(); resolve(true); } }, T(_('Apply')))
+						'click': () => { ui.hideModal(); resolve(true); } }, T(_('Apply and save')))
 				])
 			]);
 		});
@@ -1095,7 +1002,7 @@ return view.extend({
 			const plan = model.applyPlan(confirmRequired ? Object.assign({}, reply, { mode: reply.mode || 'rebuild' }) : reply);
 			if (plan.noop) {
 				this.setPending(model.settleNoop(this.pending, ops));
-				ui.addNotification(null, E('p', {}, T(_('Nothing to change: the rules are already in place.'))), 'info');
+				ui.addNotification(null, E('p', {}, T(_('Nothing to change: adblock-fast already has these rules.'))), 'info');
 				return;
 			}
 			const go = plan.needsConfirm ? this.confirmModal(plan) : Promise.resolve(true);
@@ -1143,6 +1050,9 @@ return view.extend({
 		this.updateJob();
 		if (this.polling)
 			poll.add(this.ticks.job, JOB_INTERVAL);
+		/* a hidden or idle page (e.g. another tab started the job) asks later, from startPolling (P2) */
+		if (document.visibilityState != 'visible' || this.idlePaused)
+			return Promise.resolve();
 		return this.pollJob();
 	},
 
@@ -1180,6 +1090,7 @@ return view.extend({
 		});
 	},
 
+	/* One line for the running or last job, its per-domain results, and a Dismiss once it ended. */
 	updateJob() {
 		if (!this.jobNode)
 			return;
@@ -1189,36 +1100,32 @@ return view.extend({
 			dom.content(this.jobNode, []);
 			return;
 		}
-		const key = JSON.stringify([ job.id, job.state, job.phase, job.error,
-			(job.items || []).map(i => [ i.result, i.observed ]), !!this.pending.inflight ]);
+		const key = JSON.stringify([ job.id, job.state, job.phase, job.error, job.mode,
+			(job.items || []).map(i => [ i.result, i.reason ]) ]);
 		if (key == this.jobKey)
 			return;
 		this.jobKey = key;
 
 		const terminal = model.isTerminal(job);
-		const parts = [ JOB_STATE_TEXT[job.state] || job.state ];
-		if (job.mode)
-			parts.push(JOB_MODE_TEXT[job.mode] || job.mode);
-		const children = [
-			E('h4', {}, T(_('Last apply'))),
-			E('p', { 'id': 'abfm-job-state', 'data-job': job.id, 'data-state': job.state, 'class': terminal ? '' : 'spinning' }, T(parts.join(' · ')))
-		];
-		if (job.finished_at)
-			children.push(E('p', {}, T(_('Finished %s').format(model.formatTime(job.finished_at)))));
+		let text = (job.state == 'applied' && job.mode == 'persist-only') ? SAVED_ONLY_TEXT : (JOB_TEXT[job.state] || job.state);
 		if (job.error)
-			children.push(E('div', { 'class': 'alert-message danger', 'data-error': job.error.code },
-				T(errorText(job.error.code, job.error.message))));
+			text += ' ' + errorText(job.error.code, job.error.message);
+		const severity = { applied: 'success', partial: 'warning', failed: 'danger' }[job.state] || 'notice';
 		const items = Array.isArray(job.items) ? job.items : [];
+		const children = [
+			E('p', { 'id': 'abfm-job-state', 'data-job': job.id, 'data-state': job.state, 'data-mode': job.mode || '',
+				'class': terminal ? '' : 'spinning' }, T(text))
+		];
+		if (job.error)
+			children[0].setAttribute('data-error', job.error.code);
 		if (items.length)
-			children.push(dataTable(_('Apply results'), [ _('Domain'), _('Change'), _('Expected'), _('Observed'), _('Result'), _('Reason') ],
-				items.map(i => E('tr', { 'class': 'tr', 'data-domain': i.domain, 'data-result': i.result }, [
-					cell(_('Domain'), T(i.domain), 'abfm-domain'),
-					cell(_('Change'), T(OP_LABEL[i.op] || i.op)),
-					cell(_('Expected'), T(i.expect || '')),
-					cell(_('Observed'), T(i.observed || '')),
-					cell(_('Result'), T(RESULT_TEXT[i.result] || i.result || '')),
-					cell(_('Reason'), T(i.reason ? errorText(i.reason) : ''))
-				])), ''));
-		dom.content(this.jobNode, children);
+			children.push(E('ul', { 'aria-label': _('Apply results') }, items.map(i =>
+				E('li', { 'data-domain': i.domain, 'data-result': i.result }, T(_('%s %s: %s').format(
+					OP_LABEL[i.op] || i.op, i.domain,
+					(RESULT_TEXT[i.result] || i.result || '') + (i.reason ? ' (' + errorText(i.reason) + ')' : '')))))));
+		if (terminal)
+			children.push(E('div', { 'class': 'right' }, [ E('button', { 'class': 'cbi-button cbi-button-neutral', 'id': 'abfm-job-dismiss',
+				'click': () => { this.job = null; this.updateJob(); } }, T(_('Dismiss'))) ]));
+		dom.content(this.jobNode, [ E('div', { 'class': 'alert-message ' + severity }, children) ]);
 	}
 });

@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-// T24 (docs/CONTRACT.md §8.4): Allow/Block row buttons stage changes that
-// persist across reloads; one `apply` per batch after a dry run and a
-// confirmation; job progress to per-domain results; the DNS answer really
-// flips; failed items return to pending; busy, resumed, unknown and
-// persist-only jobs; no-op and rejected batches; two tabs. Every reply of the
+// T24 (docs/CONTRACT.md §8.4): Block/Allow row buttons stage changes that
+// persist across reloads and show in one bar; one `apply` per batch after a
+// dry run and an "Apply and save" confirmation; job progress to per-domain
+// results; the DNS answer really flips; failed items return to the bar;
+// busy, resumed, unknown and persist-only jobs; no-op and rejected batches;
+// two tabs. Every reply of the
 // plugin is checked against the api-2 schemas (S3) once the backend has the
 // api-2 trims. Runs against the real guest backends.
 import { expect, test } from '@playwright/test';
 import {
-  admin, checkReplies, dnsQuery, ensureHealthy, guest, guestWait, login, pending, pendingRow, queryRow,
-  seeQuery, setVisibility, trackCalls, ubusCalls, waitAdblockFast
+  admin, checkReplies, dnsQuery, ensureHealthy, guest, guestWait, jobState, login, pending, pendingRow, queryRow, resultRow,
+  seeQuery, setVisibility, stageFromRow, trackCalls, ubusCalls, waitAdblockFast
 } from './lib/guest.mjs';
 import { validate } from './lib/schemas.mjs';
 
@@ -27,20 +28,17 @@ function trackApply(page) {
   return calls;
 }
 
-async function stageManual(page, op, domain) {
-  await page.getByLabel('Domain', { exact: true }).fill(domain);
-  await page.getByLabel('Change', { exact: true }).selectOption(op);
-  await page.getByRole('button', { name: 'Add to pending' }).click();
-}
+const bar = (page) => page.locator('#abfm-changes');
 
 /* Apply the pending batch, confirm the rebuild and wait for a terminal job. */
 async function applyAndWait(page) {
   const state = page.locator('#abfm-job-state');
   const previous = (await state.count()) ? await state.getAttribute('data-job') : null;
-  await page.getByRole('button', { name: 'Apply changes' }).click();
+  await page.getByRole('button', { name: 'Apply and save' }).click();
   const modal = page.locator('.modal');
-  await expect(modal).toContainText('all lists are downloaded again over the WAN, DNS is restarted, and it may take minutes');
-  await modal.getByRole('button', { name: 'Apply' }).click();
+  await expect(modal).toContainText('Allowed Domains and Blocked Domains lists');
+  await expect(modal).toContainText('all lists are downloaded again, DNS restarts briefly');
+  await modal.getByRole('button', { name: 'Apply and save' }).click();
   // the previous job stays on screen until `apply` returns the new one
   await expect(state).toHaveAttribute('data-job', /^j\d{10}-[0-9a-f]{4}$/);
   await expect(state).not.toHaveAttribute('data-job', previous ?? '');
@@ -90,7 +88,6 @@ function holdJobs() {
 function releaseJobs() {
   guest('[ ! -s /tmp/abfm-holder.pid ] || kill "$(cat /tmp/abfm-holder.pid)" 2>/dev/null; rm -f /tmp/abfm-holder.pid; :');
 }
-const jobState = (page) => page.locator('#abfm-job-state');
 async function waitTerminal(page, timeout = 480_000) {
   await expect(jobState(page)).toHaveAttribute('data-state', /^(applied|partial|failed)$/, { timeout });
   return jobState(page).getAttribute('data-state');
@@ -102,10 +99,11 @@ test.afterAll(() => {
   resetRules();
 });
 
-test('row buttons stage changes that survive a reload; manual add, replace and discard', async ({ page }) => {
+test('row buttons stage changes that survive a reload; Undo, Remove and Discard', async ({ page }) => {
   await login(page, admin);
   await page.evaluate((k) => localStorage.removeItem(k), STORAGE);
   await page.reload();
+  await expect(bar(page)).toBeHidden();
 
   const blocked = await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
   await expect(blocked.getByRole('button', { name: 'Allow ads.example.test' })).toBeVisible();
@@ -115,48 +113,40 @@ test('row buttons stage changes that survive a reload; manual add, replace and d
   await expect(allowed.getByRole('button', { name: 'Allow www.up.example.test' })).toHaveCount(0);
 
   await blocked.getByRole('button', { name: 'Allow ads.example.test' }).click();
+  await expect(bar(page)).toBeVisible();
+  await expect(bar(page)).toContainText('Changes not applied yet: 1');
   await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'allow');
-  await expect(queryRow(page, 'ads.example.test')).toContainText('Pending: Allow');
+  await expect(pendingRow(page, 'ads.example.test')).toContainText('Allow ads.example.test');
+  await expect(queryRow(page, 'ads.example.test')).toContainText('Undo allow');
 
   await page.reload();
   await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'allow');
-  await expect(queryRow(page, 'ads.example.test')).toContainText('Pending: Allow', { timeout: 30_000 });
+  await expect(queryRow(page, 'ads.example.test')).toContainText('Undo allow', { timeout: 30_000 });
 
-  // only allow and block can be staged; a different op for the same domain replaces
-  await expect(page.getByLabel('Change', { exact: true }).locator('option')).toHaveText(['Allow', 'Block']);
-  await stageManual(page, 'block', 'ADS.example.test.');
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(1);
-  await expect(pendingRow(page, 'ads.example.test')).toHaveAttribute('data-op', 'block');
-
-  // invalid input is refused before it is stored
-  await stageManual(page, 'block', 'not a domain');
-  await expect(page.locator('.alert-message').filter({ hasText: 'Invalid domain name' })).toBeVisible();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(1);
-
-  // per-row cancel, remove, and discard all
-  await queryRow(page, 'ads.example.test').getByRole('button', { name: 'Cancel pending change for ads.example.test' }).click();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
-  // the same op again removes it (§8.4)
-  await stageManual(page, 'allow', 'ads.example.test');
-  await stageManual(page, 'allow', 'ads.example.test');
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
-  await stageManual(page, 'allow', 'ads.example.test');
-  await stageManual(page, 'block', 'tracker2.example.test');
+  // Undo on the row, Remove in the bar, Discard for all
+  await queryRow(page, 'ads.example.test').getByRole('button', { name: 'Undo: Allow ads.example.test' }).click();
+  await expect(pending(page).locator('li[data-domain]')).toHaveCount(0);
+  await expect(bar(page)).toBeHidden();
+  await expect(queryRow(page, 'ads.example.test').getByRole('button', { name: 'Allow ads.example.test' })).toBeVisible();
+  await stageFromRow(page, 'allow', 'ads2.example.test');
+  await stageFromRow(page, 'block', 'tracker2.example.test');
+  await expect(bar(page)).toContainText('Changes not applied yet: 2');
   await pending(page).getByRole('button', { name: 'Remove pending change for tracker2.example.test' }).click();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Discard all' }).click();
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+  await expect(pending(page).locator('li[data-domain]')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(bar(page)).toBeHidden();
   await page.reload();
-  await expect(pending(page)).toContainText('No pending changes.');
+  await expect(bar(page)).toBeHidden();
+  expect(await page.evaluate((k) => JSON.parse(localStorage.getItem(k)).items, STORAGE)).toEqual([]);
 });
 
 test('cancelling the confirmation sends only the dry run; uncommitted CLI changes are explained', async ({ page }) => {
   await login(page, admin);
   const applies = trackApply(page);
-  await stageManual(page, 'allow', 'telemetry.example.test');
-  await page.getByRole('button', { name: 'Apply changes' }).click();
+  await stageFromRow(page, 'allow', 'telemetry.example.test');
+  await page.getByRole('button', { name: 'Apply and save' }).click();
   const modal = page.locator('.modal');
-  await expect(modal).toContainText('rebuilds the adblock-fast block lists');
+  await expect(modal).toContainText('rebuilds its block lists');
   await expect(modal).toContainText('telemetry.example.test');
   await modal.getByRole('button', { name: 'Cancel' }).click();
   expect(applies.filter((a) => !a.dry_run)).toHaveLength(0);
@@ -166,14 +156,14 @@ test('cancelling the confirmation sends only the dry run; uncommitted CLI change
   // §14.9: the guard sees uncommitted `uci` command-line changes, not LuCI's staged ones
   guest('uci set adblock-fast.config.abfm_browser_probe=1');
   try {
-    await page.getByRole('button', { name: 'Apply changes' }).click();
+    await page.getByRole('button', { name: 'Apply and save' }).click();
     const note = page.locator('[data-error="pending-uci-changes"]');
     await expect(note).toContainText('uncommitted changes made on the command line (uci) or by adblock-fast itself');
   } finally {
     guest('uci -q revert adblock-fast.config.abfm_browser_probe || uci -q revert adblock-fast');
   }
   expect(applies.filter((a) => !a.dry_run)).toHaveLength(0);
-  await page.getByRole('button', { name: 'Discard all' }).click();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
 });
 
 test('Block then Allow from the list: one apply per batch, job applied, DNS answer flips', async ({ page }) => {
@@ -190,9 +180,10 @@ test('Block then Allow from the list: one apply per batch, job applied, DNS answ
   expect(real).toHaveLength(1);
   expect(real[0].ops).toEqual([{ op: 'block', domain: name }]);
   expect(real[0].confirm_rebuild).toBe(true);
-  const results = page.getByRole('table', { name: 'Apply results' });
-  await expect(results.locator(`tr[data-domain="${name}"]`)).toHaveAttribute('data-result', 'ok');
-  await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+  await expect(resultRow(page, name)).toHaveAttribute('data-result', 'ok');
+  await expect(resultRow(page, name)).toContainText(`Block ${name}: done`);
+  await expect(jobState(page)).toContainText('Applied and saved.');
+  await expect(page.locator('#abfm-changes')).toBeHidden();
   expect(await dnsQuery(name)).toMatchObject({ answers: 0 });
   expect(guest('uci -q get adblock-fast.config.blocked_domain')).toContain(name);
 
@@ -203,7 +194,7 @@ test('Block then Allow from the list: one apply per batch, job applied, DNS answ
   real = applies.filter((a) => !a.dry_run);
   expect(real).toHaveLength(2);
   expect(real[1].ops).toEqual([{ op: 'allow', domain: name }]);
-  await expect(results.locator(`tr[data-domain="${name}"]`)).toHaveAttribute('data-result', 'ok');
+  await expect(resultRow(page, name)).toHaveAttribute('data-result', 'ok');
   expect(await dnsQuery(name)).toEqual({ rcode: 0, answers: 1 });
   expect(guest('uci -q get adblock-fast.config.blocked_domain || :')).not.toContain(name);
   await seeQuery(page, name, { decision: 'allowed' });
@@ -215,21 +206,22 @@ test('a failed job returns its items to pending with the reason', async ({ page 
   guestWait('[ ! -s /tmp/.uci/adblock-fast ]', 120);
   guest(`for d in /tmp/dnsmasq.*.d; do echo abfm-no-such-option > "$d/zz-abfm-broken.conf"; done`);
   await login(page, admin);
-  await stageManual(page, 'block', 'fail.example.test');
+  await stageFromRow(page, 'block', 'fail.example.test');
   const seen = await applyAndWait(page);
   guest('rm -f /tmp/dnsmasq.*.d/zz-abfm-broken.conf; /etc/init.d/dnsmasq restart');
   expect([...seen]).toContain('failed');
-  await expect(page.locator('#abfm-job [data-error]')).toBeVisible();
+  await expect(jobState(page)).toHaveAttribute('data-error', /.+/);
+  await expect(jobState(page)).toContainText('Not applied.');
   const row = pendingRow(page, 'fail.example.test');
   await expect(row).toHaveAttribute('data-op', 'block');
-  await expect(row).toContainText('Last attempt:');
+  await expect(row).toContainText('(last attempt:');
   await page.reload();
-  await expect(pendingRow(page, 'fail.example.test')).toContainText('Last attempt:');
-  await expect(page.getByRole('button', { name: 'Apply changes' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Discard all' }).click();
+  await expect(pendingRow(page, 'fail.example.test')).toContainText('(last attempt:');
+  await expect(page.getByRole('button', { name: 'Apply and save' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
 });
 
-test('two tabs: staging syncs; an item staged while the dialog is open is not sent and stays pending', async ({ page, context }) => {
+test('two tabs: staging syncs; an item staged while the dialog is open is not sent and stays pending; a hidden tab waits', async ({ page, context }) => {
   const A = 'tab-a.up.example.test', B = 'tab-b.up.example.test', C = 'tab-c.up.example.test';
   await login(page, admin);
   await page.evaluate((k) => localStorage.removeItem(k), STORAGE);
@@ -237,32 +229,49 @@ test('two tabs: staging syncs; an item staged while the dialog is open is not se
   const applies = trackApply(page);
   const other = await context.newPage();
   await login(other, admin);
-  await stageManual(page, 'block', A);
-  await stageManual(page, 'block', B);
+  await stageFromRow(page, 'block', A);
+  await stageFromRow(page, 'block', B);
   // cross-tab sync through localStorage
   await expect(pendingRow(other, A)).toHaveAttribute('data-op', 'block');
   await expect(pendingRow(other, B)).toHaveAttribute('data-op', 'block');
-  await page.getByRole('button', { name: 'Apply changes' }).click();
+  await page.getByRole('button', { name: 'Apply and save' }).click();
   const modal = page.locator('.modal');
   await expect(modal).toContainText(A);
-  await stageManual(other, 'block', C);
+  // the dialog covers the first tab; the other tab stages a third change meanwhile
+  await stageFromRow(other, 'block', C);
   await expect(pendingRow(page, C)).toHaveCount(1);
-  await modal.getByRole('button', { name: 'Apply' }).click();
+  await modal.getByRole('button', { name: 'Apply and save' }).click();
   expect(await waitTerminal(page)).toBe('applied');
   const real = applies.filter((a) => !a.dry_run);
   expect(real).toHaveLength(1);
   expect(real[0].ops).toEqual([{ op: 'block', domain: A }, { op: 'block', domain: B }]);
-  const results = page.getByRole('table', { name: 'Apply results' });
-  for (const d of [A, B]) await expect(results.locator(`tr[data-domain="${d}"]`)).toHaveAttribute('data-result', 'ok');
-  await expect(results.locator(`tr[data-domain="${C}"]`)).toHaveCount(0);
+  for (const d of [A, B]) await expect(resultRow(page, d)).toHaveAttribute('data-result', 'ok');
+  await expect(resultRow(page, C)).toHaveCount(0);
   for (const p of [page, other]) {
     await expect(pendingRow(p, C)).toHaveAttribute('data-op', 'block');
-    await expect(pending(p).locator('tr[data-domain]')).toHaveCount(1);
+    await expect(pending(p).locator('li[data-domain]')).toHaveCount(1);
   }
   // the other tab followed the job too
   await expect(jobState(other)).toHaveAttribute('data-state', 'applied', { timeout: 60_000 });
   await other.close();
-  await page.getByRole('button', { name: 'Discard all' }).click();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+
+  // P2: a hidden tab that learns about a new job from another tab asks nothing until it is shown
+  const hiddenTab = await context.newPage();
+  await login(hiddenTab, admin);
+  const hiddenJobs = trackCalls(hiddenTab, 'luci.adblock-fast-monitor', 'job');
+  await setVisibility(hiddenTab, 'hidden');
+  const D = 'tab-d.up.example.test';
+  await stageFromRow(page, 'block', D);
+  await page.getByRole('button', { name: 'Apply and save' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Apply and save' }).click();
+  await expect(jobState(hiddenTab)).toHaveAttribute('data-job', /^j\d{10}-[0-9a-f]{4}$/);
+  expect(await waitTerminal(page)).toBe('applied');
+  expect(hiddenJobs).toHaveLength(0);
+  await setVisibility(hiddenTab, 'visible');
+  await expect(jobState(hiddenTab)).toHaveAttribute('data-state', 'applied', { timeout: 60_000 });
+  expect(hiddenJobs.length).toBeGreaterThan(0);
+  await hiddenTab.close();
 });
 
 test('a running job: shown when the page opens, polled only while visible, busy on Apply, resumed after reload', async ({ page }) => {
@@ -289,21 +298,21 @@ test('a running job: shown when the page opens, polled only while visible, busy 
     await setVisibility(page, 'visible');
     await expect.poll(() => jobs.length, { timeout: 10_000 }).toBeGreaterThan(hidden);
     // Apply while it runs: busy, the running job stays on screen, nothing staged is lost
-    await stageManual(page, 'block', 'busy.up.example.test');
-    await page.getByRole('button', { name: 'Apply changes' }).click();
-    await page.locator('.modal').getByRole('button', { name: 'Apply' }).click();
+    await stageFromRow(page, 'block', 'busy.up.example.test');
+    await page.getByRole('button', { name: 'Apply and save' }).click();
+    await page.locator('.modal').getByRole('button', { name: 'Apply and save' }).click();
     await expect(page.locator('.alert-message').filter({ hasText: 'Another change is being applied' })).toBeVisible();
     await expect(jobState(page)).toHaveAttribute('data-job', id);
     await expect(pendingRow(page, 'busy.up.example.test')).toHaveAttribute('data-op', 'block');
-    await page.getByRole('button', { name: 'Discard all' }).click();
+    await page.getByRole('button', { name: 'Discard', exact: true }).click();
 
     // a batch applied from this page and reloaded while its job runs resumes
     releaseJobs();
     expect(await waitTerminal(page)).toBe('applied');
     holdJobs();
-    await stageManual(page, 'block', 'resume.up.example.test');
-    await page.getByRole('button', { name: 'Apply changes' }).click();
-    await page.locator('.modal').getByRole('button', { name: 'Apply' }).click();
+    await stageFromRow(page, 'block', 'resume.up.example.test');
+    await page.getByRole('button', { name: 'Apply and save' }).click();
+    await page.locator('.modal').getByRole('button', { name: 'Apply and save' }).click();
     await expect(jobState(page)).not.toHaveAttribute('data-job', id);
     await expect(jobState(page)).toHaveAttribute('data-state', /^(queued|applying)$/);
     const mine = await jobState(page).getAttribute('data-job');
@@ -312,9 +321,11 @@ test('a running job: shown when the page opens, polled only while visible, busy 
     expect(await page.evaluate((k) => JSON.parse(localStorage.getItem(k)).inflight.job_id, STORAGE)).toBe(mine);
     releaseJobs();
     expect(await waitTerminal(page)).toBe('applied');
-    await expect(page.getByRole('table', { name: 'Apply results' }).locator('tr[data-domain="resume.up.example.test"]'))
-      .toHaveAttribute('data-result', 'ok');
-    await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+    await expect(resultRow(page, 'resume.up.example.test')).toHaveAttribute('data-result', 'ok');
+    await expect(pending(page).locator('li[data-domain]')).toHaveCount(0);
+    // a finished job can be dismissed
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(jobState(page)).toHaveCount(0);
     expect(await page.evaluate((k) => JSON.parse(localStorage.getItem(k)).inflight ?? null, STORAGE)).toBeNull();
   } finally {
     releaseJobs();
@@ -329,8 +340,8 @@ test('a job the router no longer knows returns its items with the reason', async
   await page.reload();
   const row = pendingRow(page, 'lost-job.example.test');
   await expect(row).toHaveAttribute('data-op', 'block');
-  await expect(row).toContainText('Last attempt: The job is no longer known');
-  await page.getByRole('button', { name: 'Discard all' }).click();
+  await expect(row).toContainText('(last attempt: The job is no longer known');
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
 });
 
 test('no-op batch: one dry run, "Nothing to change", the item leaves', async ({ page }) => {
@@ -338,13 +349,13 @@ test('no-op batch: one dry run, "Nothing to change", the item leaves', async ({ 
   try {
     await login(page, admin);
     const applies = trackApply(page);
-    await stageManual(page, 'allow', 'noop.example.test');
-    await page.getByRole('button', { name: 'Apply changes' }).click();
+    await stageFromRow(page, 'allow', 'noop.example.test');
+    await page.getByRole('button', { name: 'Apply and save' }).click();
     await expect(page.locator('.alert-message').filter({ hasText: 'Nothing to change' })).toBeVisible();
     await expect(page.locator('.modal')).toBeHidden();
     expect(applies).toHaveLength(1);
     expect(applies[0].dry_run).toBe(true);
-    await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+    await expect(pending(page).locator('li[data-domain]')).toHaveCount(0);
   } finally {
     guest('uci -q del_list adblock-fast.config.allowed_domain=noop.example.test; uci commit adblock-fast');
   }
@@ -353,14 +364,14 @@ test('no-op batch: one dry run, "Nothing to change", the item leaves', async ({ 
 test('a rejected batch marks the item the server names (public suffix)', async ({ page }) => {
   await login(page, admin);
   const applies = trackApply(page);
-  await stageManual(page, 'block', 'co.uk');
-  await stageManual(page, 'block', 'fine.example.test');
-  await page.getByRole('button', { name: 'Apply changes' }).click();
+  await stageFromRow(page, 'block', 'co.uk');
+  await stageFromRow(page, 'block', 'fine.example.test');
+  await page.getByRole('button', { name: 'Apply and save' }).click();
   await expect(page.locator('[data-error="public-suffix"]')).toContainText('co.uk');
-  await expect(pendingRow(page, 'co.uk')).toContainText('Last attempt: Public suffix: rule would be too broad');
-  await expect(pendingRow(page, 'fine.example.test')).not.toContainText('Last attempt');
+  await expect(pendingRow(page, 'co.uk')).toContainText('(last attempt: Public suffix: rule would be too broad)');
+  await expect(pendingRow(page, 'fine.example.test')).not.toContainText('last attempt');
   expect(applies.filter((a) => !a.dry_run)).toHaveLength(0);
-  await page.getByRole('button', { name: 'Discard all' }).click();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
 });
 
 test('save-only apply while adblock-fast is disabled: no confirmation, items skipped', async ({ page }) => {
@@ -368,16 +379,16 @@ test('save-only apply while adblock-fast is disabled: no confirmation, items ski
   try {
     await login(page, admin);
     const applies = trackApply(page);
-    await stageManual(page, 'block', 'saved.example.test');
-    await page.getByRole('button', { name: 'Apply changes' }).click();
+    await stageFromRow(page, 'block', 'saved.example.test');
+    await page.getByRole('button', { name: 'Apply and save' }).click();
     expect(await waitTerminal(page, 60_000)).toBe('applied');
     await expect(page.locator('.modal')).toBeHidden();
-    await expect(jobState(page)).toContainText('saved only (adblock-fast is disabled)');
-    await expect(page.getByRole('table', { name: 'Apply results' }).locator('tr[data-domain="saved.example.test"]'))
-      .toHaveAttribute('data-result', 'skipped');
+    await expect(jobState(page)).toHaveAttribute('data-mode', 'persist-only');
+    await expect(jobState(page)).toContainText('adblock-fast is disabled');
+    await expect(resultRow(page, 'saved.example.test')).toHaveAttribute('data-result', 'skipped');
     expect(applies.filter((a) => !a.dry_run)).toHaveLength(1);
     expect(applies.filter((a) => !a.dry_run)[0].confirm_rebuild).toBe(false);
-    await expect(pending(page).locator('tr[data-domain]')).toHaveCount(0);
+    await expect(pending(page).locator('li[data-domain]')).toHaveCount(0);
     expect(guest('uci -q get adblock-fast.config.blocked_domain')).toContain('saved.example.test');
   } finally {
     guest('uci set adblock-fast.config.enabled=1; uci commit adblock-fast');

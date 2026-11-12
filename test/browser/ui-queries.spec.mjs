@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // T23 (docs/CONTRACT.md §8): the last-queries list is built in the browser
-// from real dnsmasq log lines read with `log read`: decisions, the % blocked
-// stat, text-only rendering of hostile log data, gaps, dnsmasq's lost lines,
-// one read in flight, back-off, idle pause, and no polling while the page is
-// hidden (P2).
+// from real dnsmasq log lines read with `log read`: decisions with their
+// source, the blocked statistics, text-only rendering of hostile log data,
+// gaps, dnsmasq's lost lines, one read in flight, back-off, idle pause, no
+// polling while the page is hidden (P2), and the newest 50 rows only.
 import { expect, test } from '@playwright/test';
 import {
   admin, dnsQuery, ensureHealthy, fakeDnsmasq, guest, guestWait, holdLogReads, isUbus, login, queries, queryRow,
@@ -14,35 +14,41 @@ test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(() => ensureHealthy());
 
-test('real queries from a LAN client: decisions, sources, header and toggles', async ({ page }) => {
+test('real queries from a LAN client: decisions, sources, the statistics and the query-logging line', async ({ page }) => {
   const reads = trackLogReads(page);
   await login(page, admin);
+  // healthy: no state notice, one admin-only line, the query-logging line at the bottom
   await expect(page.locator('#abfm-state')).toHaveAttribute('data-state', 'healthy');
-  await expect(page.locator('#abfm-disclaimer')).toContainText('read the whole system log');
-  await expect(page.locator('#abfm-disclaimer')).toContainText('only to administrators');
-  // informational note from info.warnings, dismissible
-  const note = page.locator('[data-warning="query-logging-active"]');
-  await expect(note).toBeVisible();
-  await note.getByRole('button', { name: 'Dismiss note' }).click();
-  await expect(note).toHaveCount(0);
-  await expect(page.locator('#abfm-buffer-hint')).toContainText('System log buffer size');
-  await expect(page.locator('#abfm-buffer-hint')).toContainText(/\(\d+ KiB, shared by every service\)/);
+  await expect(page.locator('#abfm-state')).toBeEmpty();
+  await expect(page.locator('#abfm-disclaimer')).toHaveText('For administrators only: this page can read the whole system log.');
+  await expect(page.locator('#abfm-logging')).toContainText('Query logging is on');
+  await expect(page.locator('#abfm-logging').getByRole('button', { name: 'Turn off query logging' })).toBeVisible();
+  // the informational warning is not repeated as a note
+  await expect(page.locator('[data-warning="query-logging-active"]')).toHaveCount(0);
+  await expect(page.locator('#abfm-notes')).toBeEmpty();
   // first read fetches the most the contract allows; LuCI's call shape
   await expect.poll(() => reads.length).toBeGreaterThan(0);
   expect(reads[0].args).toEqual({ lines: 900, stream: false, oneshot: true });
 
+  // three columns and the action, nothing else
+  await expect(queries(page).getByRole('columnheader')).toHaveText(['Time', 'Domain', 'Result', 'Action']);
   const blocked = await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
-  await expect(blocked).toContainText('Blocked (dnsmasq rule)');
-  await expect(blocked).toContainText('NXDOMAIN');
-  await expect(blocked.locator('td').nth(2)).toHaveText('A');
-  await expect(blocked.locator('time')).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  await expect(blocked.locator('td').nth(2)).toHaveText('Blocked (dnsmasq rule)');
+  await expect(blocked.locator('time')).toHaveText(/^\d\d:\d\d:\d\d$/);
   const allowed = await seeQuery(page, 'www.up.example.test', { decision: 'allowed' });
-  await expect(allowed).toContainText('192.0.2.10');
-  await expect(allowed).toContainText(/Allowed \((upstream|cache)\)/);
+  await expect(allowed.locator('td').nth(2)).toHaveText(/^Allowed \((upstream|cache)\)$/);
   // the second identical query is answered from dnsmasq's cache
   await dnsQuery('www.up.example.test');
   await expect(queries(page).locator('tr[data-domain="www.up.example.test"]').filter({ hasText: 'Allowed (cache)' }).first())
     .toBeVisible({ timeout: 30_000 });
+  // no answers and no client addresses on the page
+  await expect(page.locator('#abfm-overview')).not.toContainText('192.0.2.10');
+  await expect(page.locator('#abfm-overview')).not.toContainText('10.0.2.2');
+
+  // the statistics: LuCI's progress bar and one sentence
+  const stat = page.locator('[data-stat="blocked_pct"]');
+  await expect(stat.getByRole('progressbar', { name: 'Blocked queries' })).toHaveAttribute('title', /^\d+ %$/);
+  await expect(stat).toContainText(/^Blocked|\d+ of \d+ queries blocked in the last \d+ (s|min)/);
 
   // polls are incremental after the first read, within 16..900
   await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(3);
@@ -73,35 +79,13 @@ test('real queries from a LAN client: decisions, sources, header and toggles', a
   await expect.poll(() => page.evaluate(() => performance.getEntriesByName('abfm-poll').slice(-3)
     .some((e) => e.detail.changed === 0)), { timeout: 30_000 }).toBe(true);
 
-  // keyboard focus follows its row when new queries shift the page
-  const button = queryRow(page, 'ads.example.test').getByRole('button', { name: 'Allow ads.example.test' });
-  await button.focus();
-  await dnsQuery('focus-keeper.up.example.test');
-  await expect(queryRow(page, 'focus-keeper.up.example.test')).toBeVisible({ timeout: 30_000 });
-  expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Allow ads.example.test');
-
-  // client column is off by default; router queries hidden by default
-  await expect(queries(page).getByRole('columnheader', { name: 'Client' })).toHaveCount(0);
-  await page.getByLabel('Show client column').check();
-  await expect(queries(page).getByRole('columnheader', { name: 'Client' })).toHaveCount(1);
-  await expect(queryRow(page, 'ads.example.test')).toContainText('10.0.2.2');
-  await page.getByLabel('Show client column').uncheck();
+  // router queries (127.0.0.1) are never listed: a LAN query sent after one shows, the router's does not
   guest('nslookup router-only.up.example.test 127.0.0.1 >/dev/null 2>&1 || :');
-  await page.getByLabel('Show router queries').check();
-  await expect(queries(page).locator('tr[data-domain="router-only.up.example.test"][data-router="true"]').first())
-    .toBeVisible({ timeout: 30_000 });
-  await page.getByLabel('Show router queries').uncheck();
+  await seeQuery(page, 'after-router.up.example.test');
   await expect(queries(page).locator('tr[data-domain="router-only.up.example.test"]')).toHaveCount(0);
-
-  // domain filter
-  await page.getByLabel('Filter domains').fill('ADS.example');
-  await expect(queryRow(page, 'ads.example.test')).toBeVisible();
-  await expect(queries(page).locator('tr[data-domain="www.up.example.test"]')).toHaveCount(0);
-  await page.getByLabel('Filter domains').fill('nomatch-zzz');
-  await expect(queries(page).locator('tr.placeholder')).toContainText('No queries match the filter.');
 });
 
-test('% blocked over the kept rows and since-page-opened counters', async ({ page }) => {
+test('the blocked share is computed over the answered queries the list keeps', async ({ page }) => {
   // a fresh log ring: the kept rows are exactly the queries below
   guest('/etc/init.d/log restart; /etc/init.d/dnsmasq restart');
   guestWait('pidof dnsmasq >/dev/null && nslookup a.up.example.test 127.0.0.1 >/dev/null 2>&1', 60);
@@ -109,18 +93,19 @@ test('% blocked over the kept rows and since-page-opened counters', async ({ pag
   await login(page, admin);
   // the first read (the page's starting point) has completed once a second one is sent
   await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(1);
-  await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
   const stat = page.locator('[data-stat="blocked_pct"]');
-  const since = page.locator('[data-stat="since_open"]');
-  await expect(since).toContainText(/^Since page opened\s*1 queries, 1 blocked, 0 allowed$/);
+  const bar = stat.getByRole('progressbar', { name: 'Blocked queries' });
+  await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
+  await expect(stat).toContainText(/1 of 1 queries blocked in the last \d+ s/);
+  await expect(bar).toHaveAttribute('title', '100 %');
   for (const name of ['telemetry.example.test', 'metrics.example.test']) await seeQuery(page, name, { decision: 'blocked' });
   await seeQuery(page, 'pct.up.example.test', { decision: 'allowed' });
-  await expect(stat).toContainText('75.0 %');
-  await expect(stat).toContainText(/4 queries over \d+ (s|min)/);
-  await expect(since).toContainText('4 queries, 3 blocked, 1 allowed');
+  await expect(stat).toContainText(/3 of 4 queries blocked in the last \d+ (s|min)/);
+  await expect(bar).toHaveAttribute('title', '75 %');
+  await expect(bar).toHaveAttribute('aria-valuenow', '75');
 });
 
-test('T27: hostile log data is shown as text, never as HTML', async ({ page }) => {
+test('T27: hostile log data never becomes HTML', async ({ page }) => {
   await login(page, admin);
   await page.evaluate(() => { delete window.__x; delete window.__y; delete window.__z; });
   fakeDnsmasq([
@@ -130,13 +115,13 @@ test('T27: hostile log data is shown as text, never as HTML', async ({ page }) =
     '900002 192.0.2.66/40002 reply xss.example.test is "><svg/onload=window.__y=1>.example.test',
     '900003 192.0.2.66/40003 query[A] <b/onclick=window.__z=1>bold</b>.example.test from 192.0.2.66'
   ]);
-  const ptr = queryRow(page, '5.113.0.203.in-addr.arpa');
-  await expect(ptr).toBeVisible({ timeout: 30_000 });
-  await expect(ptr.locator('td.abfm-answer')).toHaveText('<img/src=x/onerror=window.__x=1>');
-  const xss = queryRow(page, 'xss.example.test');
-  await expect(xss.locator('td.abfm-answer')).toHaveText('"><svg/onload=window.__y=1>.example.test');
+  // the rows are listed (answers are not shown on the page at all) ...
+  await expect(queryRow(page, '5.113.0.203.in-addr.arpa')).toBeVisible({ timeout: 30_000 });
+  await expect(queryRow(page, 'xss.example.test')).toHaveText(/xss\.example\.test\s*Allowed \(upstream\)/);
+  // ... and nothing of the hostile strings became markup
   await expect(page.locator('#abfm-overview img, #abfm-overview svg, #abfm-overview b')).toHaveCount(0);
   await expect(page.locator('img[src="x"]')).toHaveCount(0);
+  await expect(page.locator('#abfm-overview')).not.toContainText('onerror');
   // the malformed name never becomes a row
   await expect(queries(page).locator('tr[data-domain*="<"]')).toHaveCount(0);
   await expect(queries(page)).not.toContainText('bold</b>');
@@ -170,7 +155,9 @@ test('T29: a burst larger than the log window shows the exact number of missed e
   for (let id = ids[0]; id <= ids[ids.length - 1]; id++) if (!seen.has(id)) gap++;
   expect(gap).toBeGreaterThan(0);
   await expect(page.locator('#abfm-missed')).toHaveAttribute('data-missed', String(gap));
-  await expect(page.locator('#abfm-missed')).toContainText(`${gap} log entries missed`);
+  await expect(page.locator('#abfm-missed')).toContainText(`${gap} log entries were missed`);
+  await expect(page.locator('#abfm-missed')).toContainText(/\(\d+ KiB, shared by every service\)/);
+  await expect(page.locator('#abfm-missed')).toContainText('System log buffer size');
   await expect(page.locator('#abfm-missed')).toHaveAttribute('data-paused', '0');
 });
 
@@ -204,7 +191,7 @@ test("dnsmasq's lost-entry reports count as missed entries (§8.3)", async ({ pa
   const missed = Number(await page.locator('#abfm-missed').getAttribute('data-missed'));
   fakeDnsmasq(['overflow: 12 log entries lost']);
   await expect(page.locator('#abfm-missed')).toHaveAttribute('data-missed', String(missed + 12), { timeout: 30_000 });
-  await expect(page.locator('#abfm-missed')).toContainText(`${missed + 12} log entries missed`);
+  await expect(page.locator('#abfm-missed')).toContainText(`${missed + 12} log entries were missed`);
 });
 
 test('never two log reads in flight, even when the page is hidden and shown again during a slow read', async ({ page }) => {
@@ -312,61 +299,23 @@ function fakeQueries(prefix, from, count, serial) {
 const domains = (page) => queries(page).locator('tr[data-domain]').evaluateAll((trs) => trs.map((t) => t.getAttribute('data-domain')));
 const name = (prefix, i) => `${prefix}-${String(i).padStart(3, '0')}.example.test`;
 
-test('paging: 50 rows per page, newest first, the filter applies before paging', async ({ page }) => {
+test('the list shows the newest 50 queries, newest first, and shifts as queries arrive', async ({ page }) => {
   await login(page, admin);
-  fakeQueries('pgtest', 0, 120, 940000);
-  await page.getByLabel('Filter domains').fill('PGTEST');
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–50 of 120', { timeout: 30_000 });
-  expect(await domains(page)).toEqual(Array.from({ length: 50 }, (_, i) => name('pgtest', 119 - i)));
-  await expect(page.locator('#abfm-page-newer')).toBeDisabled();
-  await page.locator('#abfm-page-older').click();
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 51–100 of 120');
-  expect(await domains(page)).toEqual(Array.from({ length: 50 }, (_, i) => name('pgtest', 69 - i)));
-  await page.locator('#abfm-page-older').click();
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 101–120 of 120');
-  await expect(page.locator('#abfm-page-older')).toBeDisabled();
-  expect((await domains(page)).at(-1)).toBe(name('pgtest', 0));
-  // a new filter starts again on page 1
-  await page.getByLabel('Filter domains').fill('pgtest-00');
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–10 of 10');
-  await expect(page.locator('#abfm-page-older')).toBeDisabled();
-  // the whole list stays bounded in the DOM
-  await page.getByLabel('Filter domains').fill('');
+  fakeQueries('newest', 0, 120, 940000);
+  await expect.poll(async () => (await domains(page))[0], { timeout: 30_000 }).toBe(name('newest', 119));
+  expect(await domains(page)).toEqual(Array.from({ length: 50 }, (_, i) => name('newest', 119 - i)));
+  fakeQueries('newest', 120, 3, 940000);
+  await expect.poll(async () => (await domains(page))[0], { timeout: 30_000 }).toBe(name('newest', 122));
+  expect((await domains(page)).slice(0, 4)).toEqual([122, 121, 120, 119].map((i) => name('newest', i)));
+  // the list stays bounded in the DOM; there is no paging, filter or client column
   await expect(queries(page).locator('tr[data-domain]')).toHaveCount(50);
+  await expect(page.locator('#abfm-overview input')).toHaveCount(0);
 });
 
-test('later pages stay put while queries arrive and offer "N new queries"; page 1 shifts', async ({ page }) => {
-  await login(page, admin);
-  fakeQueries('stable', 0, 120, 950000);
-  await page.getByLabel('Filter domains').fill('stable-');
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–50 of 120', { timeout: 30_000 });
-  await page.locator('#abfm-page-older').click();
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 51–100 of 120');
-  const frozen = await domains(page);
-  const button = page.locator('#abfm-page-older');
-  await button.focus();
-  fakeQueries('stable', 120, 7, 950000);
-  await expect(page.locator('#abfm-new-queries')).toHaveAttribute('data-new', '7', { timeout: 30_000 });
-  await expect(page.locator('#abfm-new-queries')).toContainText('7 new queries');
-  expect(await domains(page)).toEqual(frozen);
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 51–100 of 120');
-  expect(await page.evaluate(() => document.activeElement?.id)).toBe('abfm-page-older');
-  // back to the newest: page 1 is live again and new rows shift in at the top
-  await page.locator('#abfm-new-queries').getByRole('button', { name: 'Show newest' }).click();
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–50 of 127');
-  await expect(page.locator('#abfm-new-queries')).toBeHidden();
-  expect((await domains(page))[0]).toBe(name('stable', 126));
-  fakeQueries('stable', 127, 3, 950000);
-  await expect.poll(async () => (await domains(page))[0], { timeout: 30_000 }).toBe(name('stable', 129));
-  expect((await domains(page)).slice(0, 4)).toEqual([129, 128, 127, 126].map((i) => name('stable', i)));
-  await expect(page.locator('#abfm-new-queries')).toBeHidden();
-});
-
-test('keyboard focus follows its row while the page shifts, and leaves the table with it', async ({ page }) => {
+test('keyboard focus follows its row while the list shifts, and leaves the table with it', async ({ page }) => {
   await login(page, admin);
   fakeQueries('fshift', 0, 10, 960000);
-  await page.getByLabel('Filter domains').fill('fshift-');
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–10 of 10', { timeout: 30_000 });
+  await expect.poll(async () => (await domains(page))[0], { timeout: 30_000 }).toBe(name('fshift', 9));
   const label = `Block ${name('fshift', 5)}`;
   await queryRow(page, name('fshift', 5)).getByRole('button', { name: label }).focus();
   const focused = () => page.evaluate(() => ({
@@ -374,12 +323,12 @@ test('keyboard focus follows its row while the page shifts, and leaves the table
     inTable: !!document.querySelector('#abfm-queries table')?.contains(document.activeElement)
   }));
   fakeQueries('fshift', 10, 3, 960000);
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–13 of 13', { timeout: 30_000 });
+  await expect.poll(async () => (await domains(page))[0], { timeout: 30_000 }).toBe(name('fshift', 12));
   expect((await domains(page)).indexOf(name('fshift', 5))).toBe(7);
   expect(await focused()).toEqual({ label, inTable: true });
-  // 50 newer queries push the row off the page: focus does not land on another domain's button
+  // 50 newer queries push the row out of the list: focus does not land on another domain's button
   fakeQueries('fshift', 13, 50, 960000);
-  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–50 of 63', { timeout: 30_000 });
+  await expect.poll(async () => (await domains(page))[0], { timeout: 30_000 }).toBe(name('fshift', 62));
   expect((await focused()).inTable).toBe(false);
 });
 
@@ -416,7 +365,7 @@ test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms o
       { timeout: 60_000 }).toBeGreaterThan(0);
     await page.evaluate(() => {
       window.abfmRows = [...document.querySelectorAll('#abfm-queries tr[data-domain]')];
-      window.abfmStats = [...document.querySelectorAll('#abfm-stats .abfm-value')];
+      window.abfmStats = [...document.querySelectorAll('#abfm-stats .cbi-progressbar, #abfm-stats [data-stat] p')];
     });
     const filled = (await polls()).length;
     await expect.poll(async () => (await polls()).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(filled + 20);
@@ -448,9 +397,9 @@ test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms o
     expect(loaded.filter((x) => x.changed === 50).length).toBeGreaterThanOrEqual(0.8 * loaded.length);
     expect(await page.evaluate(() => {
       const now = [...document.querySelectorAll('#abfm-queries tr[data-domain]')];
-      const stats = [...document.querySelectorAll('#abfm-stats .abfm-value')];
+      const stats = [...document.querySelectorAll('#abfm-stats .cbi-progressbar, #abfm-stats [data-stat] p')];
       return now.length === 50 && now.every((tr, i) => tr === window.abfmRows[i]) &&
-        stats.length === 3 && stats.every((n, i) => n === window.abfmStats[i]);
+        stats.length === 2 && stats.every((n, i) => n === window.abfmStats[i]);
     })).toBe(true);
     expect(pct(d, 0.95)).toBeLessThanOrEqual(P4_P95_MS);
     expect(pct(d, 0.5)).toBeLessThanOrEqual(P4_P50_MS);

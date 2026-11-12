@@ -45,7 +45,7 @@ Tuning (environment): `ABFM_PERF_GUEST` (`x86`, the default, or
 `ABFM_PERF_QPS` (`"50 200"`), `ABFM_PERF_SETTLE_AGE` (20 s: the dnsmasq age
 at which every alternation state starts), `ABFM_PERF_PAGE` (the LuCI page
 the browser opens; default
-`/cgi-bin/luci/admin/services/adblock-fast-monitor/overview`),
+`/cgi-bin/luci/admin/services/adblock-fast-monitor`),
 `ABFM_PERF_SKIP_BOOT=1` (skips the two power cycles: P10 and P1 report
 `NOT_MEASURED`), `ABFM_PERF_SKIP_BROWSER=1` (skips Playwright: P2–P4 report
 `NOT_MEASURED`). `GUEST_ACCEL`, `GUEST_CPUS` (2) and `GUEST_MEMORY`
@@ -143,6 +143,10 @@ measures (many small syslog writes and wakeups); see the results below.
    the on state, `log read` latency is measured under each load (below).
 5. **P2**: a fresh browser opens the page (visible control 12 s), hides it
    for 60 s, shows it again (polling must resume), closes it and waits 60 s.
+   The same is then done with Status → Overview and this app's section
+   (`browser-p2-status.json`, CONTRACT §8.6), counting only this app's calls
+   (`log read`, `luci.adblock-fast-monitor`): LuCI's own status polls keep
+   running in a hidden tab and are not this package's.
 6. **Settings save** of an option that does not touch query logging
    (`perf_save_probe=1`, then deleted the same way), 20 timed `info` calls,
    then 10 `apply` dry runs and one real `apply` while a separate process
@@ -214,7 +218,8 @@ measures (many small syslog writes and wakeups); see the results below.
   The browser's own HTTP round trip of every `log read` (through uhttpd and
   rpcd's session check) is recorded too (`page_polling`, informational).
 - **P2 requests** = every request of the browser context (any URL) that
-  starts after the page was hidden / closed. The hide uses a real
+  starts after the page was hidden / closed; for Status → Overview, only
+  requests that carry one of this app's calls (`browser.mjs p2 --count app`). The hide uses a real
   background tab when headless Chromium reports the page `hidden` after
   another tab is brought to front; otherwise Page Visibility emulation
   (`document.visibilityState`/`document.hidden` overridden, a

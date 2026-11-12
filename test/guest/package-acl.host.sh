@@ -163,11 +163,11 @@ for k in ("admin", "services", "adblock-fast-monitor"):
     if n is None:
         print("absent"); sys.exit()
 print("satisfied=%s" % str(bool(n.get("satisfied"))).lower())'; }
-route() { # USER PASSWORD -> HTTP status of the app's overview page for that login
+route() { # USER PASSWORD -> HTTP status of the app page for that login
 	local cookie
 	cookie="$(curl --silent --max-time 30 -o /dev/null -D - --data-urlencode "luci_username=$1" --data-urlencode "luci_password=$2" \
 		"$GUEST_HTTP_URL/cgi-bin/luci/" | tr -d '\r' | sed -n 's/^[Ss]et-[Cc]ookie: \(sysauth[_a-z]*=[0-9a-f]\{32\}\).*/\1/p' | head -n1)"
-	curl --silent --max-time 30 -o /dev/null -w '%{http_code}' -H "Cookie: $cookie" "$GUEST_HTTP_URL/cgi-bin/luci/admin/services/adblock-fast-monitor/overview"
+	curl --silent --max-time 30 -o /dev/null -w '%{http_code}' -H "Cookie: $cookie" "$GUEST_HTTP_URL/cgi-bin/luci/admin/services/adblock-fast-monitor"
 }
 ro_menu="$(menu "$GUEST_READONLY_USER" "$GUEST_READONLY_PASSWORD")"
 t_eq 'monitor-readonly: the app is a satisfied menu entry (control)' 'satisfied=true' "$(app_node <<<"$ro_menu")"

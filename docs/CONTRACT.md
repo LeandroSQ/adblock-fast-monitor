@@ -43,9 +43,9 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | `/usr/share/rpcd/ucode/luci.adblock-fast-monitor` | 0644, **not** world-writable | rpcd ucode plugin (§6) |
 | `/usr/share/rpcd/acl.d/luci-app-adblock-fast-monitor.json` | 0644 | §9 |
 | `/lib/upgrade/keep.d/luci-app-adblock-fast-monitor` | 0644 | lists `/etc/apk/keys/adblock-fast-monitor.pem` (the feed key added in LuCI, owned by no package) so sysupgrade keeps it |
-| `/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json` | 0644 | menu (depends on ACL `luci-app-adblock-fast-monitor`) |
-| `/www/luci-static/resources/view/adblock-fast-monitor/overview.js` | 0644 | dashboard: query table, stats, staging, apply (§8) |
-| `/www/luci-static/resources/view/adblock-fast-monitor/settings.js` | 0644 | `form.Map('adblock-fast-monitor')` (§3) |
+| `/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json` | 0644 | one menu entry, Services → Adblock Fast Monitor, that opens the page (depends on ACL `luci-app-adblock-fast-monitor`) |
+| `/www/luci-static/resources/view/adblock-fast-monitor/overview.js` | 0644 | the app's one page: statistics, last queries, staging, Apply and save, the query-logging switch (§8) |
+| `/www/luci-static/resources/view/status/include/75_adblock-fast-monitor.js` | 0644 | Status → Overview section with the same statistics (§8.6) |
 | `/www/luci-static/resources/adblock-fast-monitor/querylog.js` | 0644 | pure log cursor, parser, correlator and classifier (§8.1–8.3) |
 | `/www/luci-static/resources/adblock-fast-monitor/model.js` | 0644 | pure UI logic: staging reducer (§8.4), state derivation (§8.5) |
 
@@ -97,13 +97,13 @@ section are ignored.
 | --- | --- | --- | --- | --- |
 | `query_logging` | bool | `0` | init → `logging.uc` | `1`: write a drop-in for every dnsmasq instance with `disabled!=1`, so dnsmasq logs queries to logd; `0`: remove ours (logging enabled elsewhere, e.g. dhcp `logqueries`, is left alone) |
 
-The page's other choices are not router settings: it polls every 2 s
-(§8.1), and whether router queries (`127.0.0.1`, `::1`) are shown is a
-checkbox on the page, off by default (§8.2).
+The page has no other options: it polls every 2 s (§8.1) and never lists
+router queries (`127.0.0.1`, `::1`, §8.2).
 
-Settings saves go through LuCI `uci.apply`; the procd reload trigger runs the
-init script, which only reconciles the drop-ins (dnsmasq restarts only when
-the set changes).
+The page's "Turn on/off query logging" button (§8.5) saves the option
+through LuCI's `uci` save and `ui.changes.apply`; the procd reload trigger
+runs the init script, which only reconciles the drop-ins (dnsmasq restarts
+only when the set changes).
 
 ---
 
@@ -619,8 +619,8 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
 
 - `create(opts)` → `state`; `opts`: `{max_rows: 500, pending_ttl_s: 10,
   local_domains: [...], hide_router: true}` (`local_domains` from
-  `info.local_domains`; router queries are hidden unless the page's "show
-  router queries" checkbox is ticked).
+  `info.local_domains`; the page and the Status include always hide router
+  queries).
 - `nextRequest(state)` → `{lines: N}` per §8.1: 900 first and after a gap or
   logd restart, the resume size once after `resume()`, else
   `clamp(ceil(1.2·last batch)+16, 16, 900)`. Pure.
@@ -648,7 +648,8 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
   domain filter `match` (lower-cased substring) applies before paging; `limit` rows reach the
   DOM (default 50; the page shows 50). `upto` freezes the view at a row key, so a later page stays stable
   while new rows arrive. `newer` counts the rows that arrived since then, and
-  `latest` is the newest key.
+  `latest` is the newest key. The page shows only the newest 50 rows
+  (`limit: 50`, no filter, no paging).
 - `stats(state, {show_router})` → over the rows `rows()` would return with
   the same option:
   `{kept, blocked, allowed, other, no_answer, pending, blocked_pct, span_s,
@@ -769,14 +770,22 @@ HTML string (T27).
   that no `Block` is offered for a name equal to or under a protected name
   (the server would refuse it, §6.5). The protected list the page uses is
   the builtin set (`localhost arpa local internal invalid onion bind`) ∪
-  `info.local_domains` ∪ `info.protected_suffixes`; a manual `Block` of such
-  a name is refused in the browser too (`protected-domain`). Adding an op
-  for D replaces any pending op for D; adding the same op again removes it.
+  `info.local_domains` ∪ `info.protected_suffixes`; staging refuses a
+  `block` of such a name too (`protected-domain`). Adding an op for D
+  replaces any pending op for D; adding the same op again removes it. A
+  staged row shows one button, "Undo allow" or "Undo block". There is no manual
+  domain field: changes start from a row.
+- Staged changes are listed in one bar shown only while something is staged
+  (each with Remove), with **Discard** and **Apply and save**.
 - Domains are normalized as in §6.4 before they are stored.
-- **Apply.**
+- **Apply and save.** The ops land in adblock-fast's own UCI lists
+  `allowed_domain` and `blocked_domain` (§6.3), the lists luci-app-adblock-fast
+  shows as "Allowed Domains" and "Blocked Domains". Its Save & Apply only
+  reloads adblock-fast, which does not rebuild (§10); its "Redownload" button
+  runs `dl`, the rebuild the job runs (§7.2).
   1. `apply{dry_run:true}`. If the mode is `rebuild` (or the reply is
      `confirm-required`), show a `ui.showModal` confirmation that names the
-     cost.
+     lists and the cost.
   2. `apply` with `confirm_rebuild` set from that confirmation.
   3. When it returns `queued`, move **exactly the ops that were sent** to
      `inflight{job_id}`. Anything staged, replaced or synced from another
@@ -789,27 +798,42 @@ HTML string (T27).
 - The view follows a job started from another tab (storage event with a new
   `inflight`).
 - **Discard** clears the pending list.
-- Write controls (row buttons, Apply) are not rendered when
-  `!L.hasViewPermission()` (luci.js L3259).
+- The job's state, its per-domain results and, once it ended, a Dismiss
+  button are shown below the bar.
+- Write controls (row buttons, the bar, the query-logging buttons) are not
+  rendered when `!L.hasViewPermission()` (luci.js L3259).
 
 ### 8.5 Page states and data calls
 
 States, first match wins: `access-denied` (`info` rejects with `-32002`);
 `adblock-fast-missing` (`info.adblock_fast.installed=false`; no actions);
 `logging-off` (`info.monitor.query_logging=false` and no instance has
-`uci_logqueries`; link to Settings, actions still available);
+`uci_logqueries`; the statistics and the list are hidden, and an admin gets
+a "Turn on query logging" button; actions stay available);
 `logging-unavailable(reason)` (`!info.dnsmasq.running` → `dnsmasq-not-running`;
 an instance with `logfacility_file` → `dnsmasq-logs-to-file`; no instance
 has `dropin` or `uci_logqueries` → `confdir-invalid` or
 `logging-not-active`); `healthy`; `error` (`log read` rejected with no
-earlier data); `loading`. `info.warnings` render as dismissible notes.
+earlier data); `loading`. Every state except `healthy` is one notice
+(`#abfm-state`); `healthy` shows none.
 
-In the healthy state, when this app's `query_logging` is on and the user may
-write, the page offers a "Turn off query logging" button that sets
-`query_logging=0` through LuCI's `uci` save + `ui.changes.apply` (same path
-as Settings). Settings: when `info.warnings` has `logd-to-flash` or
-`logd-remote`, the page shows the risk and asks for confirmation before a
-save turns query logging on.
+Page layout, top to bottom: title and one line (what the page does; for
+administrators only, D6); the state notice; short notes only while they
+apply (DNS mode §8.3, log stalled, log unreadable, retrying, paused when
+idle); the statistics (LuCI's progress bar with the blocked percentage and
+`"%s of %s queries blocked in the last %s"`, plus the missed and paused
+counts with the log buffer size, §8.1); the staged-changes bar and the job
+(§8.4); the last queries (Time, Domain, Result as "Decision (source)", and
+Block/Allow for admins); one line about query logging.
+
+The query-logging line: when this app's `query_logging` is on, it says that
+dnsmasq logs every query, also while the page is closed, with a "Turn off
+query logging" button for admins; when dnsmasq's own `logqueries` is on, it
+says so (no button). `logd-to-flash` and `logd-remote` (§6.1) are shown on
+that line while logging is on; "Turn on query logging" asks for confirmation
+first when either is present. `query-logging-active` is not shown (the line
+says it). Both buttons set `query_logging` through LuCI's `uci` save and
+`ui.changes.apply` (§3).
 
 | Call | Cadence |
 | --- | --- |
@@ -818,7 +842,30 @@ save turns query logging on.
 | `job` | every 2 s while a job is non-terminal and the page is visible |
 
 All dynamic text goes through `E()` array children or text nodes. Views
-`'require'` `rpc`, `uci`, `ui`, `form`, `poll` and `view` explicitly.
+`'require'` the LuCI modules they use explicitly.
+
+### 8.6 Status → Overview section
+
+`view/status/include/75_adblock-fast-monitor.js` adds a section "Adblock
+Fast Monitor" to LuCI's Status → Overview: the same statistics as the page
+(progress bar and sentence, `abfm.model.summary`) over the queries it read
+itself, and a link to the page. LuCI's status page calls each section's
+`load()` on its own poll (`env.pollinterval`, 5 s), also in a hidden tab.
+The section therefore:
+
+- reads the log with its own `querylog` state (`hide_router: true`), the
+  same bounded `log read` calls as §8.1 (900 first, then adaptive, one
+  refetch at most, the resume size after a pause);
+- makes **no request** while `document.visibilityState` is not `visible` or
+  after 15 minutes without input (it shows the last result; P2);
+- calls `info` at its first visible load and then at most every 30 s, and
+  makes no `log read` while logging is off, unavailable or adblock-fast is
+  missing (it says so in one line);
+- renders nothing and makes no further request after `info` is refused
+  (`-32002`): accounts without this app's grant do not see it.
+
+LuCI lists the include directory through the grant of
+`luci-mod-status-index`; the calls need this app's read grant (§9).
 
 ---
 
@@ -853,8 +900,8 @@ All dynamic text goes through `E()` array children or text nodes. Views
   on `adblock-fast`: writes happen only through `apply`, and `uci get`
   of it is refused (ubus status 6) like any other config outside the grant.
 - Privacy: no client address is stored anywhere on the router by this
-  package. The page's client column is **hidden by default**, and router
-  queries (`127.0.0.1`, `::1`) are hidden by default (a page checkbox).
+  package. The page shows **no client addresses** (it has no client
+  column), and it never lists router queries (`127.0.0.1`, `::1`).
 
 ---
 
@@ -895,7 +942,7 @@ guest's task-based CPU total. The OpenWrt kernels have no
 | ID | Metric | Budget |
 | --- | --- | --- |
 | P1 | package processes in every state: after install and after a boot, with `query_logging=0` and `=1`, in every load window (snapshots and 100–250 ms `/proc` watches); transient init-script invocations (≤ 10 s) at boot and while idle; rpcd RssAnon growth vs stock | 0 resident processes, except `job.uc` during an Apply (**hard**); transient invocations ≤ 2 per boot plus the boot start (rcS running `S18… boot`, ≤ 1), 0 while idle; rpcd RssAnon ≤ 1 MiB |
-| P2 | requests made by a hidden page (background tab or Page Visibility emulation) and by a closed page | 0 in 60 s each (**hard**); the visible control must poll, and polling must resume when shown |
+| P2 | requests made by a hidden page (background tab or Page Visibility emulation) and by a closed page; the same for Status → Overview, counting this app's calls only (§8.6) | 0 in 60 s each (**hard**); the visible control must poll, and polling must resume when shown |
 | P3 | one visible page polling every 2 s under 50 / 200 qps: CPU of uhttpd + ubusd + logd + rpcd vs the same load with no page; `log read` p95 (ubus, guest) | ≤ 1 / 2 pp [2 / 6]; p95 ≤ 50 ms at the adaptive N (incremental), ≤ 150 ms at N = 900 |
 | P4 | browser parse + classify + render per poll at 900 entries, to the next painted frame, 4× CPU throttle (`abfm-poll` performance measure) | p95 ≤ 20 ms; ≤ 500 rows kept, ≤ 50 in the DOM |
 | P5 | DNS p95 latency delta, query logging on vs off, same load | median(on p95) − median(off p95) ≤ max(2 ms [3 ms], measured noise floor), ≥ 3 runs per state, loss ≤ 0.5 % |
@@ -967,12 +1014,12 @@ Environments:
 | T20 | §10 | a committed `allowed_domain` change picked up by `reload_config`, `reload` or `restart` leaves the name blocked; only `dl` rebuilds | G | `test/guest/actions-upstream-reload.sh` |
 | T21 | §9 | for a read+write app login and the read-only login: `log read`, `info`, `job`, `uci get adblock-fast-monitor` allowed; `uci get adblock-fast` refused; `log write` and `/ubus/subscribe/log` refused (root's subscription streams as a control); `apply` allowed for admins, denied read-only; `uci set` denied as granted; a login without this app's ACL gets no menu entry and `-32002` on `info`, `job` and `log read` | G | `test/guest/package-acl.host.sh`, `test/guest/actions-session.host.sh` |
 | T22 | §2 install | LuCI Software upload with the key added through LuCI (no `--allow-untrusted`) → methods work without a manual rpcd restart; removal removes drop-ins (one dnsmasq restart), files, the `rc.d` link and the runtime state | B+G | `test/browser/install-luci.spec.mjs` (`scripts/release/verify-luci-install.sh`), `test/guest/package-remove.host.sh` |
-| T23 | §8.5 | each page state rendered from a real guest condition | B | `test/browser/` |
-| T24 | §8.4 | staging persists across reload; Allow/Block row buttons; one `apply` per batch; confirm modal for rebuild; job progress; failed items return to pending | B | `test/browser/` |
-| T25 | §8.4, §9 | a read-only user sees no write controls; Settings loads and saves for an admin | B | `test/browser/` |
+| T23 | §8.5, §8.6 | each page state rendered from a real guest condition; the Status → Overview section shows the same statistics, hides for accounts without the grant | B | `test/browser/` |
+| T24 | §8.4 | staging persists across reload; Allow/Block row buttons; one `apply` per batch; confirm modal for rebuild; job progress; failed items return to pending; applied domains appear in luci-app-adblock-fast's Allowed/Blocked Domains lists | B | `test/browser/` |
+| T25 | §8.4, §8.5, §9 | a read-only user sees no write controls; an admin turns query logging off and on from the page | B | `test/browser/` |
 | T26 | §11 | P-budgets measured on the guest with raw results recorded; gate verdict per metric | G | `scripts/integration/measure-performance.mjs` |
 | T27 | §8.3 untrusted strings | a logged PTR answer like `<img/src=x/onerror=window.__x=1>` is shown as literal text, no `<img>` in the DOM, `window.__x` undefined | B | `test/browser/` |
-| T28 | §8.1, P2 | a hidden page makes 0 requests over 60 s; polling resumes when visible | B | `test/browser/` |
+| T28 | §8.1, §8.6, P2 | a hidden page, and a hidden Status → Overview, make 0 of this app's requests over 60 s; polling resumes when visible | B | `test/browser/` |
 | T29 | §8.1 gaps | under load the shown missed count equals the id gap; a `log` restart resets the cursor | B+G | `test/browser/` |
 | T30 | §2 upgrade | `apk upgrade` from an older api-2 package over a signed feed: changed conffile kept, drop-ins kept, 0 dnsmasq restarts, the last job still reported, caches cleared, rpcd reloaded, the `instance.update` trigger runs `logging.uc reconcile` | G | `scripts/release/verify-upgrade.sh` → `test/guest/package-upgrade.host.sh` |
 | T31 | §2 inventory | dependencies, modes, owners, conffile defaults, sysupgrade keep list | G | `test/guest/package-files.host.sh` |

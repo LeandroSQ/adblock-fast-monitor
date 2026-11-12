@@ -13,13 +13,18 @@ blocked, and lets you allow or block a name with one click.
 
 ## What you get
 
-- **Recent queries:** time, name, answer, and whether adblock-fast blocked
-  or allowed each one.
-- **Blocked %** over the recent queries.
-- **Allow / Block** on every row. Changes wait in a list until you press
-  **Apply**, so ten changes cost one rebuild, not ten.
+- **Blocked %** of the recent queries, also on **Status → Overview**:
 
-![Two pending changes and the Apply confirmation](docs/images/apply.png)
+  ![The Adblock Fast Monitor section on Status → Overview](docs/images/status.png)
+
+- **Recent queries:** time, name, and whether adblock-fast blocked or
+  allowed each one. The list updates by itself.
+- **Block / Allow** on every row. Changes wait in a bar until you press
+  **Apply and save**, so ten changes cost one rebuild, not ten. They go into
+  adblock-fast's own **Allowed Domains** and **Blocked Domains** lists, so
+  adblock-fast's page shows them too.
+
+![Two changes waiting and the Apply and save confirmation](docs/images/apply.png)
 
 It needs OpenWrt 25.12 and adblock-fast. It is its own package: it does not
 change or copy adblock-fast.
@@ -36,16 +41,16 @@ change or copy adblock-fast.
    `customfeeds.list` and click **Save**.
 3. **Install.** In **System → Software**, click **Update lists…**, search
    for `luci-app-adblock-fast-monitor` and click **Install…**.
-4. **Turn on logging.** Open **Services → Adblock Fast Monitor →
-   Settings**, tick **Log DNS queries** and click **Save & Apply**. (If
-   dnsmasq already logs queries, the page says so and you can skip this.)
-5. **Watch.** Open **Services → Adblock Fast Monitor**. New queries show up
-   every 2 seconds.
-6. **Change rules.** Click **Allow** on a blocked name or **Block** on an
-   allowed one. The change goes to **Pending changes**.
-7. **Apply.** Click **Apply changes**, then **Apply** in the dialog.
-   adblock-fast rebuilds its lists once, and the page checks each name with
-   a real DNS lookup.
+4. **Turn on logging.** Open **Services → Adblock Fast Monitor** and click
+   **Turn on query logging**. (If dnsmasq already logs queries, the page
+   says so and you can skip this.)
+5. **Watch.** New queries show up every 2 seconds while the page is open.
+   **Status → Overview** shows the blocked share too.
+6. **Change rules.** Click **Block** on an allowed name or **Allow** on a
+   blocked one. Click **Undo** to take it back.
+7. **Apply and save.** Click **Apply and save**, then confirm. adblock-fast
+   rebuilds its lists once, and the page checks each name with a real DNS
+   lookup.
 
 Updates appear later under **System → Software → Updates**.
 
@@ -54,17 +59,20 @@ Updates appear later under **System → Software → Updates**.
 ```text
  your browser ──"read the system log"──▶ router (logd)
       │                                      ▲
-      │ parses the lines, draws the table    │ dnsmasq writes one line per query
+      │ parses the lines, draws the list     │ dnsmasq writes one line per query
       │                                      │
-      └──── Apply ──▶ adblock-fast rebuilds its lists once
+      └── Apply and save ──▶ adblock-fast's Allowed/Blocked Domains,
+                             then one rebuild of its lists
 ```
 
-The **Log DNS queries** switch tells dnsmasq to write each query to the
+**Turn on query logging** tells dnsmasq to write each query to the
 router's system log. The page asks for the newest log lines every 2 seconds,
 the same way LuCI's System Log page does, and does all the reading and
 counting in your browser. Nothing of this package runs in the background on
-the router. When you press Apply, your changes are saved in adblock-fast's
-own settings and adblock-fast rebuilds its block list once.
+the router. When you press **Apply and save**, your changes are saved in
+adblock-fast's own **Allowed Domains** and **Blocked Domains** lists and
+adblock-fast rebuilds its block list once, as its own **Redownload** button
+does. (adblock-fast's **Save & Apply** alone does not rebuild the lists.)
 
 ## Resource usage
 
@@ -75,7 +83,7 @@ treat the times as relative, not absolute.
 | What | Result |
 | --- | --- |
 | Background processes | none |
-| Requests while the tab is hidden or closed | 0 |
+| Requests while the tab is hidden or closed (also Status → Overview) | 0 |
 | Extra router CPU while the page is open | about 0 (lost in the noise) |
 | Extra DNS delay | 0.1 ms or less |
 | Router memory | about 200 KB, inside rpcd |
@@ -97,6 +105,8 @@ package's: turning it on by hand costs the same. Details and method:
   smartdns and unbound are not supported.
 - **Apply takes a while.** A rebuild downloads adblock-fast's lists again;
   it takes as long as adblock-fast needs.
+- **Only the newest 50 queries** are listed, newest first, and queries made
+  by the router itself (`127.0.0.1`, `::1`) are never listed or counted.
 
 ## Privacy: admins only
 
@@ -107,9 +117,9 @@ package's: turning it on by hand costs the same. Details and method:
 - With logging on, every DNS query and the client's address go to the
   system log. If your log is also saved to a file or sent to another
   server, the queries go there too; the page warns you.
-- Nothing about your clients is stored on the router. The client column is
-  hidden by default. Pending changes (domain names only) stay in your
-  browser until you apply or discard them.
+- Nothing about your clients is stored on the router, and the page shows
+  no client addresses. Changes you have not applied (domain names only)
+  stay in your browser until you apply or discard them.
 
 ## Uninstall
 

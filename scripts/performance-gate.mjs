@@ -288,25 +288,39 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
 }
 
 // ---------------------------------------------------------------- P2
+// browser-p2: the app's page; browser-p2-status (when the run has it): the
+// Status → Overview page with this app's include, counting only this app's
+// calls (`log read`, luci.adblock-fast-monitor), since LuCI's own status
+// polls keep running in a hidden tab.
 {
-  const b = load('browser-p2');
-  const ph = b?.phases;
-  if (!ph?.hidden || !ph?.closed) {
-    notMeasured('P2', b ? `browser p2 incomplete: ${(b.errors ?? []).join('; ').slice(0, 300)}` : 'no browser p2 run');
-  } else {
-    // The counter must be shown to work: the visible page polls.
-    const works = ph.visible_control.requests > 0;
-    const info = { hide_method: ph.hidden.method, visible_control_requests: ph.visible_control.requests,
+  const p2 = name => {
+    const b = load(name);
+    const ph = b?.phases;
+    if (!ph?.hidden || !ph?.closed) return { missing: true, reason: b ? `${name} incomplete: ${(b.errors ?? []).join('; ').slice(0, 300)}` : `no ${name} run` };
+    const info = { page: b.page ?? null, counted: b.counted ?? 'all', hide_method: ph.hidden.method,
+      visible_control_requests: ph.visible_control.requests,
       visible_control_s: round((ph.visible_control.to_ms - ph.visible_control.from_ms) / 1000, 1),
       hidden_requests: ph.hidden.requests, hidden_s: round((ph.hidden.to_ms - ph.hidden.from_ms) / 1000, 1),
       hidden_urls: ph.hidden.urls, hidden_router_ticks: ph.hidden.router_ticks,
       resumed_after_ms: ph.resumed?.first_request_after_ms ?? null,
       closed_requests: ph.closed.requests, closed_s: round((ph.closed.to_ms - ph.closed.from_ms) / 1000, 1),
-      closed_router_ticks: ph.closed.router_ticks, errors: b.errors, budget: budgets.P2, raw: ['browser-p2.json'] };
+      closed_router_ticks: ph.closed.router_ticks, errors: b.errors, raw: [`${name}.json`] };
+    // The counter must be shown to work: the visible page polls.
+    const works = ph.visible_control.requests > 0;
     const long = info.hidden_s >= budgets.P2.window_s && info.closed_s >= budgets.P2.window_s;
-    if (!works || !long) notMeasured('P2', works ? 'hidden/closed windows shorter than budgeted' : 'the visible page made no request (counter unproven)', info);
-    else judge('P2', ph.hidden.requests <= budgets.P2.hidden_requests && ph.closed.requests <= budgets.P2.closed_requests &&
-      info.resumed_after_ms != null, info);
+    if (!works || !long) return { info, reason: works ? `${name}: hidden/closed windows shorter than budgeted` : `${name}: the visible page made no request (counter unproven)` };
+    return { info, pass: ph.hidden.requests <= budgets.P2.hidden_requests && ph.closed.requests <= budgets.P2.closed_requests &&
+      info.resumed_after_ms != null };
+  };
+  const page = p2('browser-p2');
+  const status = load('browser-p2-status') ? p2('browser-p2-status') : null;
+  if (page.missing) {
+    notMeasured('P2', page.reason);
+  } else {
+    const info = { ...page.info, status: status?.info ?? null, budget: budgets.P2 };
+    const reason = page.reason ?? status?.reason;
+    if (reason) notMeasured('P2', reason, info);
+    else judge('P2', page.pass && (status == null || status.pass), info);
   }
 }
 
@@ -553,7 +567,8 @@ function brief(id, m) {
   try {
     switch (id) {
     case 'P1': return `resident ${m.package_processes}${m.found.length ? ` (${m.found[0]}${m.found.length > 1 ? ', …' : ''})` : ''} (≤ ${b.package_processes}); transient init at boot ≤ ${m.transient.boot_max_invocations} per boot (≤ ${b.transient_boot_max}) + ${m.transient.boot_max_starts} boot start (≤ ${b.transient_boot_start_max}), ${Object.values(m.transient.boot).map(v => `${v.wall_s} s`).join('/')} wall; idle ${m.transient.idle_invocations} (≤ ${b.transient_idle_max}); rpcd RssAnon +${m.rpcd_rss_anon_delta_kib} KiB (≤ ${b.rpcd_rss_anon_delta_kib})${m.missing ? `; ${m.missing}` : ''}`;
-    case 'P2': return `hidden ${m.hidden_requests} req/${m.hidden_s} s (${m.hide_method}), closed ${m.closed_requests} req/${m.closed_s} s, visible control ${m.visible_control_requests} req/${m.visible_control_s} s`;
+    case 'P2': return `hidden ${m.hidden_requests} req/${m.hidden_s} s (${m.hide_method}), closed ${m.closed_requests} req/${m.closed_s} s, visible control ${m.visible_control_requests} req/${m.visible_control_s} s` +
+      (m.status ? `; Status → Overview (app calls): hidden ${m.status.hidden_requests}, closed ${m.status.closed_requests}, visible control ${m.status.visible_control_requests} req/${m.status.visible_control_s} s` : '');
     case 'P3': return rates.map(q => `@${q}: Δ ${m.rates[q].cpu_delta_pp} pp (≤ ${b.cpu_delta_pp[q]}), log read p95 N=${m.rates[q].log_read.n_incremental_runs[0]} ${m.rates[q].log_read.incremental_p95_ms} ms (≤ ${m.rates[q].log_read.incremental_budget_ms}) N=900 ${m.rates[q].log_read.full_p95_ms} ms (≤ ${b.log_read_full_p95_ms})`).join('; ');
     case 'P4': return m.marks_at_900 ? `page marks p95 ${m.marks_p95_ms} ms over ${m.marks_total} polls (${m.marks_at_900} at ≥ ${b.min_entries} entries: p95 ${m.marks_at_900_p95_ms} ms), CPU throttle ${m.cpu_throttle.join('/')}× (≤ ${b.poll_p95_ms})` : `querylog module p95 ${m.module_bench?.p95_ms} ms at ${m.module_bench?.entries?.[0]} entries (≤ ${b.poll_p95_ms}; no render)`;
     case 'P5': return rates.map(q => `@${q}: Δp95 ${m.rates[q].delta_ms} ms (≤ ${m.rates[q].allowed_delta_ms})`).join(', ');

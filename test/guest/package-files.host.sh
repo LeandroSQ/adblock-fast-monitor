@@ -41,7 +41,7 @@ inventory=(
 	/usr/share/rpcd/ucode/luci.adblock-fast-monitor:644
 	/usr/share/luci/menu.d/luci-app-adblock-fast-monitor.json:644
 	/www/luci-static/resources/view/adblock-fast-monitor/overview.js:644
-	/www/luci-static/resources/view/adblock-fast-monitor/settings.js:644
+	/www/luci-static/resources/view/status/include/75_adblock-fast-monitor.js:644
 	/www/luci-static/resources/adblock-fast-monitor/model.js:644
 	/www/luci-static/resources/adblock-fast-monitor/querylog.js:644
 )

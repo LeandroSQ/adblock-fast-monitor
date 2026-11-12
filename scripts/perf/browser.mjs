@@ -13,9 +13,12 @@
 //     requests after its initial load (or after 30 s without any). Before exiting it reads the
 //     page's `abfm-poll` performance measures and times the querylog module
 //     on a real `log read {lines:900}` reply fetched by the page (P4).
-//   node scripts/perf/browser.mjs p2 --out FILE [--hidden-s 60] [--closed-s 60]
+//   node scripts/perf/browser.mjs p2 --out FILE [--hidden-s 60] [--closed-s 60] [--page PATH] [--count app]
 //     Visible control (12 s), hidden (--hidden-s), visible again (resume
 //     check), page closed (--closed-s); counts requests in each phase (P2).
+//     --page opens another LuCI page (default ABFM_PERF_PAGE, else the app's
+//     page); --count app counts only this app's calls (`log read`,
+//     luci.adblock-fast-monitor), for Status → Overview and its include.
 //
 // Environment (exported by scripts/guest/run-guest-tests.sh): GUEST_HTTP_URL,
 // GUEST_ROOT_PASSWORD; optional ABFM_PERF_PAGE (default the overview path)
@@ -35,7 +38,10 @@ const opt = {};
 for (let i = 0; i < rest.length; i += 2) opt[rest[i].replace(/^--/, '')] = rest[i + 1];
 const base = process.env.GUEST_HTTP_URL;
 const password = process.env.GUEST_ROOT_PASSWORD;
-const path = process.env.ABFM_PERF_PAGE || '/cgi-bin/luci/admin/services/adblock-fast-monitor/overview';
+const path = opt.page || process.env.ABFM_PERF_PAGE || '/cgi-bin/luci/admin/services/adblock-fast-monitor';
+// --count app: count only this app's calls (`log read`, luci.adblock-fast-monitor),
+// e.g. on Status → Overview, where LuCI's own polls go on in a hidden tab.
+const appOnly = opt.count === 'app';
 const MARK = 'abfm-poll';
 if (!['hold', 'p2'].includes(mode) || !opt.out || !base || !password) {
   console.error('usage: browser.mjs hold|p2 --out FILE ... (GUEST_HTTP_URL and GUEST_ROOT_PASSWORD required)');
@@ -44,7 +50,7 @@ if (!['hold', 'p2'].includes(mode) || !opt.out || !base || !password) {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const t0 = Date.now();
 const rel = () => Date.now() - t0;
-const result = { mode, page: path, started_at: new Date(t0).toISOString(), errors: [] };
+const result = { mode, page: path, counted: appOnly ? 'app' : 'all', started_at: new Date(t0).toISOString(), errors: [] };
 
 // One record per request of the monitored context. JSON-RPC bodies (single or
 // batched) are reduced to [object, method, lines] so the poll schedule and the
@@ -75,7 +81,8 @@ function track(context) {
   context.on('requestfinished', done);
   context.on('requestfailed', done);
 }
-const count = (from, to = Infinity) => requests.filter(r => r.t_ms >= from && r.t_ms < to);
+const isApp = r => r.calls.some(c => c[0] === 'log' || c[0] === 'luci.adblock-fast-monitor');
+const count = (from, to = Infinity) => requests.filter(r => r.t_ms >= from && r.t_ms < to && (!appOnly || isApp(r)));
 const ubusCount = (from, to) => count(from, to).filter(r => r.path.startsWith('/ubus')).length;
 
 async function open(browser) {

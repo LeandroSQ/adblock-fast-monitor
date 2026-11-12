@@ -469,8 +469,11 @@ function formatCount(n) {
 	return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, _(',', 'thousands separator'));
 }
 
+/* Whole percent ("33 %"); "<1 %" for a small non-zero share; "—" without data. */
 function formatPct(pct) {
-	return (typeof(pct) == 'number' && isFinite(pct)) ? fmt(_('%s %%'), pct.toFixed(1)) : '—';
+	if (typeof(pct) != 'number' || !isFinite(pct))
+		return '—';
+	return (pct > 0 && pct < 1) ? fmt(_('<%s %%'), 1) : fmt(_('%s %%'), Math.round(pct));
 }
 
 /* Humanized duration: "45 s", "3 min", "2 h 5 min", "3 d 4 h". */
@@ -485,15 +488,56 @@ function formatDuration(seconds) {
 	return (h % 24) ? fmt(_('%s d %s h'), d, h % 24) : fmt(_('%s d'), d);
 }
 
-/* Local wall-clock time of an epoch (s): "2026-11-10 12:03:04". */
-function formatTime(epoch) {
+/* Local clock time of an epoch (s): "12:03:04"; the list only shows the last minutes. */
+function formatClock(epoch) {
 	const n = int(epoch, null);
 	if (n == null || n <= 0)
 		return '—';
 	const d = new Date(n * 1000);
 	const p = v => (v < 10 ? '0' : '') + v;
-	return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
-		p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+	return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+/*
+ * The one-line statistics of the page and of the Status → Overview include,
+ * from querylog.stats(): {pct (number or null), value ("33 %", or null when
+ * not shown), text}. dnsMode is dnsModeNote(): in the firewall modes the log
+ * cannot show blocks, so no percentage is given.
+ */
+function summary(stats, dnsMode) {
+	const s = isObject(stats) ? stats : {};
+	const blocked = int(s.blocked, 0), allowed = int(s.allowed, 0);
+	const answered = blocked + allowed;
+	if (dnsMode)
+		return { pct: null, value: null, text: dnsMode == 'firewall'
+			? _('Not shown: adblock-fast blocks in the firewall in this DNS mode.')
+			: _('Not shown: adblock-fast does not use dnsmasq in this DNS mode.') };
+	if (!answered)
+		return { pct: null, value: null, text: _('No queries yet.') };
+	const pct = (typeof(s.blocked_pct) == 'number' && isFinite(s.blocked_pct)) ? s.blocked_pct : Math.round(1000 * blocked / answered) / 10;
+	return { pct: pct, value: formatPct(pct),
+		text: fmt(_('%s of %s queries blocked in the last %s'), formatCount(blocked), formatCount(answered), formatDuration(s.span_s)) };
+}
+
+/*
+ * Who turns query logging on (§3, §8.5): 'ours' (this app's drop-in),
+ * 'elsewhere' (dnsmasq's own `logqueries`, e.g. luci-app-adblock-fast) or
+ * 'off'; null without info.
+ */
+function loggingSource(infoResult) {
+	const info = infoData(infoResult);
+	if (!info)
+		return null;
+	if (loggingElsewhere(infoResult))
+		return 'elsewhere';
+	return (isObject(info.monitor) && info.monitor.query_logging === true) ? 'ours' : 'off';
+}
+
+/* info.warnings that make turning logging on a risk: the log leaves RAM. */
+function loggingRisks(infoResult) {
+	const info = infoData(infoResult);
+	const w = (info && Array.isArray(info.warnings)) ? info.warnings : [];
+	return [ 'logd-to-flash', 'logd-remote' ].filter(c => w.indexOf(c) >= 0);
 }
 
 return baseclass.extend({
@@ -536,5 +580,8 @@ return baseclass.extend({
 	formatCount: formatCount,
 	formatPct: formatPct,
 	formatDuration: formatDuration,
-	formatTime: formatTime
+	formatClock: formatClock,
+	summary: summary,
+	loggingSource: loggingSource,
+	loggingRisks: loggingRisks
 });

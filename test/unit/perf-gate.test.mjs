@@ -81,6 +81,19 @@ test('T26: P2 fails on one request while hidden or closed', () => {
   assert.equal(closed.verdict.per_metric.P2, 'FAIL');
 });
 
+test('T26: P2 also fails on an app call from a hidden or closed Status → Overview page', () => {
+  const status = (f) => {
+    f['browser-p2-status'] = structuredClone(f['browser-p2']);
+    f['browser-p2-status'].counted = 'app';
+  };
+  assert.equal(gate(edit(f => { status(f); })).verdict.per_metric.P2, 'PASS');
+  assert.equal(gate(edit(f => { status(f); f['browser-p2-status'].phases.hidden.requests = 1; })).verdict.per_metric.P2, 'FAIL');
+  assert.equal(gate(edit(f => { status(f); f['browser-p2-status'].phases.closed.requests = 1; })).verdict.per_metric.P2, 'FAIL');
+  assert.equal(gate(edit(f => { status(f); f['browser-p2-status'].phases.visible_control.requests = 0; })).verdict.per_metric.P2, 'NOT_MEASURED');
+  const g = gate(edit(f => { status(f); }));
+  assert.equal(g.metric('P2').status.counted, 'app');
+});
+
 test('T26: P2 is not measured without the run, a working counter or a full window', () => {
   assert.equal(gate(edit(f => { delete f['browser-p2']; })).verdict.per_metric.P2, 'NOT_MEASURED');
   assert.equal(gate(edit(f => { f['browser-p2'].phases.visible_control.requests = 0; })).verdict.per_metric.P2, 'NOT_MEASURED');

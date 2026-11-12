@@ -263,16 +263,49 @@ test('fmt fills %s in order and keeps %%', () => {
   assert.equal(m.fmt('none'), 'none');
 });
 
-test('formatting: counts, percentages, durations, local times', () => {
+test('formatting: counts, percentages, durations, clock times', () => {
   assert.equal(m.formatCount(1234567), '1,234,567');
-  assert.equal(m.formatPct(15.4), '15.4 %');
+  assert.equal(m.formatPct(15.4), '15 %');
+  assert.equal(m.formatPct(33.5), '34 %');
+  assert.equal(m.formatPct(0), '0 %');
+  assert.equal(m.formatPct(0.4), '<1 %');
+  assert.equal(m.formatPct(100), '100 %');
   assert.equal(m.formatPct(null), '—');
   assert.deepEqual([0, 59, 60, 3599, 3600, 3660, 86400, 90000].map(m.formatDuration),
     ['0 s', '59 s', '1 min', '59 min', '1 h', '1 h 1 min', '1 d', '1 d 1 h']);
   const t = 1762747359;
   const d = new Date(t * 1000);
-  assert.equal(m.formatTime(t), `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`);
-  assert.equal(m.formatTime(null), '—');
+  assert.equal(m.formatClock(t), `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`);
+  assert.equal(m.formatClock(null), '—');
+});
+
+test('summary: the one-line statistics of the page and the Status include', () => {
+  const stats = (o) => ({ kept: 0, blocked: 0, allowed: 0, other: 0, no_answer: 0, pending: 0, blocked_pct: null, span_s: 0, ...o });
+  assert.deepEqual(m.summary(stats({ kept: 13, blocked: 4, allowed: 8, other: 1, blocked_pct: 33.3, span_s: 8 }), null),
+    { pct: 33.3, value: '33 %', text: '4 of 12 queries blocked in the last 8 s' });
+  assert.deepEqual(m.summary(stats({ blocked: 1500, allowed: 500, blocked_pct: 75, span_s: 125 }), null),
+    { pct: 75, value: '75 %', text: '1,500 of 2,000 queries blocked in the last 2 min' });
+  // no answered query yet (only pending or other rows): no percentage
+  assert.deepEqual(m.summary(stats({ kept: 2, other: 1, pending: 1 }), null), { pct: null, value: null, text: 'No queries yet.' });
+  assert.deepEqual(m.summary(null, null), { pct: null, value: null, text: 'No queries yet.' });
+  // the log cannot show blocks in the firewall modes, nor for other resolvers
+  const fw = m.summary(stats({ blocked: 0, allowed: 9, blocked_pct: 0 }), 'firewall');
+  assert.deepEqual([fw.pct, fw.value], [null, null]);
+  assert.match(fw.text, /firewall/);
+  assert.match(m.summary(stats({ allowed: 9 }), 'unsupported').text, /does not use dnsmasq/);
+});
+
+test('loggingSource and loggingRisks: the query-logging line and the turn-on question', () => {
+  assert.equal(m.loggingSource(null), null);
+  assert.equal(m.loggingSource(err(-32002)), null);
+  assert.equal(m.loggingSource(ok(info())), 'ours');
+  assert.equal(m.loggingSource(ok(info({ monitor: { query_logging: false } }))), 'off');
+  // dnsmasq's own logqueries wins: this app's switch does not matter then
+  assert.equal(m.loggingSource(ok(info({ dnsmasq: { running: true, instances: [inst({ uci_logqueries: true })] } }))), 'elsewhere');
+  assert.deepEqual(m.loggingRisks(ok(info({ warnings: ['query-logging-active', 'logd-remote', 'logd-to-flash'] }))),
+    ['logd-to-flash', 'logd-remote']);
+  assert.deepEqual(m.loggingRisks(ok(info({ warnings: ['query-logging-active'] }))), []);
+  assert.deepEqual(m.loggingRisks(null), []);
 });
 
 test('logWatch/logStalled: notice after a logd restart with no dnsmasq line since', () => {
@@ -315,8 +348,8 @@ test('edges: job id anchors, multi-digit codes, length limits, numeric parsing',
   assert.equal(m.normalizeDomain('a.1b'), 'a.1b');
   assert.equal(m.normalizeDomain('a.b1'), 'a.b1');
   for (const v of [true, false, '', null, undefined, 'x', NaN]) assert.equal(m.formatCount(v), '0', String(v));
-  assert.equal(m.formatTime(0), '—');
-  assert.equal(m.formatTime(true), '—');
+  assert.equal(m.formatClock(0), '—');
+  assert.equal(m.formatClock(true), '—');
   assert.deepEqual(m.parsePending({ v: 2, items: [{ op: 'block', domain: 'a.example.com', ts: '5', reason: 'x'.repeat(100) }] }).items,
     [{ op: 'block', domain: 'a.example.com', ts: 5, reason: 'x'.repeat(64) }]);
   assert.deepEqual(m.markError(m.emptyPending(), null), m.emptyPending());

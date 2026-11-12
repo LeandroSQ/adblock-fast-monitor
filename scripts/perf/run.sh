@@ -127,7 +127,7 @@ cat >"$raw/meta-host.json" <<-EOF
 	 "package_sha256":"${PACKAGE_SHA256:-}","package_file":"$(basename "${PACKAGE_APK:-unknown}")",
 	 "repeats":$repeats,"load_seconds":$load_s,"hidden_seconds":$hidden_s,"rates":[${rates// /,}],
 	 "guest":"${ABFM_PERF_GUEST:-x86}","guest_target":"${GUEST_TARGET:-x86-64}","settle_age_s":$settle_age,
-	 "browser":$( ((browser_ok)) && echo true || echo false),"page":"${ABFM_PERF_PAGE:-/cgi-bin/luci/admin/services/adblock-fast-monitor/overview}",
+	 "browser":$( ((browser_ok)) && echo true || echo false),"page":"${ABFM_PERF_PAGE:-/cgi-bin/luci/admin/services/adblock-fast-monitor}",
 	 "guest_run_dir":"${GUEST_RUN_DIR:-}"}
 EOF
 
@@ -228,6 +228,10 @@ if ((browser_ok)); then
 	log "P2: hidden page ${hidden_s}s, closed page ${hidden_s}s"
 	node scripts/perf/browser.mjs p2 --out "$raw/browser-p2.json" --hidden-s "$hidden_s" --closed-s "$hidden_s" \
 		>"$raw/browser-p2.log" 2>&1 || err "browser p2 failed: $(tail -c 300 "$raw/browser-p2.log")"
+	log "P2: Status → Overview with the app's include, hidden ${hidden_s}s, closed ${hidden_s}s (app calls only)"
+	node scripts/perf/browser.mjs p2 --page /cgi-bin/luci/admin/status/overview --count app --out "$raw/browser-p2-status.json" \
+		--hidden-s "$hidden_s" --closed-s "$hidden_s" \
+		>"$raw/browser-p2-status.log" 2>&1 || err "browser p2 (status) failed: $(tail -c 300 "$raw/browser-p2-status.log")"
 fi
 
 # --- P10 settings save, P7 info, P8 apply ----------------------------------

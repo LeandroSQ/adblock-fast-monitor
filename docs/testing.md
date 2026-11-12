@@ -132,9 +132,10 @@ part of `npm run test:unit`).
 boots a guest like `verify:guest --no-tests`, prepares it with the browser
 suite's setup (`test/browser/global-setup.mjs`: the fixture block list and a
 fake upstream answering `*.up.example.test` with `192.0.2.10`), sends test
-queries from the host and saves `docs/images/overview.png` and
-`docs/images/apply.png` (1280 px wide). It stages two changes and opens the
-Apply dialog but never applies them, and fails if an image is 300 KB or
+queries from the host and saves `docs/images/overview.png`,
+`docs/images/apply.png` (1280 px wide) and `docs/images/status.png` (the
+Status → Overview section). It stages two changes and opens the "Apply and
+save" dialog but never applies them, and fails if an image is 300 KB or
 larger.
 
 ## CI

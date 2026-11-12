@@ -6,8 +6,8 @@ import { execFileSync } from 'node:child_process';
 import dgram from 'node:dgram';
 import { expect } from '@playwright/test';
 
-export const OVERVIEW = '/cgi-bin/luci/admin/services/adblock-fast-monitor/overview';
-export const SETTINGS = '/cgi-bin/luci/admin/services/adblock-fast-monitor/settings';
+export const OVERVIEW = '/cgi-bin/luci/admin/services/adblock-fast-monitor';
+export const STATUS = '/cgi-bin/luci/admin/status/overview';
 
 export const admin = {
   username: process.env.MONITOR_WRITE_LUCI_USERNAME || 'root',
@@ -73,16 +73,18 @@ export async function login(page, user, path = OVERVIEW) {
   }
   await page.goto(path);
   const field = page.locator('input[name="luci_username"]');
-  // The login form is a JavaScript modal; a logged-in page renders a .cbi-map.
-  await page.locator('input[name="luci_username"]:visible, #view .cbi-map').first().waitFor({ timeout: 60_000 });
+  // The login form is a JavaScript modal; a logged-in page renders a .cbi-map
+  // (Status → Overview renders .cbi-section blocks instead).
+  const ready = '#view .cbi-map, #view .cbi-section';
+  await page.locator(`input[name="luci_username"]:visible, ${ready}`).first().waitFor({ timeout: 60_000 });
   if (await field.isVisible()) {
     await field.fill(user.username);
     await page.locator('input[name="luci_password"]').fill(user.password);
     await page.getByRole('button', { name: 'Log in' }).click();
-    await page.locator('#view .cbi-map').first().waitFor({ timeout: 60_000 });
+    await page.locator(ready).first().waitFor({ timeout: 60_000 });
   }
   if (!new URL(page.url()).pathname.endsWith(path)) await page.goto(path);
-  await page.locator('#view .cbi-map').first().waitFor({ timeout: 60_000 });
+  await page.locator(ready).first().waitFor({ timeout: 60_000 });
 }
 
 /** Route/request predicate for LuCI's ubus JSON-RPC endpoint. */
@@ -129,8 +131,21 @@ export function trackLogReplies(page) {
 
 export const queries = (page) => page.getByRole('table', { name: 'Last queries' });
 export const queryRow = (page, domain) => queries(page).locator(`tr[data-domain="${domain}"]`).first();
-export const pending = (page) => page.getByRole('table', { name: 'Pending changes' });
-export const pendingRow = (page, domain) => pending(page).locator(`tr[data-domain="${domain}"]`);
+export const pending = (page) => page.getByRole('list', { name: 'Pending changes' });
+export const pendingRow = (page, domain) => pending(page).locator(`li[data-domain="${domain}"]`);
+export const results = (page) => page.getByRole('list', { name: 'Apply results' });
+export const resultRow = (page, domain) => results(page).locator(`li[data-domain="${domain}"]`);
+export const jobState = (page) => page.locator('#abfm-job-state');
+/** Records the page's calls of this app (`log read` and luci.adblock-fast-monitor): [{at, call}]. */
+export function trackAppCalls(page) {
+  const calls = [];
+  page.on('request', (r) => {
+    for (const [o, m] of ubusCalls(r)) {
+      if (o === 'log' || o === 'luci.adblock-fast-monitor') calls.push({ at: Date.now(), call: `${o}.${m}` });
+    }
+  });
+  return calls;
+}
 
 /** Overrides document.visibilityState and fires visibilitychange, as a tab switch does. */
 export async function setVisibility(page, state) {
@@ -196,6 +211,25 @@ export function ensureHealthy() {
 /** Writes lines to the system log as dnsmasq would (`dnsmasq[1]: …`). */
 export function fakeDnsmasq(lines) {
   guest(`logger -t 'dnsmasq[1]'`, { input: lines.map((l) => `${l}\n`).join('') });
+}
+
+// Serials of the fake rows below: far above dnsmasq's own, unique per run.
+let fakeSerial = 970000 + Math.floor(Math.random() * 20000) * 10;
+
+/*
+ * Stages `op` for `domain` the way a user does: a (fake) dnsmasq row for it
+ * appears in the list (blocked for allow, allowed for block) and its button
+ * is clicked. Returns the row.
+ */
+export async function stageFromRow(page, op, domain) {
+  const n = fakeSerial++, c = '192.0.2.69', port = 1024 + (n % 60000);
+  fakeDnsmasq([`${n} ${c}/${port} query[A] ${domain} from ${c}`,
+    op === 'allow' ? `${n} ${c}/${port} config ${domain} is NXDOMAIN` : `${n} ${c}/${port} reply ${domain} is 192.0.2.10`]);
+  const decision = op === 'allow' ? 'blocked' : 'allowed';
+  const row = queries(page).locator(`tr[data-domain="${domain}"][data-decision="${decision}"]`).first();
+  await row.getByRole('button', { name: `${op === 'allow' ? 'Allow' : 'Block'} ${domain}`, exact: true }).click({ timeout: 30_000 });
+  await expect(pendingRow(page, domain)).toHaveAttribute('data-op', op);
+  return row;
 }
 
 /*

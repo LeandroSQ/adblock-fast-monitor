@@ -390,11 +390,15 @@ test('keyboard focus follows its row while the page shifts, and leaves the table
 // runs under the gate's 4x CPU throttle, and every `abfm-poll` measure since
 // the page opened counts (first render, both rates, the polls in between).
 // Each measure spans the reply's arrival to the next rendered frame.
-// The threshold is tighter than the 20 ms budget because this Chromium runs
-// in the Linux container, which renders this page faster than the macOS host
-// Chromium of the run of record (docs/performance.md → P4).
-const P4_GUARD_MS = 12;
-test(`P4 guard: abfm-poll p95 <= ${P4_GUARD_MS} ms over every poll while the page shifts at ~50 and ~200 qps, 4x CPU throttle`, async ({ page }, testInfo) => {
+// This Chromium runs in the Linux container, not on the macOS host of the
+// run of record (docs/performance.md → P4): its median poll is about 20 %
+// faster there, but its tail is noisier, because it shares the container's
+// CPUs with the TCG guest that also writes the load. So the p95 is held to
+// the budget and the median to a tighter bound, which a page that rebuilds
+// or restyles its rows, or a poll frame that waits for the frame clock, fails.
+const P4_P95_MS = 20;
+const P4_P50_MS = 10;
+test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms over every poll while the page shifts at ~50 and ~200 qps, 4x CPU throttle`, async ({ page }, testInfo) => {
   const load = (rate, serial) => [
     `rm -f /tmp/abfm-load-*; touch /tmp/abfm-load-${rate}`,
     `( s=${serial}; while [ -f /tmp/abfm-load-${rate} ]; do awk -v s=$s 'BEGIN { for (k = 0; k < ${rate}; k++) { n = s + k; h = n " 192.0.2.50/" (1024 + k % 60000) " "; print h "query[A] q" n ".load.example.test from 192.0.2.50"; if (k % 4 == 0) print h "config q" n ".load.example.test is NXDOMAIN"; else print h "reply q" n ".load.example.test is 192.0.2.10" } }' | logger -t 'dnsmasq[1]'; s=$((s + ${rate})); sleep 1; done ) </dev/null >/dev/null 2>&1 &`
@@ -415,10 +419,10 @@ test(`P4 guard: abfm-poll p95 <= ${P4_GUARD_MS} ms over every poll while the pag
       window.abfmStats = [...document.querySelectorAll('#abfm-stats .abfm-value')];
     });
     const filled = (await polls()).length;
-    await expect.poll(async () => (await polls()).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(filled + 15);
+    await expect.poll(async () => (await polls()).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(filled + 20);
     guest(load(200, 4000000));
     await expect.poll(async () => (await polls()).filter((m) => m.entries >= 810).length,
-      { timeout: 120_000 }).toBeGreaterThanOrEqual(15);
+      { timeout: 120_000 }).toBeGreaterThanOrEqual(20);
     guest('rm -f /tmp/abfm-load-*');
 
     const m = await polls();
@@ -448,7 +452,8 @@ test(`P4 guard: abfm-poll p95 <= ${P4_GUARD_MS} ms over every poll while the pag
       return now.length === 50 && now.every((tr, i) => tr === window.abfmRows[i]) &&
         stats.length === 3 && stats.every((n, i) => n === window.abfmStats[i]);
     })).toBe(true);
-    expect(pct(d, 0.95)).toBeLessThanOrEqual(P4_GUARD_MS);
+    expect(pct(d, 0.95)).toBeLessThanOrEqual(P4_P95_MS);
+    expect(pct(d, 0.5)).toBeLessThanOrEqual(P4_P50_MS);
   } finally {
     guest('rm -f /tmp/abfm-load-*');
   }

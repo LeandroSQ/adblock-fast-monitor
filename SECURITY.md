@@ -33,5 +33,5 @@ Out of scope, report upstream instead:
   ([OpenWrt security](https://openwrt.org/docs/guide-developer/security)).
 
 By design, anyone granted this app's read ACL can read the whole system log
-(see [README → Privacy and access](README.md#privacy-and-access)); that is
+(see [README → Privacy: admins only](README.md#privacy-admins-only)); that is
 documented behaviour, not a vulnerability.

@@ -45,7 +45,7 @@ with break 85), and any real router.
 | Feature (user requirement) | Tests | Environment | Result |
 | --- | --- | --- | --- |
 | Last queries with blocked/allowed result, parsed in the browser | T01–T04 (`test/unit/querylog*.test.mjs`), T09 (`dataplane-live.host.sh`), `ui-queries.spec.mjs` "real queries from a LAN client" | Node + guest + browser | pass |
-| Port faithful to the api-1 ucode parser | T05 differential oracle (`test/fixtures/logread/differential/`, one intentional difference: an in-flight query becomes `no-answer` on dnsmasq restart) | Node | pass |
+| Parser decisions unchanged against the frozen expected results | T05 differential oracle (`test/fixtures/logread/differential/`, one intentional difference: an in-flight query becomes `no-answer` on dnsmasq restart) | Node | pass |
 | Refresh as new logs arrive; gaps reported | T04, T29 (`ui-queries.spec.mjs` burst: missed count equals the id gap) | Node + browser | pass |
 | % blocked (P1 stat) and since-page-opened counters | T04 `stats()`, `ui-queries.spec.mjs` "% blocked over the kept rows" | Node + browser | pass |
 | Allow / Block buttons → staged → one Apply → one rebuild, DNS verified | T12–T19 (`test/ucode/actions/*`, `actions-api.sh`, `actions-jobs.sh`, `actions-session.host.sh`, `actions-reboot.host.sh`), T24 (`ui-staging.spec.mjs`: Block then Allow flips the real DNS answer; failed job returns items to pending) | ucode + guest + browser | pass |
@@ -67,35 +67,6 @@ with break 85), and any real router.
 
 ## P0 (T26)
 
-Run of record: armsr-armv8 under QEMU with hvf, 3 repeats of 30 s at 50 and
-200 qps. The x86/64 TCG run is a smoke test whose P5/P6 figures are
-reported, not gated. Method, budgets and justification are in
-[`performance.md`](performance.md).
-
-| ID | Budget (hvf) | Measured | Result |
-| --- | --- | --- | --- |
-| P1 | 0 resident package processes (hard); transient init ≤ 2 per boot, 0 idle; rpcd RssAnon ≤ 1024 KiB | 0 resident; 0 transient; +208 KiB | pass |
-| P2 | hidden or closed page: 0 requests in 60 s (hard) | 0 / 0 | pass |
-| P3 | page-open CPU Δ ≤ 1 / 2 pp; `log read` p95 ≤ 50 ms incremental, ≤ 150 ms at N=900 | −0.17 / −0.70 pp; 2.3 ms; 4.3–5.7 ms | pass |
-| P4 | `abfm-poll` (reply to next painted frame, 4× CPU throttle) p95 ≤ 20 ms | 12.7 ms over 120 polls (900-entry polls alone: 20.3 ms) | pass |
-| P5 | DNS p95 Δ, logging on vs off, ≤ 2 ms | −0.04 / +0.10 ms | pass |
-| P6 | per-process CPU Δ ≤ 4 / 6 pp incl. dnsmasq; package on − hand-written drop-in ≤ noise | dnsmasq +0.47 / +1.73, logd +0.27 / +1.07 pp; on − manual 0 / +0.17 pp | pass |
-| P7 | `info` p95 ≤ 50 ms | 0.79 ms | pass |
-| P8 | `apply` ≤ 200 ms; rpcd never blocked > 200 ms | 1.81 ms; 3.4 ms | pass |
-| P10 | dnsmasq restarts at boot / enable / save: 0 / 1 / 0 (hard) | 0 / 1 / 0 | pass |
-
-Noise (spread over the 3 repeats): P3 CPU ≤ 0.03 pp, P5 p95 ≤ 0.12 ms, P6
-dnsmasq ≤ 0.14 pp.
-
-Under hvf the stricter budgets hold (P5 2 ms, P6 dnsmasq 4 / 6 pp). The
-looser figures (P5 3 ms, P6 dnsmasq 10 pp) were needed only under TCG,
-which inflates the cost of dnsmasq's own query logging. The A/B (package on
-vs the same drop-in written by hand) attributes all of the dnsmasq cost to
-dnsmasq's `log-queries`, not to this package. Absolute times are from an
-Apple M4 Pro host and are not router numbers.
-
-## Superseded evidence
-
-Evidence of earlier artifacts (including the never-released api-1 design
-with a resident daemon, see [`design.md`](design.md)) is superseded by the
-gate above and not carried over.
+The run of record above passed every budget. Its per-metric results, the
+budgets and the method are in
+[`performance.md` → Run of record](performance.md#run-of-record-release-candidate).

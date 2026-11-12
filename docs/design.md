@@ -7,16 +7,13 @@ facts it was checked against. Budgets, method and measurements are in
 
 ## History
 
-The first interface (api 1, never released) ran a resident ucode daemon on
-the router that followed the system log, parsed and correlated dnsmasq's
-query lines and served statistics over ubus. It was replaced before the
-first release by the current design (api 2) because a resident process and
-per-query work on the router conflict with the resource budgets (CONTRACT
-§1, §11): the browser now reads `log read` and does all parsing, and the
-router only switches dnsmasq's query logging on. The line grammar and the
-classification table were ported from the daemon's ucode to `querylog.js`;
-a one-time differential test over the dnsmasq fixtures (T05) guarded the
-port. Nothing migrates from api 1, since it was never installed by users.
+A first, never-released design ran a resident ucode daemon that followed
+the system log and parsed every query on the router. It was dropped before
+the first release because a resident process and per-query work on the
+router break the resource budgets (CONTRACT §1, §11): now the browser does
+all parsing and the router only switches query logging on. The parser's
+decisions were frozen as expected results when it moved to `querylog.js`
+(T05). Nothing migrates, since no user ever installed it.
 
 ## Why the decisions hold
 
@@ -27,7 +24,7 @@ port. Nothing migrates from api 1, since it was never installed by users.
   instance's confdir lives in tmpfs and disappears with the package, and
   it steps aside for an instance where luci-app-adblock-fast's `logqueries`
   toggle is already on (CONTRACT §14).
-  `log-async=25` keeps logging off dnsmasq's query path: with it, api 1's
+  `log-async=25` keeps logging off dnsmasq's query path: with it, earlier
   measurements on 25.12.6 (dnsmasq 2.93) lost no line at normal rates in
   `dnsmasq.servers` and `dnsmasq.addnhosts` modes.
 - **One rebuild per Apply (D5).** adblock-fast's own `allow` is defective and
@@ -45,10 +42,8 @@ Verified 2026-11-10 against the pinned sources; CONTRACT §12 points here.
 
 - ucode pin: `PKG_SOURCE_VERSION:=85922056ef7a…` —
   <https://raw.githubusercontent.com/openwrt/openwrt/openwrt-25.12/package/utils/ucode/Makefile>.
-  The same file packages the `ucode-mod-io`, `ucode-mod-resolv` and
-  `ucode-mod-uloop` modules.
-- `io.pipe`, `io.new`, `dup2`, and `read` (a raw `read(2)`) exist
-  (`lib/io.c` L501, L772, L1124, L1249). `fs.file#lock` is `flock` with
+  The same file packages the `ucode-mod-io` and `ucode-mod-resolv` modules.
+- `io.new` exists (`lib/io.c` L772). `fs.file#lock` is `flock` with
   `s`/`x`/`n`/`u` (`lib/fs.c` L849). `resolv.query(names,{type,nameserver,timeout,retries})`
   returns `{name:{A:[],AAAA:[],rcode}}` (`lib/resolv.c`) —
   <https://github.com/jow-/ucode/tree/85922056/lib>
@@ -118,8 +113,8 @@ Verified 2026-11-10 against the pinned sources; CONTRACT §12 points here.
   sends more (`ubusd_main.c` L154-155), so an oversized `log read` reply would
   knock logd off ubus.
 - uhttpd `93b05e0` serves `GET /ubus/subscribe/<object>` as server-sent
-  events, authorized by `Authorization: Bearer <sid>` and the ACL method
-  `:subscribe` on that object (`ubus.c` L150, L427-468, L491-494). A refused
+  events, authorized by the session token in the `Authorization` header
+  and the ACL method `:subscribe` on that object (`ubus.c` L150, L427-468, L491-494). A refused
   subscription is still HTTP 200, but `application/json` with a
   `Permission denied` error instead of `text/event-stream` (L436-439).
 - A session with luci-base's write grant reaches rpcd's `uci set` for any
@@ -138,18 +133,3 @@ Verified 2026-11-10 against the pinned sources; CONTRACT §12 points here.
 - rpcd `d99f703` `uci.c` L289-315: LuCI's `uci set` through rpcd stages
   changes in the per-session savedir `/var/run/rpcd/uci-<sid>`, not in
   `/tmp/.uci`.
-
-### Facts only api 1 relied on
-
-Kept for reference; the current package does not use them.
-
-- `uloop.process` accepts only a **string** executable (`lib/uloop.c` L1012)
-  and does not capture stdout. `process.delete()` does not kill the child —
-  <https://github.com/jow-/ucode/blob/85922056/lib/uloop.c>
-- `conn.publish(name, {m:{args,call}})` exists (`lib/ubus.c` L1889).
-  Returning an object replies, returning an integer sets the ubus status, and
-  any exception other than `exit` halts uloop (L1574-1632) —
-  <https://github.com/jow-/ucode/blob/85922056/lib/ubus.c>
-- ubox `6f78fa4` `logread -e` compiles a **BRE** (`regcomp` without
-  `REG_EXTENDED`) and matches it against the message, which includes the
-  `dnsmasq[pid]:` tag (`log/logread.c` L160, L363).

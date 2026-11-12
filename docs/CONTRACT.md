@@ -949,7 +949,7 @@ Environments:
 | T02 | §8.3 rejection, raw strings | spoofed labels, `<name unprintable>`, extra tokens, uppercase, `not implemented` rejected; answers and names kept byte-for-byte (an HTML-looking PTR answer stays raw) | N | `test/unit/querylog*.test.mjs` |
 | T03 | §8.3 table and correlation | each table row → decision/source; local names; `duplicate` ignored; first terminal wins, CNAME chain adds answers (≤ 4); orphans ignored; 10 s log-time TTL → `no-answer`; reset on `started, version`; router rows flagged and hidden | N | `test/unit/querylog*.test.mjs` |
 | T04 | §8.1 cursor | `nextRequest` stays in 16..900, 900 first, never 0; adaptive N; gap → one refetch, remaining gap → `missed`; `lastId < cursor` → reset; ≤ 500 rows; `stats()` | N | `test/unit/querylog*.test.mjs` |
-| T05 | §8.3 port | one-time differential: api-1 ucode `logparse`+`stats` vs `querylog.js` over the dnsmasq fixtures, same decision per key | N | `test/fixtures/logread/differential/` |
+| T05 | §8.3 port | differential: `querylog.js` over the dnsmasq fixtures reaches the decisions recorded from the replaced ucode parser, same decision per key | N | `test/fixtures/logread/differential/` |
 | T06 | D1, P1 | 0 package processes and no procd instance in every state: default, `query_logging` 0/1, settings save, restart, stop, after boot with `query_logging=1`; an `instance.update` firing costs one process | G | `test/guest/logging-lifecycle.sh`, `test/guest/logging-logd-restart.sh`, `test/guest/dataplane-boot.host.sh`, `test/guest/perf-p1-disabled.sh` |
 | T07 | §4 stale scope, loop guard | only procd dnsmasq instance pids and their jailed children are compared; one stale restart per logd socket; a foreign dnsmasq with a different `/dev/log` (own root) never restarts dnsmasq and causes no loop | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
 | T08 | §4, §5, P10 | drop-in set for reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
@@ -1010,8 +1010,8 @@ Environments:
 7. **Hidden tabs.** LuCI's `poll` doesn't pause hidden tabs; the view adds and
    removes its poll on `visibilitychange` (P2, T28).
 8. **Correlation after a port.** The grammar and table moved from ucode to
-   JS; a one-time differential test against the api-1 ucode (T05) guards the
-   port. The serial restarts with every dnsmasq restart, so correlation
+   JS; a differential test against the decisions recorded from the replaced
+   ucode parser (T05) guards the port. The serial restarts with every dnsmasq restart, so correlation
    resets on `started, version` and pending entries expire by log time.
 9. **`pending-uci-changes` sees only `/tmp/.uci`.** It catches uncommitted
    CLI/script changes and adblock-fast's own deltas that `dl` would read. It

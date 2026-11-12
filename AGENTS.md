@@ -116,6 +116,7 @@ or `.local-validation/`.
 | Node unit tests and repository checks (`test/unit/**/*.test.mjs`) | `npm run test:unit` | Node | |
 | ucode suites on the pinned interpreter | `npm run test:ucode` (one file: `test/lib/ucode-runner FILE`) | Docker | |
 | BusyBox ash suites | `npm run test:shell` (one file: `test/lib/busybox-runner FILE`) | Docker | |
+| Regenerate the README screenshots (`docs/images/`) | `npm run docs:screenshots -- PKG.apk` | Docker/QEMU, `npm ci` | ~3 min |
 | Build the APK (pinned SDK; prints the APK path) | `scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh` | Docker, amd64 | ~9 min (cached SDK) |
 | Guest (functional) tests | `npm run verify:guest -- PKG.apk [test/guest/FILE...]` | Docker/QEMU | ~30 s boot + tests |
 | Guest + browser tests | `npm run verify:guest -- --browser PKG.apk` | Docker/QEMU, `npm ci` | ~6 min |
@@ -170,7 +171,7 @@ and [`docs/releasing.md`](docs/releasing.md).
 - Comments explain why, citing CONTRACT sections. New source files start
   with an `SPDX-License-Identifier: Apache-2.0` line.
 - Commits: [`CONTRIBUTING.md`](CONTRIBUTING.md). Move files with `git mv`.
-  Never commit `.local-validation/`, APKs, images, SDK output or keys.
+  Never commit `.local-validation/`, APKs, guest images, SDK output or keys.
 
 ## Where facts live
 
@@ -181,6 +182,7 @@ and [`docs/releasing.md`](docs/releasing.md).
 | P0 budget numbers | `scripts/perf/budgets.json` (method and results: [`docs/performance.md`](docs/performance.md)) |
 | Commands and their run times | this file, [Build and test](#build-and-test) |
 | Harness internals, CI jobs and triggers | [`docs/testing.md`](docs/testing.md) (the workflows are the source) |
-| Release steps, versioning, key handling | [`docs/releasing.md`](docs/releasing.md), [`keys/README.md`](keys/README.md) |
+| Release steps, versioning, repository settings | [`docs/releasing.md`](docs/releasing.md) |
+| Signing-key generation, rotation, compromise | [`keys/README.md`](keys/README.md) |
 | Executed evidence | [`docs/test-traceability.md`](docs/test-traceability.md) |
-| User-facing install and use | [`README.md`](README.md) |
+| User-facing install, use and resource summary | [`README.md`](README.md) |

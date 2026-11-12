@@ -2,7 +2,7 @@
 
 This directory holds the **public** halves of the keys that sign the apk feed
 and the release packages. Private keys are never committed: `.gitignore`
-rejects `_.key`, `_.key.pem` and `_private_.pem`, and CI runs gitleaks over
+rejects `*.key`, `*.key.pem` and `*private*.pem`, and CI runs gitleaks over
 the whole history. Report a suspected key leak privately as described in
 [SECURITY.md](../SECURITY.md).
 
@@ -35,38 +35,11 @@ the SDK's auto-generated `private-key.pem`.
 
 Fingerprint (SHA-256 of the DER public key): _to be filled in with the key_.
 
-## Maintainer checklist (repository settings, once)
+## Repository settings and release flow
 
-Nothing in this repository changes these settings; the maintainer does it by
-hand before the first release. Workflows:
-[`ci.yml`](../.github/workflows/ci.yml),
-[`release.yml`](../.github/workflows/release.yml).
-
-1. **Environment `release`** (Settings → Environments): required reviewer =
-   the maintainer; _Deployment branches and tags_ → _Selected branches and
-   tags_ → add a **tag** rule `v*` (no branch rules); environment secret
-   `APK_SIGNING_KEY` (above). Only the `sign` job uses it.
-2. **Environment `github-pages`**: Settings → Pages → Source = _GitHub
-   Actions_. GitHub creates the environment allowing only the default
-   branch; releases deploy from a tag, so add a **tag** rule `v*` under
-   _Deployment branches and tags_, or the `deploy` job is rejected. The
-   published URL must stay `https://leandrosq.github.io/adblock-fast-monitor`
-   (the `smoke` job fails if Pages reports another URL, because it is baked
-   into the feed page and the release notes).
-3. **Tag protection** (Settings → Rules → Rulesets, target tags `v*`):
-   restrict creation, update and deletion to maintainers.
-4. **Branch protection for `main`**: require pull requests and the status
-   check **`ci-ok`** (job `ci-ok` in `ci.yml`, which fails if any other CI job
-   failed or was skipped without a docs-only reason).
-5. **Actions settings**: workflow permissions _Read repository contents_;
-   require approval for workflows from outside collaborators (fork PRs get no
-   secrets and save no caches either way).
-6. **Release flow**: push tag `vX.Y.Z-rN` (equal to `PKG_VERSION-rPKG_RELEASE`
-   in the `Makefile`). `release.yml` builds, tests, waits for the `release`
-   approval, signs, creates a **draft** release, deploys Pages, smoke-tests the
-   exact version from the public feed (up to ~12 min for the Pages cache), and
-   only then publishes the release. If a job fails, fix the cause and re-run
-   the workflow: the draft's assets are replaced.
+The one-time repository settings (the `release` environment that holds
+`APK_SIGNING_KEY`, Pages, rulesets) and the release steps are in
+[`docs/releasing.md`](../docs/releasing.md).
 
 ## How the key is used
 

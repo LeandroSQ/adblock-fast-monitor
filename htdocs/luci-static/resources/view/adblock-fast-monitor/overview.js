@@ -18,8 +18,15 @@
  * Every dynamic value is inserted as a text node (arrays passed to E()/dom).
  */
 
+/*
+ * Sent at once, not batched: LuCI flushes batched calls from a
+ * requestAnimationFrame callback, and the frame that runs it keeps the
+ * compositor on its frame clock while the reply is on its way, so the frame
+ * that shows the reply would wait for the next frame slot (P4). A poll
+ * makes this one call anyway.
+ */
 const callLogRead = rpc.declare({ object: 'log', method: 'read',
-	params: [ 'lines', 'stream', 'oneshot' ], reject: true });
+	params: [ 'lines', 'stream', 'oneshot' ], reject: true, nobatch: true });
 const callInfo = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'info', reject: true });
 const callApply = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'apply',
 	params: [ 'ops', 'confirm_rebuild', 'rebuild', 'dry_run' ], reject: true });

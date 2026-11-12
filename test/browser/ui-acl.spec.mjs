@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // T25 (docs/CONTRACT.md §8.2, §9): a read-only principal sees the queries but
 // no write controls; Settings loads and saves for an admin.
 import { expect, test } from '@playwright/test';

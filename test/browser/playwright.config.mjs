@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import { defineConfig } from '@playwright/test';
 
 const baseURL = process.env.MONITOR_BASE_URL;
@@ -7,6 +8,8 @@ const baseURL = process.env.MONITOR_BASE_URL;
 export default defineConfig({
   testDir: '.',
   testMatch: '*.spec.mjs',
+  // T22 runs on its own guest with install-luci.config.mjs
+  testIgnore: 'install-luci.spec.mjs',
   globalSetup: './global-setup.mjs',
   workers: 1,
   fullyParallel: false,

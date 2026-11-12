@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import { defineConfig } from '@playwright/test';
 
 // T22 runs on a guest WITHOUT the package, so it must not use the suite's

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Cost of one poll in the browser (design B-min §4 budget: parse, classify
+// Cost of one poll in the browser (P4 budget: parse, classify
 // and list at most 20 ms per poll of 900 entries). Measures the real
 // querylog.js on a full 900-entry `log read` reply on top of a full table
 // (500 rows), then rows() and stats(). The assertion is deliberately

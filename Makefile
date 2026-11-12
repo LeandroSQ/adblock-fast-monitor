@@ -4,7 +4,8 @@
 # with the luci feed installed (./scripts/feeds update -a && ./scripts/feeds install -a):
 #   cp -r . <sdk>/package/luci-app-adblock-fast-monitor
 #   make -C <sdk> package/luci-app-adblock-fast-monitor/compile
-# luci.mk installs the whole root/ tree and builds a
+# luci.mk installs the whole root/ tree, copies htdocs/ to /www (minifying
+# the JavaScript) and builds a
 # luci-i18n-adblock-fast-monitor-<lang> package for every po/<lang>/.
 
 include $(TOPDIR)/rules.mk
@@ -34,8 +35,8 @@ LUCI_MAINTAINER:=$(PKG_MAINTAINER)
 # under /usr/libexec, 0644 for all other files (rpcd skips a world-writable
 # ucode plugin). Runs on the copy luci.mk installs with cp -p.
 define Build/Prepare/$(PKG_NAME)
-	find $(PKG_BUILD_DIR)/root -type d -exec chmod 0755 {} +
-	find $(PKG_BUILD_DIR)/root -type f -exec chmod 0644 {} +
+	find $(PKG_BUILD_DIR)/root $(PKG_BUILD_DIR)/htdocs -type d -exec chmod 0755 {} +
+	find $(PKG_BUILD_DIR)/root $(PKG_BUILD_DIR)/htdocs -type f -exec chmod 0644 {} +
 	for d in $(PKG_BUILD_DIR)/root/etc/init.d $(PKG_BUILD_DIR)/root/usr/libexec; do \
 		[ ! -d "$$$$d" ] || find "$$$$d" -type f -exec chmod 0755 {} +; \
 	done

@@ -2,6 +2,8 @@
 'require baseclass';
 
 /*
+ * SPDX-License-Identifier: Apache-2.0
+ *
  * Pure UI logic for the Adblock Fast Monitor views (docs/CONTRACT.md §8):
  * RPC error mapping, the page state (§8.5), view options from `info`, the
  * client-side staging reducer (§8.4), the row filter and display formatting. No DOM, no
@@ -16,6 +18,18 @@ const OPS = [ 'allow', 'block' ];
 /* Row button per decision: Allow on blocked rows, Block on allowed rows. */
 const ROW_OP = { blocked: 'allow', allowed: 'block' };
 const TERMINAL_JOB = { applied: true, partial: true, failed: true };
+/* §8.1: the page polls `log read` every 2 s while visible (fixed, no option). */
+const POLL_INTERVAL = 2;
+/*
+ * §6.5 names the server always refuses to block. The server's full list
+ * (plus dhcp names, hostname, heartbeat) comes as info.protected_suffixes.
+ */
+const BUILTIN_PROTECTED = [ 'localhost', 'arpa', 'local', 'internal', 'invalid', 'onion', 'bind' ];
+/* adblock-fast `dns` modes whose block decisions the log cannot show (§8.3). */
+const FIREWALL_DNS = { 'dnsmasq.ipset': true, 'dnsmasq.nftset': true };
+const UNSUPPORTED_DNS = /^(smartdns|unbound)\./;
+/* After n failed `log read`s in a row the next try waits 2^n polls (4, 8, 16, then 32 s). */
+const BACKOFF_MAX_SKIP = 15;
 const LEAVES_PENDING = { ok: true, skipped: true };
 const ACCESS_DENIED = -32002;
 
@@ -101,10 +115,9 @@ function pageState(infoResult, logResult, hasRows) {
 			return { state: 'logging-unavailable', reason: 'dnsmasq-not-running' };
 		if (instances.some(i => i.logfacility_file === true))
 			return { state: 'logging-unavailable', reason: 'dnsmasq-logs-to-file' };
-		const targeted = instances.filter(i => i.targeted !== false);
-		if (!instances.some(i => i.uci_logqueries === true) && !targeted.some(i => i.dropin === true))
+		if (!instances.some(i => i.uci_logqueries === true || i.dropin === true))
 			return { state: 'logging-unavailable',
-				reason: targeted.some(i => typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/')
+				reason: instances.some(i => typeof(i.confdir) != 'string' || i.confdir.charAt(0) != '/')
 					? 'confdir-invalid' : 'logging-not-active' };
 	}
 	if (logResult && !logResult.ok && !hasRows)
@@ -121,15 +134,57 @@ function loggingElsewhere(infoResult) {
 	return instances.some(i => isObject(i) && i.uci_logqueries === true);
 }
 
-/* §3 options the dashboard uses: {interval (2..60, default 2), hideRouter (default true)}. */
-function viewOptions(infoResult) {
+/*
+ * Names a `block` would be refused for (§6.5), matched equal-or-under: the
+ * builtin list, info.local_domains and info.protected_suffixes. The exact
+ * list hosts of §6.5 are not included; the server still refuses those.
+ */
+function protectedNames(infoResult) {
 	const info = infoData(infoResult);
-	const mon = (info && isObject(info.monitor)) ? info.monitor : {};
-	const n = int(mon.poll_interval, null);
-	return {
-		interval: (n == null) ? 2 : Math.min(60, Math.max(2, n)),
-		hideRouter: mon.exclude_router !== false
-	};
+	const out = BUILTIN_PROTECTED.slice();
+	const add = list => (Array.isArray(list) ? list : []).forEach(d => {
+		if (typeof(d) == 'string' && d.length > 0 && out.indexOf(d.toLowerCase()) < 0)
+			out.push(d.toLowerCase());
+	});
+	if (info) {
+		add(info.local_domains);
+		add(info.protected_suffixes);
+	}
+	return out;
+}
+
+function under(name, parent) {
+	return name == parent || (name.length > parent.length &&
+		name.substring(name.length - parent.length - 1) == '.' + parent);
+}
+
+/* True when the server would refuse to block this (normalized) name. */
+function isProtected(names, domain) {
+	return Array.isArray(names) && typeof(domain) == 'string' && names.some(p => under(domain, p));
+}
+
+/*
+ * What the page must say about adblock-fast's DNS mode: 'firewall' (ipset /
+ * nftset: blocking happens in the firewall, the log shows every answer as
+ * allowed), 'unsupported' (smartdns / unbound: dnsmasq does not see the
+ * rules), or null.
+ */
+function dnsModeNote(infoResult) {
+	const info = infoData(infoResult);
+	const dns = (info && isObject(info.adblock_fast) && typeof(info.adblock_fast.dns) == 'string') ? info.adblock_fast.dns : null;
+	if (dns == null)
+		return null;
+	if (FIREWALL_DNS[dns] === true)
+		return 'firewall';
+	if (UNSUPPORTED_DNS.test(dns))
+		return 'unsupported';
+	return null;
+}
+
+/* Polls to skip after `failures` failed `log read`s in a row: 0, 1, 3, 7, 15 (cap). */
+function backoffSkip(failures) {
+	const n = int(failures, 0);
+	return n <= 0 ? 0 : Math.min(BACKOFF_MAX_SKIP, Math.pow(2, Math.min(n, 5) - 1) * 2 - 1);
 }
 
 const LOG_STALL_GRACE = 20;
@@ -216,9 +271,13 @@ function cleanList(list, limit) {
 
 /* Parses stored JSON; anything malformed degrades to an empty list. */
 function parsePending(json) {
-	let raw = null;
-	try { raw = (typeof(json) == 'string') ? JSON.parse(json) : json; }
-	catch (e) { raw = null; }
+	let raw;
+	try {
+		raw = (typeof(json) == 'string') ? JSON.parse(json) : json;
+	}
+	catch (e) {
+		raw = null;
+	}
 	if (!isObject(raw) || raw.v !== STORAGE_VERSION)
 		return emptyPending();
 	const state = emptyPending();
@@ -237,15 +296,18 @@ function serializePending(state) {
 
 /*
  * Adds op for domain: replaces any pending op for that domain; the same op
- * again removes it (§8.4). Returns {state, change, error};
+ * again removes it (§8.4). names (protectedNames()) refuses a block the
+ * server would refuse. Returns {state, change, error};
  * change: 'added' | 'replaced' | 'cancelled'.
  */
-function stage(state, op, domain, ts) {
+function stage(state, op, domain, ts, names) {
 	if (OPS.indexOf(op) < 0)
 		return { state: state, error: 'invalid-op' };
 	const d = normalizeDomain(domain);
 	if (!d)
 		return { state: state, error: 'invalid-domain' };
+	if (op == 'block' && names && isProtected(names, d))
+		return { state: state, error: 'protected-domain' };
 	const items = state.items.slice();
 	const idx = items.findIndex(i => i.domain == d);
 	let change;
@@ -295,17 +357,34 @@ function markError(state, error) {
 	});
 }
 
-/* After `apply` returns queued: the whole batch moves to inflight{job_id}. */
-function beginInflight(state, jobId) {
+function sentOps(state, ops) {
+	return Array.isArray(ops) ? ops.filter(o => isObject(o) && typeof(o.domain) == 'string') : toOps(state);
+}
+
+/* Pending items that are not exactly one of the sent ops stay pending. */
+function withoutSent(items, sent) {
+	return items.filter(i => !sent.some(o => o.domain == i.domain && o.op == i.op));
+}
+
+/*
+ * After `apply` returns queued: exactly the ops that were sent move to
+ * inflight{job_id}. Anything staged, replaced or added since the request
+ * (in this tab or another one) stays pending. ops defaults to the whole list.
+ */
+function beginInflight(state, jobId, ops) {
+	const sent = sentOps(state, ops);
 	return Object.assign({}, state, {
-		items: [],
-		inflight: { job_id: jobId, items: state.items.map(i => ({ op: i.op, domain: i.domain, ts: i.ts })) }
+		items: withoutSent(state.items, sent),
+		inflight: { job_id: jobId, items: sent.map(o => {
+			const it = state.items.find(i => i.domain == o.domain && i.op == o.op);
+			return { op: o.op, domain: o.domain, ts: it ? it.ts : 0 };
+		}) }
 	});
 }
 
-/* A noop apply: nothing changes on the router, every item leaves. */
-function settleNoop(state) {
-	return Object.assign({}, state, { items: [] });
+/* A noop apply: nothing changes on the router; the sent items leave, newer ones stay. */
+function settleNoop(state, ops) {
+	return Object.assign({}, state, { items: withoutSent(state.items, sentOps(state, ops)) });
 }
 
 function isTerminal(job) {
@@ -333,7 +412,7 @@ function settleJob(state, job) {
 	const jobError = isObject(job.error) ? String(job.error.code || 'failed') : null;
 	inflight.items.forEach(item => {
 		const it = byDomain[item.domain];
-		let ok, reason = null;
+		let ok, reason;
 		if (job.state == 'failed') {
 			ok = false;
 			reason = jobError || 'failed';
@@ -386,25 +465,32 @@ function applyPlan(reply) {
 
 /* ---- display formatting --------------------------------------------------- */
 
+/* %s and %% only; does not depend on LuCI's String.prototype.format. */
+function fmt(template) {
+	let i = 1;
+	const args = arguments;
+	return String(template).replace(/%(s|%)/g, (m, c) => (c == '%') ? '%' : String(args[i++]));
+}
+
 function formatCount(n) {
 	n = int(n, 0);
-	return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+	return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, _(',', 'thousands separator'));
 }
 
 function formatPct(pct) {
-	return (typeof(pct) == 'number' && isFinite(pct)) ? pct.toFixed(1) + ' %' : '—';
+	return (typeof(pct) == 'number' && isFinite(pct)) ? fmt(_('%s %%'), pct.toFixed(1)) : '—';
 }
 
 /* Humanized duration: "45 s", "3 min", "2 h 5 min", "3 d 4 h". */
 function formatDuration(seconds) {
 	let s = Math.max(0, int(seconds, 0));
-	if (s < 60) return s + ' s';
+	if (s < 60) return fmt(_('%s s'), s);
 	const m = Math.floor(s / 60);
-	if (m < 60) return m + ' min';
+	if (m < 60) return fmt(_('%s min'), m);
 	const h = Math.floor(m / 60);
-	if (h < 24) return (m % 60) ? h + ' h ' + (m % 60) + ' min' : h + ' h';
+	if (h < 24) return (m % 60) ? fmt(_('%s h %s min'), h, m % 60) : fmt(_('%s h'), h);
 	const d = Math.floor(h / 24);
-	return (h % 24) ? d + ' d ' + (h % 24) + ' h' : d + ' d';
+	return (h % 24) ? fmt(_('%s d %s h'), d, h % 24) : fmt(_('%s d'), d);
 }
 
 /* Local wall-clock time of an epoch (s): "2026-11-10 12:03:04". */
@@ -429,7 +515,11 @@ return baseclass.extend({
 	failure: failure,
 	pageState: pageState,
 	loggingElsewhere: loggingElsewhere,
-	viewOptions: viewOptions,
+	POLL_INTERVAL: POLL_INTERVAL,
+	protectedNames: protectedNames,
+	isProtected: isProtected,
+	dnsModeNote: dnsModeNote,
+	backoffSkip: backoffSkip,
 	LOG_STALL_GRACE: LOG_STALL_GRACE,
 	logWatch: logWatch,
 	logStalled: logStalled,
@@ -451,6 +541,7 @@ return baseclass.extend({
 	settleJob: settleJob,
 	returnInflight: returnInflight,
 	applyPlan: applyPlan,
+	fmt: fmt,
 	formatCount: formatCount,
 	formatPct: formatPct,
 	formatDuration: formatDuration,

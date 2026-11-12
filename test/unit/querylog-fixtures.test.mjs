@@ -59,7 +59,7 @@ test('servers.json (dns=dnsmasq.servers): rows, CNAME chains, TTL, rejections', 
   ]);
   assert.deepEqual(ql.stats(st), {
     kept: 24, blocked: 7, allowed: 9, other: 7, no_answer: 1, pending: 0, blocked_pct: 43.8, span_s: 14,
-    missed_total: 0, dnsmasq_lost: 0, rejected: 4, since_open: { queries: 24, blocked: 7, allowed: 9 }
+    missed_total: 0, dnsmasq_lost: 0, paused_total: 0, rejected: 4, since_open: { queries: 24, blocked: 7, allowed: 9 }
   });
   // newest first, times are epoch seconds from logd
   for (let i = 1; i < rows.length; i++)
@@ -105,7 +105,7 @@ test('logd restart: ids go backwards -> reset, history kept, cursor follows the 
     ['www.up.example.test', 'A', 'allowed', 'cache'], ['ads.example.test', 'A', 'blocked', 'addnhosts']]);
   ql.ingest(st, { log: before.log.slice(-3) });                    // a poll with nothing new
   const r = ql.ingest(st, after);
-  assert.deepEqual(r, { added: 0, missed: 0, reset: true, refetch: null });
+  assert.deepEqual(r, { added: 0, missed: 0, paused: 0, reset: true, refetch: null });
   assert.deepEqual(ql.rows(st), kept);
   assert.equal(ql.stats(st).missed_total, 0);
   assert.equal(ql.nextRequest(st).lines, 900);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Shared helpers for the LuCI browser suite (docs/CONTRACT.md §13 T23–T25).
 // Runs on the host next to a guest started by scripts/guest/run-guest-tests.sh
 // (GUEST_* exported). Guest conditions are created with real commands over SSH.
@@ -37,7 +38,7 @@ export function guest(command, { input, allowFail = false } = {}) {
     ], { encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: 600_000 });
   } catch (error) {
     if (allowFail) return error.stdout ?? '';
-    throw new Error(`guest command failed (${error.status}): ${command}\n${error.stderr ?? ''}${error.stdout ?? ''}`);
+    throw new Error(`guest command failed (${error.status}): ${command}\n${error.stderr ?? ''}${error.stdout ?? ''}`, { cause: error });
   }
 }
 
@@ -92,7 +93,7 @@ export function isUbus(url) {
 /** The ubus calls ([object, method, args]) in one JSON-RPC request. */
 export function ubusCalls(request) {
   if (!isUbus(new URL(request.url()))) return [];
-  let body = null;
+  let body;
   try { body = request.postDataJSON(); } catch { return []; }
   return (Array.isArray(body) ? body : [body])
     .filter((c) => c?.method === 'call' && Array.isArray(c.params))
@@ -148,6 +149,23 @@ export function waitAdblockFast(seconds = 300) {
   guestWait(`ubus call service list '{"name":"adblock-fast"}' | grep -q '"status": "statusSuccess"'`, seconds);
 }
 
+const UPSTREAM = [
+  // fake upstream: a second dnsmasq on 127.0.0.1:5300 (test-only drop-in)
+  'if ! [ -s /tmp/abfm-browser-upstream.pid ] || ! kill -0 "$(cat /tmp/abfm-browser-upstream.pid)" 2>/dev/null; then',
+  '  dnsmasq --conf-file=/dev/null --keep-in-foreground --port=5300 --listen-address=127.0.0.1 --bind-interfaces --resolv-file=/tmp/resolv.conf.d/resolv.conf.auto --no-hosts --local-ttl=300 --user=root --pid-file= --address=/example.test/192.0.2.10 --address=/example.test/2001:db8::10 >/dev/null 2>&1 &',
+  '  echo $! >/tmp/abfm-browser-upstream.pid',
+  'fi',
+  'restart=0',
+  `for d in /tmp/dnsmasq.*.d; do [ -s "$d/${UPSTREAM_CONF}" ] && continue; printf '%s\\n' 'server=/up.example.test/127.0.0.1#5300' 'server=127.0.0.1#5300' 'no-resolv' 'rebind-domain-ok=/example.test/' >"$d/${UPSTREAM_CONF}"; restart=1; done`,
+  '[ $restart = 0 ] || /etc/init.d/dnsmasq restart'
+];
+
+/** Starts the fake upstream (idempotent) without touching adblock-fast. */
+export function startUpstream() {
+  guest(['set -e', ...UPSTREAM].join('\n'));
+  guestWait('pidof dnsmasq >/dev/null && nslookup a.up.example.test 127.0.0.1 >/dev/null 2>&1', 60);
+}
+
 /*
  * Query logging on (the package's own drop-in), adblock-fast healthy in
  * dnsmasq.servers mode, and a fake upstream that answers *.example.test with
@@ -169,14 +187,7 @@ export function ensureHealthy() {
     'pidof dnsmasq >/dev/null || /etc/init.d/dnsmasq start',
     '[ $changed = 0 ] || /etc/init.d/adblock-fast restart >/dev/null 2>&1',
     '/etc/init.d/adblock-fast-monitor restart',
-    // fake upstream: a second dnsmasq on 127.0.0.1:5300 (test-only drop-in)
-    'if ! [ -s /tmp/abfm-browser-upstream.pid ] || ! kill -0 "$(cat /tmp/abfm-browser-upstream.pid)" 2>/dev/null; then',
-    '  dnsmasq --conf-file=/dev/null --keep-in-foreground --port=5300 --listen-address=127.0.0.1 --bind-interfaces --resolv-file=/tmp/resolv.conf.d/resolv.conf.auto --no-hosts --local-ttl=300 --user=root --pid-file= --address=/example.test/192.0.2.10 --address=/example.test/2001:db8::10 >/dev/null 2>&1 &',
-    '  echo $! >/tmp/abfm-browser-upstream.pid',
-    'fi',
-    'restart=0',
-    `for d in /tmp/dnsmasq.*.d; do [ -s "$d/${UPSTREAM_CONF}" ] && continue; printf '%s\\n' 'server=/up.example.test/127.0.0.1#5300' 'server=127.0.0.1#5300' 'no-resolv' 'rebind-domain-ok=/example.test/' >"$d/${UPSTREAM_CONF}"; restart=1; done`,
-    '[ $restart = 0 ] || /etc/init.d/dnsmasq restart'
+    ...UPSTREAM
   ].join('\n'));
   guestWait('pidof dnsmasq >/dev/null && grep -qs "^log-queries" /tmp/dnsmasq.*.d/* && nslookup a.up.example.test 127.0.0.1 >/dev/null 2>&1', 60);
   waitAdblockFast();
@@ -187,17 +198,80 @@ export function fakeDnsmasq(lines) {
   guest(`logger -t 'dnsmasq[1]'`, { input: lines.map((l) => `${l}\n`).join('') });
 }
 
-/** Sends A queries for `name` from the host (10.0.2.2) until its row shows up. */
-export async function seeQuery(page, name, { decision, tries = 15 } = {}) {
+/*
+ * Sends one A query for `name` from the host (10.0.2.2) and waits for its
+ * row. The query is sent again only when dnsmasq never answered it (a UDP
+ * packet lost on the way): an answered query is in the log, so a missing
+ * row is a failure, not a reason to retry.
+ */
+export async function seeQuery(page, name, { decision, tries = 5 } = {}) {
   const row = decision
     ? queries(page).locator(`tr[data-domain="${name}"][data-decision="${decision}"]`).first()
     : queryRow(page, name);
   for (let i = 0; i < tries; i++) {
-    await dnsQuery(name);
-    try {
-      await expect(row).toBeVisible({ timeout: 10_000 });
-      return row;
-    } catch { /* not in the log yet: query again */ }
+    if (await dnsQuery(name)) break;
+    if (i === tries - 1) throw new Error(`dnsmasq never answered ${name}`);
   }
-  throw new Error(`the dashboard never showed a query for ${name}${decision ? ` (${decision})` : ''}`);
+  await expect(row).toBeVisible({ timeout: 60_000 });
+  return row;
+}
+
+/** Records every call of `object`.`method` the page sends: [{at, args}]. */
+export function trackCalls(page, object, method) {
+  const calls = [];
+  page.on('request', (r) => {
+    for (const [o, m, args] of ubusCalls(r)) {
+      if (o === object && m === method) calls.push({ at: Date.now(), args });
+    }
+  });
+  return calls;
+}
+
+/*
+ * Holds the page's `log read` requests while `hold()` is active: they reach
+ * the router only after `release()`, so their replies show the log as it is
+ * then. Returns {hold, release, held}.
+ */
+export async function holdLogReads(page) {
+  let holding = false;
+  const held = [];
+  await page.route((url) => isUbus(url), async (route) => {
+    const isRead = ubusCalls(route.request()).some(([o, m]) => o === 'log' && m === 'read');
+    if (holding && isRead) held.push(route);
+    else await route.continue();
+  });
+  return {
+    held,
+    hold() { holding = true; },
+    async release() {
+      holding = false;
+      for (const r of held.splice(0)) await r.continue();
+    }
+  };
+}
+
+/*
+ * Validates every reply of luci.adblock-fast-monitor the page receives
+ * against the api-2 schemas (lib/schemas.mjs). Returns {replies, errors}.
+ */
+export function checkReplies(page, validate) {
+  const out = { replies: [], errors: [] };
+  page.on('response', async (r) => {
+    const calls = ubusCalls(r.request());
+    if (!calls.some(([o]) => o === 'luci.adblock-fast-monitor')) return;
+    let body;
+    try { body = await r.json(); } catch { return; }
+    const replies = Array.isArray(body) ? body : [body];
+    const reqs = (() => { try { const b = r.request().postDataJSON(); return Array.isArray(b) ? b : [b]; } catch { return []; } })();
+    for (const rep of replies) {
+      const req = reqs.find((q) => q.id === rep.id);
+      if (!req || req.params?.[1] !== 'luci.adblock-fast-monitor') continue;
+      const method = req.params[2];
+      const data = rep.result?.[1];
+      if (rep.result?.[0] !== 0 || !data) { out.errors.push(`${method}: ubus status ${JSON.stringify(rep.result ?? rep.error)}`); continue; }
+      out.replies.push([method, data]);
+      for (const e of validate(method, data)) out.errors.push(`${method} ${JSON.stringify(data).slice(0, 300)}: ${e}`);
+    }
+  });
+  return out;
 }

@@ -3,7 +3,8 @@
 // Uses only modules present on a stock OpenWrt 25.12.6 image (fs, ubus).
 // Every subcommand prints one JSON document on stdout.
 //
-//   probe.uc snapshot                    all userland processes + meminfo + /proc/stat
+//   probe.uc snapshot                    every task (userland and kernel threads)
+//                                        + meminfo + /proc/stat
 //   probe.uc window SECONDS [TAG]        logger marker, snapshot, sleep, snapshot;
 //                                        counts syslog lines after the marker
 //   probe.uc watch SECONDS [INTERVAL_MS] package processes seen in /proc every
@@ -12,7 +13,7 @@
 //   probe.uc rpcprobe SECONDS INTERVAL_MS  repeated `session list` latencies (rpcd)
 //   probe.uc logbench CALLS INTERVAL_MS  `log read` latency at the browser's
 //                                        adaptive N for the current log rate
-//                                        and at N=900 (design B-min, §11 P3)
+//                                        and at N=900 (§11 P3)
 
 import * as fs from 'fs';
 
@@ -28,25 +29,34 @@ function status_kb(text, key) {
 	return m ? +m[2] : null;
 }
 
+// One task. Kernel threads (empty cmdline) are included and flagged: the
+// window's system total is the sum over every task (§11, docs/performance.md
+// "CPU %"), so a kernel thread's work (softirq, virtio) is not lost.
 function read_proc(pid) {
 	let stat = fs.readfile(`/proc/${pid}/stat`);
 	let status = fs.readfile(`/proc/${pid}/status`);
 	let cmdline = fs.readfile(`/proc/${pid}/cmdline`);
-	if (stat == null || status == null || cmdline == null || length(cmdline) == 0)
-		return null; // gone, or a kernel thread
+	if (stat == null || status == null || cmdline == null)
+		return null; // gone
 	// comm may contain spaces and parentheses: split after the last ')'
 	let lp = index(stat, '('), rp = rindex(stat, ')');
 	let f = split(trim(substr(stat, rp + 2)), ' ');
-	// f[0]=state f[1]=ppid f[11]=utime f[12]=stime f[19]=starttime (clock ticks)
+	// f[0]=state f[1]=ppid f[11]=utime f[12]=stime f[13]=cutime f[14]=cstime
+	// f[19]=starttime (clock ticks)
+	let sched = fs.readfile(`/proc/${pid}/schedstat`);
 	return {
 		pid: +pid,
 		ppid: +f[1],
 		comm: substr(stat, lp + 1, rp - lp - 1),
 		cmdline: rtrim(join(' ', split(cmdline, chr(0)))),
+		kthread: length(cmdline) == 0,
 		state: f[0],
 		utime: +f[11],
 		stime: +f[12],
+		cutime: +f[13],
+		cstime: +f[14],
 		starttime: +f[19],
+		run_ns: sched ? +split(sched, ' ')[0] : null,
 		vm_rss_kb: status_kb(status, 'VmRSS'),
 		rss_anon_kb: status_kb(status, 'RssAnon'),
 		rss_file_kb: status_kb(status, 'RssFile'),
@@ -66,9 +76,16 @@ function meminfo() {
 	return out;
 }
 
+// /proc/stat: tick-sampled totals (informational; the gate's system total is
+// task-based) and the number of CPUs.
 function cpu_totals() {
-	let f = split(trim(split(fs.readfile('/proc/stat') ?? '', '\n')[0]), /[ \t]+/);
-	return { user: +f[1], nice: +f[2], system: +f[3], idle: +f[4], iowait: +f[5], irq: +f[6], softirq: +f[7] };
+	let lines = split(fs.readfile('/proc/stat') ?? '', '\n');
+	let f = split(trim(lines[0]), /[ \t]+/);
+	let ncpu = 0;
+	for (let l in lines)
+		if (match(l, /^cpu[0-9]+ /)) ncpu++;
+	return { user: +f[1], nice: +f[2], system: +f[3], idle: +f[4], iowait: +f[5], irq: +f[6], softirq: +f[7],
+		steal: +(f[8] ?? 0), ncpu: ncpu };
 }
 
 function snapshot() {
@@ -88,7 +105,7 @@ function snapshot() {
 function package_pids(procs) {
 	let set = {};
 	for (let p in procs)
-		if (index(p.cmdline, PKG) >= 0 && index(p.cmdline, 'probe.uc') < 0)
+		if (!p.kthread && index(p.cmdline, PKG) >= 0 && index(p.cmdline, 'probe.uc') < 0)
 			set[p.pid] = true;
 	let grew = true;
 	while (grew) {
@@ -221,10 +238,10 @@ function rpcprobe(seconds, interval) {
 	return { probe: 'session list', interval_ms: interval, errors: errors, stats: stats(times) };
 }
 
-// `log read` exactly as the B-min page calls it ({lines, stream:false,
+// `log read` exactly as the page calls it ({lines, stream:false,
 // oneshot:true}). The adaptive N is derived like the page does it: the ids
-// logged in 2 s (one poll interval) give the batch, N = clamp(1.5*batch+16,
-// 16, 900). Calls alternate between that N and the first-load N=900.
+// logged in 2 s (one poll interval) give the batch, N = clamp(ceil(1.2*batch)
+// + 16, 16, 900). Calls alternate between that N and the first-load N=900.
 function log_read(conn, n) {
 	let t = now_ms();
 	let r = conn.call('log', 'read', { lines: n, stream: false, oneshot: true });
@@ -245,7 +262,7 @@ function logbench(calls, interval) {
 	sleep(2000);
 	let b = log_read(conn, 1).reply;
 	let batch = (last_id(a) != null && last_id(b) != null) ? last_id(b) - last_id(a) : null;
-	let n_incr = batch == null ? 16 : max(16, min(900, int(1.5 * batch) + 16));
+	let n_incr = batch == null ? 16 : max(16, min(900, int((12 * batch + 9) / 10) + 16));
 	let t_incr = [], t_full = [], e_incr = [], e_full = [], errors = 0, sample = null;
 	for (let i = 0; i < calls; i++) {
 		let x = log_read(conn, n_incr);

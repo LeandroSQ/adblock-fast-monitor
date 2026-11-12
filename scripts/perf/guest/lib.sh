@@ -1,16 +1,16 @@
+# shellcheck shell=sh
+# SPDX-License-Identifier: Apache-2.0
 # Guest-side helpers for scripts/perf/run.sh (BusyBox ash on OpenWrt 25.12.6).
 # Each perf_* function prints one JSON document on stdout; diagnostics go to
 # stderr. Only stock applets are used (no stat, no timeout, no pgrep).
 
 PERF_RESPONDER_PID=/var/run/abfm-perf-responder.pid
 
-# The query-logging switch: `query_logging` (design B-min, contract api 2);
-# packages built before the rename (design A) call it `enabled`.
-perf_flag() {
-	if ! uci -q get adblock-fast-monitor.config.query_logging >/dev/null &&
-		uci -q get adblock-fast-monitor.config.enabled >/dev/null; then echo enabled
-	else echo query_logging; fi
-}
+PERF_FLAG=adblock-fast-monitor.config.query_logging
+# The package's drop-in, saved the first time query logging is on, and the
+# hand-written copy the "manual" state installs with the package's switch off.
+PERF_DROPIN_COPY=/tmp/abfm-perf/product-dropin.conf
+PERF_MANUAL=abfm-perf-manual.conf
 
 perf_confdirs() { ls -d /tmp/dnsmasq*.d 2>/dev/null; }
 
@@ -31,28 +31,24 @@ perf_dnsmasq_pids() {
 	for _p in $(pidof dnsmasq); do [ "$_p" = "$_r" ] || echo "$_p"; done | sort -n | tr '\n' ' ' | sed 's/ $//'
 }
 
-# package processes: the cmdline names the package; plus `logread -f` readers
-# (design B-min has neither; both must stay empty in every state, §11 P1)
+# package processes: the cmdline names the package (none may be resident, §11 P1)
 # shellcheck disable=SC2009 # BusyBox pgrep cannot print full command lines
 perf_pkg_procs() { ps w | grep '[a]dblock-fast-monitor' | grep -v 'lib\.sh' | sed 's/^ *//'; }
-# shellcheck disable=SC2009 # BusyBox pgrep cannot print full command lines
-perf_logread_procs() { ps w | grep '[l]ogread -f' | sed 's/^ *//'; }
 
 perf_json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\t' '  ')"; }
 
 perf_state_fields() {
-	_pk=$(perf_pkg_procs); _lr=$(perf_logread_procs)
-	_obj=false; ubus list adblock-fast-monitor >/dev/null 2>&1 && _obj=true
+	_pk=$(perf_pkg_procs)
 	_plg=false; ubus list luci.adblock-fast-monitor >/dev/null 2>&1 && _plg=true
-	_drop=''
-	for _d in $(perf_confdirs); do [ -e "$_d/adblock-fast-monitor.conf" ] && _drop="$_drop $_d/adblock-fast-monitor.conf"; done
-	_f=$(perf_flag)
-	printf '"flag":"%s","query_logging":%s,"package_procs":%s,"package_proc_count":%d,"logread_procs":%s,"logread_proc_count":%d,' \
-		"$_f" "$(perf_json_str "$(uci -q get "adblock-fast-monitor.config.$_f")")" \
-		"$(perf_json_str "$_pk")" "$(printf '%s' "$_pk" | grep -c .)" \
-		"$(perf_json_str "$_lr")" "$(printf '%s' "$_lr" | grep -c .)"
-	printf '"monitor_object":%s,"plugin_object":%s,"dropins":%s,"dnsmasq_pids":%s,"dnsmasq_starts_logged":%d,"uptime":%s' \
-		"$_obj" "$_plg" "$(perf_json_str "${_drop# }")" "$(perf_json_str "$(perf_dnsmasq_pids)")" \
+	_drop='' _man=''
+	for _d in $(perf_confdirs); do
+		[ -e "$_d/adblock-fast-monitor.conf" ] && _drop="$_drop $_d/adblock-fast-monitor.conf"
+		[ -e "$_d/$PERF_MANUAL" ] && _man="$_man $_d/$PERF_MANUAL"
+	done
+	printf '"query_logging":%s,"package_procs":%s,"package_proc_count":%d,' \
+		"$(perf_json_str "$(uci -q get "$PERF_FLAG")")" "$(perf_json_str "$_pk")" "$(printf '%s' "$_pk" | grep -c .)"
+	printf '"plugin_object":%s,"dropins":%s,"manual_dropins":%s,"dnsmasq_pids":%s,"dnsmasq_starts_logged":%d,"uptime":%s' \
+		"$_plg" "$(perf_json_str "${_drop# }")" "$(perf_json_str "${_man# }")" "$(perf_json_str "$(perf_dnsmasq_pids)")" \
 		"$(perf_starts)" "$(cut -d' ' -f1 /proc/uptime)"
 }
 
@@ -64,7 +60,7 @@ perf_settle() {
 	_i=0; _stable=0; _last=''
 	sleep 2
 	while [ $_i -lt 60 ]; do
-		_sig="$(perf_dnsmasq_pids)|$(perf_pkg_procs | awk '{print $1}' | tr '\n' ,)|$(perf_logread_procs | awk '{print $1}' | tr '\n' ,)"
+		_sig="$(perf_dnsmasq_pids)|$(perf_pkg_procs | awk '{print $1}' | tr '\n' ,)"
 		if [ "$_sig" = "$_last" ]; then _stable=$((_stable + 1)); else _stable=0; _last=$_sig; fi
 		[ $_stable -ge 5 ] && break
 		sleep 1; _i=$((_i + 1))
@@ -118,7 +114,46 @@ perf_apply_uci() {
 }
 
 # perf_set 0|1 : switch query logging the way LuCI's Save & Apply does.
-perf_set() { _f=$(perf_flag); perf_apply_uci "$_f=$1" "$_f=$1"; }
+perf_set() { perf_apply_uci "query_logging=$1" "query_logging=$1"; }
+
+# perf_capture_dropin : saves the package's drop-in (query logging on) for
+# the hand-written "manual" state.
+perf_capture_dropin() {
+	for _d in $(perf_confdirs); do
+		[ -s "$_d/adblock-fast-monitor.conf" ] || continue
+		mkdir -p "${PERF_DROPIN_COPY%/*}" && cp "$_d/adblock-fast-monitor.conf" "$PERF_DROPIN_COPY" &&
+			printf '{"captured":%s}\n' "$(perf_json_str "$(cat "$PERF_DROPIN_COPY")")" && return 0
+	done
+	echo 'no package drop-in to capture' >&2; return 1
+}
+
+# perf_manual 0|1 : removes or installs the hand-written copy of the package's
+# drop-in in every confdir (takes effect at the next dnsmasq restart).
+perf_manual() {
+	for _d in $(perf_confdirs); do
+		rm -f "$_d/$PERF_MANUAL"
+		if [ "$1" = 1 ]; then cp "$PERF_DROPIN_COPY" "$_d/$PERF_MANUAL" || return 1; fi
+	done
+}
+
+# perf_restart AGE : restarts dnsmasq, waits until it forwards and the dnsmasq
+# and package pid sets are stable, then until AGE seconds have passed since
+# the restart, so every measured state starts from the same dnsmasq age
+# (docs/performance.md, "Alternation").
+perf_restart() {
+	_t0=$(date +%s)
+	/etc/init.d/dnsmasq restart >/dev/null 2>&1
+	_i=0
+	until nslookup "u-restart-$_t0-$_i.perf.test" 127.0.0.1 2>/dev/null | grep -q 192.0.2.1; do
+		_i=$((_i + 1)); [ $_i -lt 60 ] || { echo 'dnsmasq does not answer after the restart' >&2; return 1; }
+		sleep 1
+	done
+	_s=$(perf_settle)
+	_age=$(($(date +%s) - _t0))
+	[ "$_age" -lt "$1" ] && sleep $(($1 - _age))
+	printf '{"settle_s":%d,"ready_age_s":%d,"age_s":%d,' "$_s" "$_age" "$(($(date +%s) - _t0))"
+	perf_state_fields; printf '}\n'
+}
 
 # perf_save KEY VALUE : a settings save that leaves query logging alone (P10).
 perf_save() { perf_apply_uci "$1=$2" "$1=$2"; }

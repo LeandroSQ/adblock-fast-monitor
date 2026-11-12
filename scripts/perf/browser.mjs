@@ -5,7 +5,10 @@
 // logged in as the admin, and records every request the page makes.
 //
 //   node scripts/perf/browser.mjs hold --out FILE --ready FILE --stop FILE [--max-s 900]
-//     Opens the page and keeps it visible until FILE --stop exists (P3/P4).
+//     Opens the page and keeps it visible until FILE --stop exists (P3/P4),
+//     with Chromium under a 4× CPU throttle (CDP Emulation.setCPUThrottlingRate)
+//     and a mouse move every 5 min (the page pauses polling after 15 min
+//     without input).
 //     --ready is created once the page has rendered and made ≥ 2 /ubus
 //     requests after its initial load (or after 30 s without any). Before exiting it reads the
 //     page's `abfm-poll` performance measures and times the querylog module
@@ -18,11 +21,11 @@
 // GUEST_ROOT_PASSWORD; optional ABFM_PERF_PAGE (default the overview path)
 // and, for router-side tick deltas in p2, GUEST_SSH_KEY/GUEST_SSH_PORT/GUEST_RUN_DIR.
 //
-// UI hook (coordinated with the UI unit, docs/performance.md → P4): the page
-// wraps each poll's parse + classify + render in a performance measure named
-// `abfm-poll`, e.g. performance.measure('abfm-poll', {start: t0, detail:
-// {entries: reply.log.length, rows: shownRows}}). Without it, P4 falls back to
-// the querylog module timed in the page (parse + classify only).
+// UI hook (docs/performance.md → P4): for every kept `log read` reply the page
+// records performance.measure('abfm-poll', {start, end, detail: {entries,
+// rows, changed}}) from the reply's arrival to the next rendered frame.
+// Without it, P4 falls back to the querylog module timed in the page (parse +
+// classify only).
 import { execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { chromium } from '@playwright/test';
@@ -79,6 +82,11 @@ async function open(browser) {
   const context = await browser.newContext({ baseURL: base });
   track(context);
   const page = await context.newPage();
+  if (mode === 'hold') {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_THROTTLE });
+    result.cpu_throttle = CPU_THROTTLE;
+  }
   page.on('pageerror', e => result.errors.push(`pageerror: ${e.message}`));
   await page.goto(path, { timeout: 180_000 });
   const field = page.locator('input[name="luci_username"]');
@@ -103,7 +111,7 @@ async function open(browser) {
 async function measures(page) {
   return page.evaluate(name => performance.getEntriesByName(name).map(e => ({
     start_ms: Math.round(e.startTime * 100) / 100, duration_ms: Math.round(e.duration * 1000) / 1000,
-    entries: e.detail?.entries ?? null, rows: e.detail?.rows ?? null
+    entries: e.detail?.entries ?? null, rows: e.detail?.rows ?? null, changed: e.detail?.changed ?? null
   })), MARK).catch(e => { result.errors.push(`measures: ${e.message}`); return []; });
 }
 
@@ -188,6 +196,8 @@ function guestTicks() {
 }
 const tickDelta = (a, b) => (a && b ? Object.fromEntries(Object.keys(b).map(k => [k, b[k] - (a[k] ?? 0)])) : null);
 
+const CPU_THROTTLE = 4;
+const INPUT_EVERY_MS = 5 * 60_000;
 const browser = await chromium.launch();
 let exitCode = 0;
 try {
@@ -201,7 +211,15 @@ try {
     result.polling_at_ready = ubusCount(after) >= 2;
     if (opt.ready) writeFileSync(opt.ready, `${result.ready_ms}\n`);
     const deadline = Date.now() + Number(opt['max-s'] ?? 900) * 1000;
-    while (!(opt.stop && existsSync(opt.stop)) && Date.now() < deadline) await sleep(250);
+    let nextInput = Date.now() + INPUT_EVERY_MS, inputs = 0;
+    while (!(opt.stop && existsSync(opt.stop)) && Date.now() < deadline) {
+      if (Date.now() >= nextInput) {
+        await page.mouse.move(10 + (inputs % 2) * 20, 10);
+        inputs += 1; nextInput = Date.now() + INPUT_EVERY_MS;
+      }
+      await sleep(250);
+    }
+    result.input_events = inputs;
     result.stopped_ms = rel();
     result.visibility = await page.evaluate(() => document.visibilityState);
     result.measures = await measures(page);

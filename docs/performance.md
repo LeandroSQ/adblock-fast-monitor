@@ -62,8 +62,8 @@ measured is `NOT_MEASURED`, which fails the gate.
 
 | `ABFM_PERF_GUEST` | Guest | Accelerator | Role |
 | --- | --- | --- | --- |
-| `armsr-hvf` | OpenWrt 25.12.6 `armsr-armv8` (`generic-ext4-combined-efi`, sha256 pinned from the release's `sha256sums`) + adblock-fast 1.2.4-r4 from the official `aarch64_generic` feed; `qemu-system-aarch64 -M virt -accel hvf -cpu host`, UEFI (QEMU's `edk2-aarch64-code.fd`), natively on macOS, no Docker | Apple Hypervisor.framework (`hvf`); `GUEST_ACCEL=tcg` forces emulation | measurement of record on an Apple-silicon Mac |
-| `x86` (default) | OpenWrt 25.12.6 `x86/64` + adblock-fast 1.2.4-r4 (the guest-suite baseline, `scripts/guest/prepare-baseline.sh`) | KVM when `/dev/kvm` is usable (Linux, CI hosts), otherwise TCG (in Docker on macOS) | smoke test of the harness on a Mac; KVM numbers on Linux |
+| `armsr-hvf` | OpenWrt 25.12.6 `armsr-armv8` (`generic-ext4-combined-efi`, sha256 pinned from the release's `sha256sums`) + adblock-fast 1.2.4-r4 from the official `aarch64_generic` feed; `qemu-system-aarch64 -M virt -accel hvf -cpu host`, UEFI (QEMU's `edk2-aarch64-code.fd`), natively on macOS, no Docker | Apple Hypervisor.framework (`hvf`); `GUEST_ACCEL=tcg` forces emulation | run of record on an Apple-silicon Mac (accelerated budgets) |
+| `x86` (default) | OpenWrt 25.12.6 `x86/64` + adblock-fast 1.2.4-r4 (the guest-suite baseline, `scripts/guest/prepare-baseline.sh`) | KVM when `/dev/kvm` is usable (Linux, CI hosts), otherwise TCG (in Docker on macOS) | TCG: smoke run (P5/P6 reported, not gated); KVM: gated on the top-level budgets |
 
 The package is `PKGARCH:=all`, so the same APK installs on both. Both
 guests have 2 vCPUs, 256 MiB, QEMU user networking and logd's default
@@ -266,17 +266,35 @@ measures (many small syslog writes and wakeups); see the results below.
 ## Budgets
 
 All CPU figures are percent of one CPU of the measurement guest. Absolute
-times and CPU shares depend on the accelerator and the host; the gate
-records both. Budgets change only with measured data recorded below.
+times and CPU shares depend on the accelerator, so `scripts/perf/budgets.json`
+holds top-level numbers and an `accelerators` block the gate applies by the
+run's recorded accelerator:
+
+- **hvf** (armsr-armv8, Apple silicon) is the **run of record**. It
+  overrides P3 CPU (1 / 2 pp), the P5 floor (2 ms) and P6 (4 / 6 pp for
+  every process, dnsmasq included) with the tighter numbers its
+  measurements support (Measured results).
+- **tcg** is a **smoke run**: P5 and P6 are judged against the top-level
+  (TCG-calibrated) numbers and reported, marked `[report only]`, but do not
+  decide the verdict, because TCG inflates query logging's cost several
+  times over. Every other metric gates.
+- Any other accelerator (KVM) uses the top-level numbers for every metric.
+
+`verdict.json` and `summary.json` record `of_record`, `report_only` and the
+budgets applied. The absolute-time budgets (`log read`, P7, P8) are the same
+everywhere: an M4 core is several times faster than a typical router's, so
+they are not tightened from hvf numbers. Budgets change only with measured
+data recorded below. In the table, the hvf number comes first and the
+top-level number follows in brackets where they differ.
 
 | ID | Budget (gate) | Why this number |
 | --- | --- | --- |
 | P1 | 0 resident package processes in every sample of every state (**hard**); transient init invocations ≤ 2 per boot window plus ≤ 1 boot start, and 0 while idle; rpcd RssAnon growth ≤ 1024 KiB | Nothing of the package stays running; the only cost allowed is the rpcd plugin in rpcd's heap. At boot procd's rcS starts the service once (`S18… boot`: it reconciles the drop-ins and registers the triggers, §4) and procd then runs its `running` check. With query logging on, the procd `instance.update` trigger (§4: re-attaches dnsmasq to a restarted logd) fires 3 s after the last instance start or stop; the 3 s debounce collapses the boot burst into one firing, which runs `logging.uc reconcile`. So a boot is one boot start plus at most two invocations (`running`, one firing); when nothing starts or stops, nothing may run. Measured under TCG (run `20261111T231647Z-53299`, watch from `S11`): logging on, boot start 0.2 s, `running` 0.1 s, the firing 10 s later; logging off, boot start and `running`; 0 in both 60 s idle watches after boot and in the installed watches. Under hvf the firing is shorter than the watch's 100 ms scan and is not seen (Known gaps). |
 | P2 | 0 requests in 60 s hidden, 0 in 60 s closed (**hard**) | LuCI's `Poll` never pauses for hidden tabs; the page must remove its poll on `visibilitychange`. |
-| P3 | uhttpd+ubusd+logd+rpcd CPU with one visible page polling every 2 s minus the same load with no page ≤ 2 pp at 50 qps, ≤ 6 pp at 200 qps; `log read` p95 ≤ 50 ms at the adaptive N (< 900), ≤ 150 ms at N = 900 | A resident `logread -f` reader (the obvious alternative design, measured in an earlier prototype) alone cost 3.4 / 8.1 % at 50 / 200 qps under TCG (run `20261110T195320Z-79115`); a page must cost less than that while open, and nothing when closed. A poll is one `log read`, all in C plus rpcd's session check. |
+| P3 | uhttpd+ubusd+logd+rpcd CPU with one visible page polling every 2 s minus the same load with no page ≤ 1 / 2 pp at 50 / 200 qps [2 / 6 pp]; `log read` p95 ≤ 50 ms at the adaptive N (< 900), ≤ 150 ms at N = 900 | A resident `logread -f` reader (the obvious alternative design, measured in an earlier prototype) alone cost 3.4 / 8.1 % at 50 / 200 qps under TCG (run `20261110T195320Z-79115`); a page must cost less than that while open, and nothing when closed. A poll is one `log read`, all in C plus rpcd's session check. Under hvf the page measured +0.07…+0.10 / +0.10…+0.20 pp in three runs, so 1 / 2 pp leaves ≥ 5× margin. |
 | P4 | `abfm-poll` p95 ≤ 20 ms at ≥ 810 entries; ≤ 500 rows kept | One poll every 2 s: 20 ms is 1 % of one browser core, and a 900-entry first load stays within about one 60 Hz frame (16.7 ms) plus layout. |
-| P5 | median(on p95) − median(off p95) ≤ max(3 ms, noise floor), ≥ 3 runs per state and rate, loss ≤ 0.5 % | "Within noise", with the noise floor measured in the same run. The 3 ms floor is the TCG cost of query logging itself (dnsmasq's syslog write per line): +1.95 and +2.23 ms p95 at 50 qps in two TCG runs, plus the on-state spread (≈ 1.2 ms), rounded down. Under hvf the same delta is +0.03 to +0.14 ms (Recommendations). |
-| P6 | per process (logd, dnsmasq, rpcd, uhttpd, ubusd): on − off ≤ 4 pp at 50 qps, ≤ 12 pp at 200 qps, dnsmasq ≤ 10 pp at 50 qps; RssAnon delta ≤ 256 KiB; and on − manual ≤ the run-to-run noise of those two states (≥ 0.5 pp) | Query logging is the feature, and its cost is dnsmasq's own: one syslog datagram per log line, which logd receives. The on − manual condition checks exactly that: the package's drop-in written by hand, with the package's switch off, costs what the package costs. The dnsmasq 10 pp ceiling at 50 qps is the TCG figure (+7.9 pp medians with ≈ 2 pp spread, run `20261111T032551Z-32856`): TCG inflates the context switches each syslog write causes. Under hvf the same cost is +0.6 pp (Recommendations). |
+| P5 | median(on p95) − median(off p95) ≤ max(2 ms [3 ms], noise floor), ≥ 3 runs per state and rate, loss ≤ 0.5 % | "Within noise", with the noise floor measured in the same run. The 3 ms floor is the TCG cost of query logging itself (dnsmasq's syslog write per line): +1.95 and +2.23 ms p95 at 50 qps in two TCG runs, plus the on-state spread (≈ 1.2 ms), rounded down. Under hvf the delta is −0.40…+0.14 ms with spreads ≤ 0.62 ms (three runs), so the original 2 ms floor holds there. |
+| P6 | per process (logd, dnsmasq, rpcd, uhttpd, ubusd): on − off ≤ 4 / 6 pp at 50 / 200 qps [4 / 12 pp, dnsmasq 10 / 12 pp]; RssAnon delta ≤ 256 KiB; and on − manual ≤ the run-to-run noise of those two states (≥ 0.5 pp) | Query logging is the feature, and its cost is dnsmasq's own: one syslog datagram per log line, which logd receives. The on − manual condition checks exactly that: the package's drop-in written by hand, with the package's switch off, costs what the package costs. The dnsmasq 10 pp ceiling at 50 qps is the TCG figure (+7.9 pp medians with ≈ 2 pp spread, run `20261111T032551Z-32856`): TCG inflates the context switches each syslog write causes. Under hvf the same cost is dnsmasq +0.60…+0.67 / +2.06…+2.10 pp and logd +0.33…+0.37 / +1.07…+1.10 pp (three runs, spreads ≤ 0.6 pp at 50 qps and ≤ 2.4 pp at 200), so 4 / 6 pp leaves ≥ 2.8× margin. |
 | P7 | `info` p95 ≤ 50 ms | Cheap UCI reads, `stat` and one `service list` call (§6.1). |
 | P8 | `apply` ≤ 200 ms (dry run and real) and rpcd never blocked > 200 ms (**hard**) | §6: rpcd is single-threaded. |
 | P10 | dnsmasq restarts: boot 0, enabling query logging 1 (every time), a settings save 0 (**hard**) | §5. Boot is the on-boot count minus the off-boot count. |
@@ -326,8 +344,10 @@ system total is therefore task-based (Method).
 ### x86/64 under TCG (smoke test)
 
 Run `.local-validation/perf/20261111T231647Z-53299` (default guest, same
-APK, same harness, nothing else running): **FAIL: P5 and P6**, every
-other metric passes. 24 windows, none invalid.
+APK, same harness, nothing else running): every gated metric passes; P5
+and P6 fail their TCG-calibrated numbers, which as a smoke run are
+reported only (the gate as first run, before the per-accelerator budgets,
+said FAIL: P5, P6). 24 windows, none invalid.
 
 | ID | Result | Noise (spread over 3 repeats, 50 / 200 qps) |
 | --- | --- | --- |
@@ -398,27 +418,21 @@ Findings:
   longest after a dnsmasq restart, `init reload` between arms) is
   superseded by this one.
 
-### Recommendations for the budgets (proposals; not applied)
+### Budgets adopted from these results
 
-The hvf numbers support tighter budgets than the TCG-calibrated ones; TCG
-cannot meet them, so they belong to an accelerated guest (hvf or KVM). With
-data from the three hvf runs:
+The hvf numbers support tighter budgets than the TCG-calibrated ones, and
+these were adopted for the hvf run of record (`budgets.json` →
+`accelerators.hvf`); TCG keeps the old numbers as a smoke run:
 
-| Budget | Now | hvf measured (3 runs) | Proposal for accelerated guests |
+| Budget | Top-level (TCG, KVM) | hvf measured (3 runs) | hvf (adopted) |
 | --- | --- | --- | --- |
-| P5 floor | 3 ms | Δp95 −0.40…+0.14 ms; spreads ≤ 0.62 ms | back to the original 2 ms (or 1 ms: twice the worst spread) |
-| P6 dnsmasq, 50 qps | 10 pp | +0.60…+0.67 pp (spread ≤ 0.54) | back to the common 4 pp; 2 pp would still leave 3× margin |
+| P5 floor | 3 ms | Δp95 −0.40…+0.14 ms; spreads ≤ 0.62 ms | 2 ms |
+| P6 dnsmasq, 50 qps | 10 pp | +0.60…+0.67 pp (spread ≤ 0.54) | 4 pp |
 | P6 dnsmasq / logd, 200 qps | 12 pp | dnsmasq +2.06…+2.10, logd +1.07…+1.10 | 6 pp |
 | P3 CPU | 2 / 6 pp | +0.07…+0.10 / +0.10…+0.20 pp | 1 / 2 pp |
 
 The loosened P5 (3 ms) and P6 dnsmasq (10 pp) budgets are not needed under
-acceleration. The absolute-time budgets (`log read`, P7, P8) should not be
-tightened from hvf numbers: an M4 core is several times faster than a
-typical router's, so the TCG numbers are the more conservative guide
-there. One way to apply this: per-accelerator overrides in
-`scripts/perf/budgets.json` (for example a `by_accel.hvf` block the gate
-merges), with TCG kept as a smoke test whose P5/P6 results are reported
-but not of record.
+acceleration. The absolute-time budgets (`log read`, P7, P8) are unchanged.
 
 ### Earlier TCG results (before this harness revision)
 

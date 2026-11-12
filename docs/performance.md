@@ -252,7 +252,7 @@ measures (many small syslog writes and wakeups); see the results below.
   queries/s, with Chromium in the Linux container: there the median poll
   is about 20 % faster than on the macOS host but the tail is noisier (the
   container's CPUs also run the TCG guest that writes the load), so the
-  guard holds the p95 to the budget and the median to 10 ms.
+  guard holds the p95 to the budget and the median to 12 ms.
 - **dnsmasq restarts** = dnsmasq `started, version` lines logged after a
   marker that precedes the action (the logd ring wraps under load).
   Boot counts all such lines since boot; the budget is on-boot minus

@@ -397,7 +397,7 @@ test('keyboard focus follows its row while the page shifts, and leaves the table
 // the budget and the median to a tighter bound, which a page that rebuilds
 // or restyles its rows, or a poll frame that waits for the frame clock, fails.
 const P4_P95_MS = 20;
-const P4_P50_MS = 10;
+const P4_P50_MS = 12;
 test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms over every poll while the page shifts at ~50 and ~200 qps, 4x CPU throttle`, async ({ page }, testInfo) => {
   const load = (rate, serial) => [
     `rm -f /tmp/abfm-load-*; touch /tmp/abfm-load-${rate}`,

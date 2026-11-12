@@ -246,7 +246,13 @@ measures (many small syslog writes and wakeups); see the results below.
   querylog module (`adblock-fast-monitor/querylog.js`) timed in the page
   on a real 900-entry `log read` reply fetched with the page's session:
   `create` + `ingest` + `rows` + `stats`, 20 times; the verdict then says
-  "module only (no render)".
+  "module only (no render)". The P4 guard in
+  `test/browser/ui-queries.spec.mjs` takes the same measure, under the
+  same throttle, over every poll while the page shifts at ~50 and ~200
+  queries/s, with Chromium in the Linux container: there the median poll
+  is about 20 % faster than on the macOS host but the tail is noisier (the
+  container's CPUs also run the TCG guest that writes the load), so the
+  guard holds the p95 to the budget and the median to 10 ms.
 - **dnsmasq restarts** = dnsmasq `started, version` lines logged after a
   marker that precedes the action (the logd ring wraps under load).
   Boot counts all such lines since boot; the budget is on-boot minus

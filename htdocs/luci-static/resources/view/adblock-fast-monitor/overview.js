@@ -18,9 +18,16 @@
  * Every dynamic value is inserted as a text node (arrays passed to E()/dom).
  */
 
+/*
+ * The polled calls are sent at once, not batched: LuCI flushes batched
+ * calls from a requestAnimationFrame callback, and the frame that runs it
+ * keeps the compositor on its frame clock while a `log read` reply is on
+ * its way, so the frame that shows the reply would wait for the next frame
+ * slot (P4). Each is the only call of its poll anyway.
+ */
 const callLogRead = rpc.declare({ object: 'log', method: 'read',
-	params: [ 'lines', 'stream', 'oneshot' ], reject: true });
-const callInfo = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'info', reject: true });
+	params: [ 'lines', 'stream', 'oneshot' ], reject: true, nobatch: true });
+const callInfo = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'info', reject: true, nobatch: true });
 const callApply = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'apply',
 	params: [ 'ops', 'confirm_rebuild', 'rebuild', 'dry_run' ], reject: true });
 const callJob = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'job', params: [ 'job_id' ], reject: true });
@@ -41,6 +48,9 @@ const SETTINGS_PATH = 'admin/services/adblock-fast-monitor/settings';
 const INPUT_EVENTS = [ 'pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart' ];
 
 const OP_LABEL = { allow: _('Allow'), block: _('Block'), unblock: _('Unblock'), unallow: _('Unallow') };
+/* per-row labels, translated once (P4: a poll rewrites up to 50 of them) */
+const OP_ARIA = _('%s %s');
+const CANCEL_ARIA = _('Cancel pending change for %s');
 const OP_BUTTON_CLASS = { allow: 'cbi-button cbi-button-positive', block: 'cbi-button cbi-button-negative' };
 const DECISION_LABEL = {
 	blocked: _('Blocked'), allowed: _('Allowed'), other: _('Other'), 'no-answer': _('No answer'),
@@ -109,6 +119,11 @@ const ERROR_TEXT = {
 
 function T(value) {
 	return [ (value == null) ? '' : String(value) ];
+}
+
+/* An empty text node that later updates rewrite through .data. */
+function textNode() {
+	return document.createTextNode('');
 }
 
 function errorText(code, fallback) {
@@ -191,7 +206,14 @@ return view.extend({
 		this.jobKey = null;
 		this.stateKey = null;
 		this.statsKey = null;
+		this.statCells = null;
+		this.missedNotes = null;
 		this.queryRows = new Map();
+		this.querySlots = [];
+		this.slotPool = [];
+		this.rowTemplate = null;
+		this.resultLabels = new Map();
+		this.queryCreated = 0;
 		this.queryLayout = null;
 		this.view = { page: 0, upto: null, latest: 0, total: 0 };
 		this.pagerKey = null;
@@ -385,7 +407,8 @@ return view.extend({
 			entries: (reply && Array.isArray(reply.log)) ? reply.log.length : 0,
 			rows: this.keptRows || 0,
 			shown: this.queryRows.size,
-			changed: changed || 0
+			changed: changed || 0,
+			created: this.queryCreated || 0
 		};
 		requestAnimationFrame(() => setTimeout(() => {
 			if (vis != this.visibility || document.visibilityState != 'visible')
@@ -523,28 +546,57 @@ return view.extend({
 		];
 		const missed = s.missed_total || 0;
 		const paused = s.paused_total || 0;
-		const key = JSON.stringify([ rows, missed, paused ]);
+
+		/* built once; afterwards a poll rewrites only the texts that changed (P4) */
+		if (!this.statCells) {
+			this.statCells = rows.map(() => ({ value: E('span', { 'class': 'abfm-value' }, [ textNode() ]), label: null, vals: [] }));
+			dom.content(this.statsNode, [ E('table', { 'class': 'table', 'aria-label': _('Statistics') },
+				rows.map((r, i) => {
+					const c = this.statCells[i];
+					const td = E('td', { 'class': 'td left' }, [ c.value ]);
+					if (r[3] != null) {
+						c.label = E('span', { 'class': 'abfm-label' }, [ textNode() ]);
+						td.appendChild(document.createTextNode(' '));
+						td.appendChild(c.label);
+					}
+					return E('tr', { 'class': 'tr', 'data-stat': r[2] }, [
+						E('th', { 'class': 'td left', 'scope': 'row', 'width': '33%' }, T(r[0])), td ]);
+				})) ]);
+		}
+		rows.forEach((r, i) => {
+			const c = this.statCells[i];
+			if (c.vals[0] !== r[1])
+				c.value.firstChild.data = c.vals[0] = r[1];
+			if (c.label && c.vals[1] !== r[3])
+				c.label.firstChild.data = c.vals[1] = r[3];
+		});
+
+		const key = missed + ':' + paused;
 		if (key == this.statsKey)
 			return;
 		this.statsKey = key;
-
-		dom.content(this.statsNode, [ E('table', { 'class': 'table', 'aria-label': _('Statistics') },
-			rows.map(r => E('tr', { 'class': 'tr', 'data-stat': r[2] }, [
-				E('th', { 'class': 'td left', 'scope': 'row', 'width': '33%' }, T(r[0])),
-				E('td', { 'class': 'td left' }, [ E('span', { 'class': 'abfm-value' }, T(r[1])) ].concat(
-					r[3] ? [ ' ', E('span', { 'class': 'abfm-label' }, T(r[3])) ] : []))
-			]))) ]);
-
 		this.missedNode.setAttribute('data-missed', String(missed));
 		this.missedNode.setAttribute('data-paused', String(paused));
-		const notes = [];
-		if (missed)
-			notes.push(E('div', { 'class': 'alert-message warning' },
-				T(_('%d log entries missed: the system log buffer was overwritten between refreshes, or dnsmasq reported lost entries.').format(missed))));
-		if (paused)
-			notes.push(E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap' },
-				T(_('%d log entries were overwritten while updates were paused (page hidden or not in use); they are not shown.').format(paused))));
-		dom.content(this.missedNode, notes);
+		if (!this.missedNotes) {
+			this.missedNotes = {
+				missed: E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]),
+				paused: E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ])
+			};
+			dom.content(this.missedNode, [ this.missedNotes.missed, this.missedNotes.paused ]);
+		}
+		/* at a high query rate the count changes every poll: only its text is rewritten */
+		const notes = this.missedNotes;
+		this.setNote(notes.missed, missed ? _('%d log entries missed: the system log buffer was overwritten between refreshes, or dnsmasq reported lost entries.').format(missed) : '');
+		this.setNote(notes.paused, paused ? _('%d log entries were overwritten while updates were paused (page hidden or not in use); they are not shown.').format(paused) : '');
+	},
+
+	/* A note is shown while it has text; unchanged text or visibility is not written again. */
+	setNote(node, text) {
+		if (node.firstChild.data !== text)
+			node.firstChild.data = text;
+		const display = text ? '' : 'none';
+		if (node.style.display != display)
+			node.style.display = display;
 	},
 
 	/* ---- queries table ---------------------------------------------------------- */
@@ -593,7 +645,7 @@ return view.extend({
 	},
 
 	/* What the Actions cell of a row shows: '', 'inflight', 'staged:<op>' or 'op:<op>'. */
-	actionState(row, ent) {
+	actionState(row, slot) {
 		if (this.noActions)
 			return '';
 		const domain = row.domain;
@@ -603,49 +655,164 @@ return view.extend({
 		if (staged)
 			return 'staged:' + staged;
 		const op = model.rowOp(row.decision);
-		if (!op || !ent.valid || (op == 'block' && model.isProtected(this.protect, ent.valid)))
+		if (!op || !slot.valid || (op == 'block' && model.isProtected(this.protect, slot.valid)))
 			return '';
 		return 'op:' + op;
 	},
 
-	actionsCell(row, state) {
-		const domain = row.domain;
-		if (state == 'inflight')
-			return [ E('em', {}, T(_('Applying…'))) ];
-		if (state.indexOf('staged:') == 0) {
-			const staged = state.substring(7);
-			return [
-				E('span', { 'class': 'abfm-staged' }, T(_('Pending: %s').format(OP_LABEL[staged] || staged))), ' ',
-				E('button', { 'class': 'cbi-button cbi-button-neutral',
-					'aria-label': _('Cancel pending change for %s').format(domain),
-					'click': () => this.unstageDomain(domain) }, T(_('Cancel')))
+	/*
+	 * A row slot: one <tr> of the queries table and the text nodes of its
+	 * cells, reused for whatever row sits at its place (updateQueries).
+	 * Cells are cloned from one template per column set; buttons read the
+	 * slot's current domain when clicked.
+	 */
+	newSlot() {
+		if (!this.rowTemplate) {
+			const tds = [
+				cell(_('Time'), [ E('time') ]),
+				cell(_('Domain'), [], 'abfm-domain'),
+				cell(_('Type'), []),
+				cell(_('Answer'), [], 'abfm-answer'),
+				cell(_('Result'), [])
 			];
+			if (this.display.showClient)
+				tds.push(cell(_('Client'), []));
+			if (this.canWrite)
+				tds.push(cell(_('Actions'), [], 'cbi-section-actions'));
+			this.rowTemplate = E('tr', { 'class': 'tr' }, tds);
+			[ tds[0].firstChild ].concat(tds.slice(1, this.canWrite ? -1 : tds.length))
+				.forEach(n => n.appendChild(textNode()));
 		}
-		if (state.indexOf('op:') == 0) {
-			const op = state.substring(3);
-			return [ E('button', { 'class': OP_BUTTON_CLASS[op], 'data-op': op,
-				'aria-label': _('%s %s').format(OP_LABEL[op], domain),
-				'click': () => this.stageOp(op, domain) }, T(OP_LABEL[op])) ];
-		}
-		return [];
+		const tr = this.rowTemplate.cloneNode(true);
+		const tds = tr.children;
+		const slot = { tr: tr, key: null, domain: null, valid: null, decision: null, router: null, vals: [], text: [],
+			act: null, aria: null, ariaButton: null, actCell: this.canWrite ? tds[tds.length - 1] : null, buttons: {}, staged: null, inflight: null };
+		slot.text.push(tds[0].firstChild.firstChild);
+		for (let i = 1; i < tds.length - (this.canWrite ? 1 : 0); i++)
+			slot.text.push(tds[i].firstChild);
+		return slot;
 	},
 
-	queryRow(r, actions) {
-		const decision = Object.prototype.hasOwnProperty.call(DECISION_LABEL, r.decision) ? DECISION_LABEL[r.decision] : r.decision;
-		const result = r.source ? _('%s (%s)').format(decision, SOURCE_LABEL[r.source] || r.source) : decision;
-		const tds = [
-			cell(_('Time'), [ E('time', {}, T(model.formatTime(r.time))) ]),
-			cell(_('Domain'), T(r.domain), 'abfm-domain'),
-			cell(_('Type'), T(r.qtype)),
-			cell(_('Answer'), T((Array.isArray(r.answers) ? r.answers : []).join(', ')), 'abfm-answer'),
-			cell(_('Result'), T(result))
+	/* "Decision (source)", formatted once per pair (a few dozen at most). */
+	resultLabel(decision, source) {
+		const k = decision + '\n' + source;
+		let text = this.resultLabels.get(k);
+		if (text === undefined) {
+			const d = Object.prototype.hasOwnProperty.call(DECISION_LABEL, decision) ? DECISION_LABEL[decision] : decision;
+			text = source ? _('%s (%s)').format(d, SOURCE_LABEL[source] || source) : String(d);
+			if (this.resultLabels.size < 256)
+				this.resultLabels.set(k, text);
+		}
+		return text;
+	},
+
+	/* Writes only what differs from the slot's last values; returns true if anything changed. */
+	fillSlot(slot, r) {
+		let changed = false;
+		if (slot.domain !== r.domain) {
+			slot.domain = r.domain;
+			slot.valid = model.normalizeDomain(r.domain);
+			slot.tr.setAttribute('data-domain', r.domain);
+			changed = true;
+		}
+		if (slot.decision !== r.decision) {
+			slot.decision = r.decision;
+			slot.tr.setAttribute('data-decision', r.decision);
+			changed = true;
+		}
+		const router = r.router ? 'true' : 'false';
+		if (slot.router !== router) {
+			slot.router = router;
+			slot.tr.setAttribute('data-router', router);
+			changed = true;
+		}
+		if (r.time !== this.timeKey) {
+			this.timeKey = r.time;
+			this.timeText = model.formatTime(r.time);
+		}
+		const vals = [
+			this.timeText,
+			String(r.domain),
+			String(r.qtype == null ? '' : r.qtype),
+			(Array.isArray(r.answers) ? r.answers : []).join(', '),
+			this.resultLabel(r.decision, r.source)
 		];
 		if (this.display.showClient)
-			tds.push(cell(_('Client'), T(r.client)));
-		if (this.canWrite)
-			tds.push(cell(_('Actions'), this.actionsCell(r, actions), 'cbi-section-actions'));
-		return E('tr', { 'class': 'tr', 'data-domain': r.domain, 'data-decision': r.decision,
-			'data-router': r.router ? 'true' : 'false' }, tds);
+			vals.push(r.client == null ? '' : String(r.client));
+		for (let i = 0; i < vals.length; i++) {
+			if (slot.vals[i] !== vals[i]) {
+				slot.vals[i] = vals[i];
+				slot.text[i].data = vals[i];
+				changed = true;
+			}
+		}
+		if (this.canWrite && this.fillActions(slot, this.actionState(r, slot)))
+			changed = true;
+		return changed;
+	},
+
+	/*
+	 * Actions cell. Its controls are made once per slot and kept: one button
+	 * per operation (so a row never changes a button's class, which would
+	 * restyle it and start the theme's border transition), the pending note
+	 * with its Cancel button, and the "Applying…" note. The cell's children
+	 * are swapped only when the state differs; labels follow the slot's
+	 * domain. Returns true if anything changed.
+	 */
+	fillActions(slot, state) {
+		const domain = slot.domain;
+		let changed = false;
+		if (state != slot.act) {
+			slot.act = state;
+			changed = true;
+			let nodes = [];
+			if (state == 'inflight') {
+				if (!slot.inflight)
+					slot.inflight = E('em', {}, T(_('Applying…')));
+				nodes = [ slot.inflight ];
+			}
+			else if (state.indexOf('staged:') == 0) {
+				if (!slot.staged)
+					slot.staged = {
+						label: E('span', { 'class': 'abfm-staged' }, [ textNode() ]),
+						button: E('button', { 'class': 'cbi-button cbi-button-neutral',
+							'click': () => this.unstageDomain(slot.domain) }, T(_('Cancel'))),
+						op: null
+					};
+				const staged = state.substring(7);
+				if (slot.staged.op !== staged) {
+					slot.staged.op = staged;
+					slot.staged.label.firstChild.data = _('Pending: %s').format(OP_LABEL[staged] || staged);
+				}
+				nodes = [ slot.staged.label, ' ', slot.staged.button ];
+			}
+			else if (state.indexOf('op:') == 0) {
+				const op = state.substring(3);
+				if (!slot.buttons[op])
+					slot.buttons[op] = E('button', { 'class': OP_BUTTON_CLASS[op], 'data-op': op,
+						'click': () => this.stageOp(op, slot.domain) }, T(OP_LABEL[op]));
+				nodes = [ slot.buttons[op] ];
+			}
+			slot.actCell.replaceChildren(...nodes);
+		}
+		/* the shown button's accessible name carries the row's domain */
+		let button = null, aria = null;
+		if (state.indexOf('op:') == 0) {
+			const op = state.substring(3);
+			button = slot.buttons[op];
+			aria = OP_ARIA.format(OP_LABEL[op], domain);
+		}
+		else if (state.indexOf('staged:') == 0) {
+			button = slot.staged.button;
+			aria = CANCEL_ARIA.format(domain);
+		}
+		if (button && (slot.aria !== aria || slot.ariaButton !== button)) {
+			button.setAttribute('aria-label', aria);
+			slot.aria = aria;
+			slot.ariaButton = button;
+			changed = true;
+		}
+		return changed;
 	},
 
 	/*
@@ -664,14 +831,19 @@ return view.extend({
 	},
 
 	/*
-	 * Incremental update of one page (at most PAGE_SIZE rows) keyed by row
-	 * key: rows whose content is unchanged keep their DOM node (focus,
-	 * selection), changed rows are replaced in place, new rows are inserted
-	 * and dropped rows removed, with no layout reads in between, so the
-	 * browser lays out once. Row stripes are fixed when a row is created, so
-	 * prepending rows touches no other row. A different column set rebuilds
-	 * the table. Returns the number of rows created, replaced or removed
-	 * (0 on an idle poll); bounded by 2 * PAGE_SIZE.
+	 * Update of one page (at most PAGE_SIZE rows). The table keeps one slot
+	 * (a <tr> and the text nodes of its cells) per shown row, by position:
+	 * a poll writes each row into the slot at its place, and a write only
+	 * touches the text nodes and attributes whose value differs. A page
+	 * that shifts therefore costs text writes only: no row is created,
+	 * moved or restyled (stripes are fixed per position), and nothing reads
+	 * layout, so the browser lays out once (P4). Slots are created only
+	 * while the page grows (the first page is built in one fragment and
+	 * inserted once) and kept for reuse while it is short; a different
+	 * column set rebuilds the table. Keyboard focus in a row follows that
+	 * row's key, and leaves the table when the row leaves the page.
+	 * Returns the number of rows written or removed (0 on an idle poll),
+	 * at most PAGE_SIZE; this.queryCreated counts the slots created.
 	 */
 	updateQueries() {
 		if (!this.queriesNode)
@@ -691,7 +863,9 @@ return view.extend({
 		const rows = res.rows;
 		const table = this.queriesTable;
 		const map = this.queryRows;
+		const slots = this.querySlots;
 		let changed = 0;
+		this.queryCreated = 0;
 
 		const layout = JSON.stringify([ this.display.showClient, this.canWrite ]);
 		if (layout != this.queryLayout) {
@@ -702,54 +876,70 @@ return view.extend({
 			if (this.canWrite)
 				captions.push(_('Actions'));
 			this.queryCols = captions.length;
-			changed += map.size;
+			changed += slots.length;
 			map.clear();
+			slots.length = 0;
+			this.slotPool = [];
+			this.rowTemplate = null;
 			this.queryPlaceholder = null;
 			dom.content(table, [ headerRow(captions) ]);
 		}
 
-		const keys = new Set();
-		rows.forEach(r => keys.add(r.key));
-		map.forEach((ent, k) => {
-			if (!keys.has(k)) {
-				ent.tr.remove();
-				map.delete(k);
-				changed++;
-			}
-		});
+		/* the row that holds keyboard focus, if any (only document state is read here) */
+		const active = document.activeElement;
+		let focus = null;
+		if (active && active !== document.body && slots.length && table.contains(active)) {
+			const at = slots.find(s => s.tr.contains(active));
+			if (at)
+				focus = { slot: at, key: at.key };
+		}
 
-		let prev = table.firstChild;
-		rows.forEach(r => {
-			let ent = map.get(r.key);
-			if (!ent) {
-				ent = { tr: null, sig: null, parity: 0, valid: model.normalizeDomain(r.domain) };
-				map.set(r.key, ent);
+		let fresh = null;
+		const before = slots.length ? slots[slots.length - 1].tr.nextSibling : table.firstChild.nextSibling;
+		while (slots.length < rows.length) {
+			let slot = this.slotPool.pop();
+			if (!slot) {
+				slot = this.newSlot();
+				this.queryCreated++;
 			}
-			const actions = this.canWrite ? this.actionState(r, ent) : '';
-			const sig = r.decision + '\n' + r.source + '\n' + r.answers.join('\n') + '\n' + actions;
-			if (sig !== ent.sig) {
-				const tr = this.queryRow(r, actions);
-				if (ent.parity)
-					tr.classList.add('cbi-rowstyle-' + ent.parity);
-				if (ent.tr)
-					ent.tr.replaceWith(tr);
-				ent.tr = tr;
-				ent.sig = sig;
-				changed++;
-			}
-			if (prev.nextSibling !== ent.tr)
-				table.insertBefore(ent.tr, prev.nextSibling);
-			prev = ent.tr;
-		});
+			slot.tr.className = 'tr cbi-rowstyle-' + ((slots.length % 2) ? 2 : 1);
+			slots.push(slot);
+			if (!fresh)
+				fresh = document.createDocumentFragment();
+			fresh.appendChild(slot.tr);
+		}
+		while (slots.length > rows.length) {
+			const slot = slots.pop();
+			slot.tr.remove();
+			if (this.slotPool.length < PAGE_SIZE)
+				this.slotPool.push(slot);
+			changed++;
+		}
 
-		/* stripes for new rows continue from the older row below them */
-		for (let i = rows.length - 1; i >= 0; i--) {
-			const ent = map.get(rows[i].key);
-			if (ent.parity)
-				continue;
-			const below = (i + 1 < rows.length) ? map.get(rows[i + 1].key).parity : 2;
-			ent.parity = (below == 1) ? 2 : 1;
-			ent.tr.classList.add('cbi-rowstyle-' + ent.parity);
+		map.clear();
+		for (let i = 0; i < rows.length; i++) {
+			const slot = slots[i];
+			slot.key = rows[i].key;
+			map.set(slot.key, slot);
+			if (this.fillSlot(slot, rows[i]))
+				changed++;
+		}
+		if (fresh)
+			table.insertBefore(fresh, before);
+
+		if (focus) {
+			const to = map.get(focus.key);
+			let target = null;
+			if (to === focus.slot && focus.slot.tr.contains(active))
+				target = active;
+			else if (to && to.actCell)
+				target = to.actCell.querySelector('button');
+			if (target !== active) {
+				if (target)
+					target.focus({ preventScroll: true });
+				else if (active.isConnected && table.contains(active))
+					active.blur();
+			}
 		}
 
 		const text = rows.length ? null : ((this.display.q && this.keptRows) ? _('No queries match the filter.') : _('No queries seen yet.'));

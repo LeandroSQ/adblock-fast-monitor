@@ -226,14 +226,16 @@ measures (many small syslog writes and wakeups); see the results below.
 - **P4 browser time** comes from the page itself. For every `log read`
   reply that the page keeps (with a gap refetch, the refetch's reply), it
   records one `performance.measure('abfm-poll', {start, end, detail:
-  {entries, rows, changed, shown}})`. `start` is `performance.now()` when the
+  {entries, rows, changed, shown, created}})`. `start` is `performance.now()` when the
   reply has arrived (network time excluded); `end` is taken in a task
   queued from the next `requestAnimationFrame` callback after all DOM
   updates of that poll, so the measure spans parse + classify + stats +
   incremental table update + style, layout and paint of the next frame.
   `entries` is the reply length, `rows` the rows kept, `changed` the table
-  rows created or removed (0 on an idle poll), `shown` the rows in the DOM
-  (one page, at most 50). A measure is dropped when
+  rows rewritten or removed (0 on an idle poll; 50 when the whole page
+  shifts), `shown` the rows in the DOM (one page, at most 50), `created`
+  the table rows created (0 once the page is full: a shifting page rewrites
+  the text of its existing rows in place). A measure is dropped when
   the page was hidden before the frame ran. At most 1000 measures are
   kept; no marks are left behind. The gate takes the p95 over **all**
   measures of the run (and requires at least one with ≥ 810 entries, so
@@ -244,7 +246,13 @@ measures (many small syslog writes and wakeups); see the results below.
   querylog module (`adblock-fast-monitor/querylog.js`) timed in the page
   on a real 900-entry `log read` reply fetched with the page's session:
   `create` + `ingest` + `rows` + `stats`, 20 times; the verdict then says
-  "module only (no render)".
+  "module only (no render)". The P4 guard in
+  `test/browser/ui-queries.spec.mjs` takes the same measure, under the
+  same throttle, over every poll while the page shifts at ~50 and ~200
+  queries/s, with Chromium in the Linux container: there the median poll
+  is about 20 % faster than on the macOS host but the tail is noisier (the
+  container's CPUs also run the TCG guest that writes the load), so the
+  guard holds the p95 to the budget and the median to 12 ms.
 - **dnsmasq restarts** = dnsmasq `started, version` lines logged after a
   marker that precedes the action (the logd ring wraps under load).
   Boot counts all such lines since boot; the budget is on-boot minus

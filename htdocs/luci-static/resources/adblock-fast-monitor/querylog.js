@@ -233,9 +233,12 @@ function line(st, entry) {
 		return 0;
 	}
 
+	const verb = ev.verb;
+	if (verb !== 'from' && verb !== 'is')
+		return 0;       // `to` (forwarded) lines: nothing to record
 	const key = st.epoch + ':' + ev.pid + ':' + ev.serial + ':' + ev.client + '/' + ev.port;
 
-	if (ev.verb === 'from') {
+	if (verb === 'from') {
 		const src = ev.source, n = src.length;
 		if (n < 8 || src.substring(0, 6) !== 'query[' || src.charAt(n - 1) !== ']')
 			return 0;
@@ -259,8 +262,6 @@ function line(st, entry) {
 		return 1;
 	}
 
-	if (ev.verb !== 'is')
-		return 0;
 	const e = st.entries.get(key);
 	if (e === undefined || e.decision === 'no-answer')
 		return 0;      // orphan, or answered after the TTL

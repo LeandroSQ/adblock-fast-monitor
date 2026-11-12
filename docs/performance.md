@@ -226,14 +226,16 @@ measures (many small syslog writes and wakeups); see the results below.
 - **P4 browser time** comes from the page itself. For every `log read`
   reply that the page keeps (with a gap refetch, the refetch's reply), it
   records one `performance.measure('abfm-poll', {start, end, detail:
-  {entries, rows, changed, shown}})`. `start` is `performance.now()` when the
+  {entries, rows, changed, shown, created}})`. `start` is `performance.now()` when the
   reply has arrived (network time excluded); `end` is taken in a task
   queued from the next `requestAnimationFrame` callback after all DOM
   updates of that poll, so the measure spans parse + classify + stats +
   incremental table update + style, layout and paint of the next frame.
   `entries` is the reply length, `rows` the rows kept, `changed` the table
-  rows created or removed (0 on an idle poll), `shown` the rows in the DOM
-  (one page, at most 50). A measure is dropped when
+  rows rewritten or removed (0 on an idle poll; 50 when the whole page
+  shifts), `shown` the rows in the DOM (one page, at most 50), `created`
+  the table rows created (0 once the page is full: a shifting page rewrites
+  the text of its existing rows in place). A measure is dropped when
   the page was hidden before the frame ran. At most 1000 measures are
   kept; no marks are left behind. The gate takes the p95 over **all**
   measures of the run (and requires at least one with ≥ 810 entries, so

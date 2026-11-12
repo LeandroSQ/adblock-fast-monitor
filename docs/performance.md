@@ -318,31 +318,29 @@ committed); re-run the gate on a directory to regenerate `summary.json`.
 Another unit's Docker guest tests shared the host during part of the hvf
 runs.
 
-### Final hvf run on the merged UI (per-accelerator budgets, new P4)
+### Release candidate (run of record)
 
-Run `.local-validation/perf/20261112T002608Z-78435`, APK built from r/F
-`9bdc7df` (main `9fdec47` merged: the incremental table, the new
-`abfm-poll` semantics and the 4× CPU throttle; artifact
-`.local-validation/artifacts/20261112T001746Z-1`): **FAIL (run of record):
-P4**; every other metric passes the hvf budgets.
+Run `.local-validation/perf/20261112T070716Z-38758`, armsr-armv8 under hvf,
+3 repeats, APK `.local-validation/artifacts/20261112T063248Z-1` (sha256
+`9b48690a…`, built from `main` `230ef0b`): **PASS, all budgets**.
 
 | ID | Result | Noise (50 / 200 qps) |
 | --- | --- | --- |
-| P1 | 0 resident, 0 idle, rpcd RssAnon +208 KiB | |
-| P2 | 0 / 0 requests in 60.1 s | |
-| P3 | −0.23 / −0.63 pp (≤ 1 / 2); `log read` p95 2.0 ms (N = 316), 4.2–5.1 ms (N = 900) | CPU 0.06 / 0, 0.14 / 0.03 pp |
-| P4 | **p95 114.1 ms over 120 measures (≤ 20)**: 60 at ≥ 810 entries p95 115 ms; per poll at 200 qps (900 entries, 720 rows created or removed) median 95–102 ms, at 50 qps (≈ 300 entries, ≈ 100–200 rows changed) 45–48 ms, idle polls (0 changed) 3–15 ms | |
-| P5 | +0.07 / +0.10 ms (≤ 2) | 0.26 / 0.26, 0.13 / 0.14 ms |
-| P6 | on − off dnsmasq +0.63 / +1.83, logd +0.40 / +1.17 pp (≤ 4 / 6); on − manual +0.03 / −0.17 pp | dnsmasq 0.27 / 0.40 pp |
-| P7 / P8 | `info` p95 0.73 ms; apply 0.88 / 2.44 ms, rpcd worst 7.5 ms | |
+| P1 | 0 resident, 0 transient at boot or idle, rpcd RssAnon +208 KiB | |
+| P2 | 0 / 0 requests in 60 s hidden / closed | |
+| P3 | −0.17 / −0.70 pp (≤ 1 / 2); `log read` p95 2.3 ms (N = 316), 4.3–5.7 ms (N = 900) | CPU 0.03 / 0.03 pp |
+| P4 | p95 12.7 ms over 120 polls (≤ 20); the 60 polls of ≥ 810 entries alone: p95 20.3 ms | |
+| P5 | −0.04 / +0.10 ms (≤ 2) | 0.11–0.12 / 0.04–0.05 ms |
+| P6 | on − off dnsmasq +0.47 / +1.73, logd +0.27 / +1.07 pp (≤ 4 / 6); on − manual drop-in 0 / +0.17 pp | dnsmasq 0.04 / 0.14 pp |
+| P7 / P8 | `info` p95 0.79 ms; apply 0.76 / 1.81 ms, rpcd worst 3.4 ms | |
 | P10 | boot 0, enable [1, 1, 1, 1, 1], save 0 | |
 
-The P4 budget (20 ms) was set for the former measure (parse + classify +
-render, no frame, no throttle; 16.9 ms in the run below). The new measure
-spans to the next painted frame under a 4× throttle, and its cost scales
-with the rows the table creates and removes per poll. The budget is not
-changed here; it needs a decision (a budget for the new semantics, or a
-cheaper table update at high churn).
+P4 is the poll cost after the table started updating its 50 rows in place
+(no rows are created when the page shifts) and `log read` stopped going
+through LuCI's frame-aligned request batching. The earlier run of the
+incremental table that created and removed rows per poll
+(`20261112T002608Z-78435`, 114 ms p95) and the first 50-row paging run
+(`20261112T022752Z-828`, 24.6 ms p95) are superseded by it.
 
 ### armsr-armv8 under hvf (measurement of record, old P4 semantics)
 

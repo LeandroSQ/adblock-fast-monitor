@@ -184,9 +184,13 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
   } else {
     const stockSigs = new Set(stock.flatMap(s => userland(s.procs).map(p => p.cmdline)));
     // Resident = any package process except a short-lived init-script
-    // invocation (rc.common running /etc/init.d/adblock-fast-monitor, or the
-    // logging.uc it runs): those are counted separately as transient.
-    const isInit = c => /\/etc\/init\.d\/adblock-fast-monitor\b|\/usr\/libexec\/adblock-fast-monitor\/logging\.uc/.test(c);
+    // invocation (rc.common running /etc/init.d/adblock-fast-monitor or its
+    // /etc/rc.d link, or logging.uc, which the init script and its trigger
+    // run): those are counted separately as transient. procd's rcS starting
+    // the service at boot (`/etc/rc.d/S18adblock-fast-monitor boot`, §4) is a
+    // boot start, budgeted on its own; the trigger budget is unchanged.
+    const isInit = c => /\/etc\/init\.d\/adblock-fast-monitor\b|\/etc\/rc\.d\/[SK]\d+adblock-fast-monitor\b|\/usr\/libexec\/adblock-fast-monitor\/logging\.uc/.test(c);
+    const isBootStart = c => /\/etc\/rc\.d\/S\d+adblock-fast-monitor boot\b/.test(c);
     const found = new Set();
     const add = (where, cmdline) => found.add(`${where}: ${cmdline}`);
     const idleSightings = [];
@@ -227,14 +231,16 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
         if (!isInit(r.cmdline)) continue;
         if (!pids.has(r.ppid)) inv.push({ cmdline: r.cmdline, at_s: round(r.first_ms / 1000, 1), wall_s: round(life, 2) });
       }
-      transient[name] = { invocations: inv.length, wall_s: round(inv.reduce((t, x) => t + x.wall_s, 0), 2),
+      transient[name] = { invocations: inv.filter(x => !isBootStart(x.cmdline)).length,
+        boot_starts: inv.filter(x => isBootStart(x.cmdline)).length, wall_s: round(inv.reduce((t, x) => t + x.wall_s, 0), 2),
         watch_s: round((w.duration_ms ?? w.seconds * 1000) / 1000, 1), uptime_at_start_s: w.uptime_at_start_s ?? null,
         interval_ms: iv, list: inv.slice(0, 10) };
     }
     const bootWatches = Object.entries(transient).filter(([k]) => /^p1-after-boot-(on|off)-watch$/.test(k));
     const idleWatches = Object.entries(transient).filter(([k]) => /^p1-(idle-after-boot-(on|off)|installed-(on|off))-watch$/.test(k));
     const bootMax = Math.max(0, ...bootWatches.map(([, v]) => v.invocations));
-    const idleCount = idleWatches.reduce((t, [, v]) => t + v.invocations, 0) + idleSightings.length;
+    const bootStarts = Math.max(0, ...bootWatches.map(([, v]) => v.boot_starts));
+    const idleCount = idleWatches.reduce((t, [, v]) => t + v.invocations + v.boot_starts, 0) + idleSightings.length;
     const idleAfterBootChecked = idleWatches.some(([k]) => k.startsWith('p1-idle-after-boot-on'));
     const rpcdAnon = snaps => median(snaps.map(s => sum(named(s.procs, 'rpcd'), 'rss_anon_kb')));
     const afterBoot = ['on', 'off'].flatMap(st => [1, 2, 3].map(i => load(`p1-after-boot-${st}-${i}`))).filter(Boolean);
@@ -248,9 +254,10 @@ const pages = [...Array(repeats).keys()].map(i => load(`browser-page-r${i + 1}`)
     const bootsChecked = afterBoot.length > 0;
     const checked = bootsChecked && idleAfterBootChecked;
     judge('P1', found.size <= budgets.P1.package_processes && rpcdDelta <= budgets.P1.rpcd_rss_anon_delta_kib && checked &&
-      bootMax <= budgets.P1.transient_boot_max && idleCount <= budgets.P1.transient_idle_max, {
+      bootMax <= budgets.P1.transient_boot_max && bootStarts <= budgets.P1.transient_boot_start_max &&
+      idleCount <= budgets.P1.transient_idle_max, {
       package_processes: found.size, found: [...found].slice(0, 40),
-      transient: { boot_max_invocations: bootMax, idle_invocations: idleCount, idle_sightings_in_snapshots: idleSightings.slice(0, 10),
+      transient: { boot_max_invocations: bootMax, boot_max_starts: bootStarts, idle_invocations: idleCount, idle_sightings_in_snapshots: idleSightings.slice(0, 10),
         boot: Object.fromEntries(bootWatches), idle: Object.fromEntries(idleWatches) },
       rpcd_rss_anon_kib: { stock: rpcdAnon(stock), installed_off: rpcdAnon(instOff), installed_on: rpcdAnon(instOn),
         after_boot: afterBoot.length ? rpcdAnon(afterBoot) : null },
@@ -525,7 +532,7 @@ function brief(id, m) {
   const b = budgets[id];
   try {
     switch (id) {
-    case 'P1': return `resident ${m.package_processes}${m.found.length ? ` (${m.found[0]}${m.found.length > 1 ? ', …' : ''})` : ''} (≤ ${b.package_processes}); transient init at boot ≤ ${m.transient.boot_max_invocations} per boot (≤ ${b.transient_boot_max}), ${Object.values(m.transient.boot).map(v => `${v.wall_s} s`).join('/')} wall; idle ${m.transient.idle_invocations} (≤ ${b.transient_idle_max}); rpcd RssAnon +${m.rpcd_rss_anon_delta_kib} KiB (≤ ${b.rpcd_rss_anon_delta_kib})${m.missing ? `; ${m.missing}` : ''}`;
+    case 'P1': return `resident ${m.package_processes}${m.found.length ? ` (${m.found[0]}${m.found.length > 1 ? ', …' : ''})` : ''} (≤ ${b.package_processes}); transient init at boot ≤ ${m.transient.boot_max_invocations} per boot (≤ ${b.transient_boot_max}) + ${m.transient.boot_max_starts} boot start (≤ ${b.transient_boot_start_max}), ${Object.values(m.transient.boot).map(v => `${v.wall_s} s`).join('/')} wall; idle ${m.transient.idle_invocations} (≤ ${b.transient_idle_max}); rpcd RssAnon +${m.rpcd_rss_anon_delta_kib} KiB (≤ ${b.rpcd_rss_anon_delta_kib})${m.missing ? `; ${m.missing}` : ''}`;
     case 'P2': return `hidden ${m.hidden_requests} req/${m.hidden_s} s (${m.hide_method}), closed ${m.closed_requests} req/${m.closed_s} s, visible control ${m.visible_control_requests} req/${m.visible_control_s} s`;
     case 'P3': return rates.map(q => `@${q}: Δ ${m.rates[q].cpu_delta_pp} pp (≤ ${b.cpu_delta_pp[q]}), log read p95 N=${m.rates[q].log_read.n_incremental_runs[0]} ${m.rates[q].log_read.incremental_p95_ms} ms (≤ ${m.rates[q].log_read.incremental_budget_ms}) N=900 ${m.rates[q].log_read.full_p95_ms} ms (≤ ${b.log_read_full_p95_ms})`).join('; ');
     case 'P4': return m.marks_at_900 ? `page marks p95 ${m.marks_p95_ms} ms over ${m.marks_at_900} polls (≤ ${b.poll_p95_ms})` : `querylog module p95 ${m.module_bench?.p95_ms} ms at ${m.module_bench?.entries?.[0]} entries (≤ ${b.poll_p95_ms}; no render)`;

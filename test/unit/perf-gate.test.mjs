@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { INIT_RELOAD, p6Files, passingFiles, proc, root, scratch, snapshot, baseProcs, toggle, watch, writeRun } from './helpers/perf-run.mjs';
+import { INIT_RELOAD, INIT_RUNNING, p6Files, passingFiles, proc, root, scratch, snapshot, baseProcs, toggle, watch, writeRun } from './helpers/perf-run.mjs';
 
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -138,4 +138,23 @@ test('T26: a window beyond the guest CPUs, or without kernel threads, is invalid
   const reasons = g.summary.windows.list.flatMap(w => w.reasons).join(' | ');
   assert.match(reasons, /exceeds 2 CPUs/);
   assert.match(reasons, /no kernel threads/);
+});
+
+test('T26: P1 counts the boot start apart from trigger invocations, with its own limit', () => {
+  const S18 = '/bin/sh /etc/rc.common /etc/rc.d/S18adblock-fast-monitor boot';
+  const bootWatch = extra => watch([
+    { pid: 800, ppid: 1, cmdline: S18, first_ms: 400, last_ms: 600, samples: 2 },
+    { pid: 801, ppid: 800, cmdline: '/usr/bin/ucode /usr/libexec/adblock-fast-monitor/logging.uc reconcile', first_ms: 500, last_ms: 500, samples: 1 },
+    { pid: 900, ppid: 1, cmdline: INIT_RUNNING, first_ms: 700, last_ms: 700, samples: 1 },
+    { pid: 950, ppid: 1, cmdline: '/usr/bin/ucode /usr/libexec/adblock-fast-monitor/logging.uc reconcile', first_ms: 10100, last_ms: 10200, samples: 2 },
+    ...extra
+  ], 60, 100, 9);
+  const ok = gate(edit(f => { f['p1-after-boot-on-watch'] = bootWatch([]); }));
+  assert.equal(ok.verdict.per_metric.P1, 'PASS', JSON.stringify(ok.metric('P1').found));
+  assert.equal(ok.metric('P1').transient.boot_max_starts, 1);
+  assert.equal(ok.metric('P1').transient.boot_max_invocations, 2);
+  const twice = gate(edit(f => {
+    f['p1-after-boot-on-watch'] = bootWatch([{ pid: 990, ppid: 1, cmdline: S18, first_ms: 20000, last_ms: 20100, samples: 2 }]);
+  }));
+  assert.equal(twice.verdict.per_metric.P1, 'FAIL');
 });

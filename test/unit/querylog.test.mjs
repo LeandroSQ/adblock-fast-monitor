@@ -455,3 +455,38 @@ test('create() clamps its options', () => {
   assert.equal(ql.create({ max_rows: 7.9 }).maxRows, 7);
   assert.deepEqual(ql.create({ local_domains: ['LAN', 7] }).localDomains, ['lan']);
 });
+
+test('page(): one page newest first, filter before paging, a frozen view does not shift', () => {
+  const st = ql.create();
+  const q = (s, name, client = C) => `dnsmasq[1]: ${s} ${client}/${s} query[A] ${name} from ${client}`;
+  const names = Array.from({ length: 120 }, (_, i) => (i % 3 === 0 ? `ads${i}.example.test` : `www${i}.example.org`));
+  ql.ingest(st, reply(names.map((n, i) => q(i + 1, n)).concat([q(500, 'local.example.test', '127.0.0.1')])));
+  const all = ql.rows(st);
+  let p = ql.page(st, { limit: 50 });
+  assert.deepEqual(p.rows, all.slice(0, 50));
+  assert.deepEqual([p.total, p.newer, p.latest], [120, 0, 121]);
+  assert.deepEqual(ql.page(st, { limit: 50, offset: 100 }).rows, all.slice(100));
+  assert.deepEqual(ql.page(st, { limit: 50, offset: 500 }).rows, []);
+  // router rows follow show_router; the default limit is 50 and limits are clamped
+  assert.equal(ql.page(st, { show_router: true }).total, 121);
+  assert.equal(ql.page(st).rows.length, 50);
+  assert.equal(ql.page(st, { limit: 9999 }).rows.length, 120);
+  assert.equal(ql.page(st, { limit: -1, offset: -7 }).rows[0].key, all[0].key);
+  // the filter is a case-insensitive substring of the domain, applied before paging
+  p = ql.page(st, { match: '  ADS', limit: 10, offset: 10 });
+  const ads = all.filter((r) => r.domain.includes('ads'));
+  assert.equal(p.total, 40);
+  assert.deepEqual(p.rows, ads.slice(10, 20));
+  assert.deepEqual(ql.page(st, { match: '<img' }).rows, []);
+  // freeze at `latest`: new queries are counted as newer, page 2 stays the same rows
+  const upto = p.latest;
+  const before = ql.page(st, { limit: 50, offset: 50, upto });
+  ql.ingest(st, reply([q(600, 'new1.example.test'), q(601, 'ads-new.example.test')], { id: 221 }));
+  const after = ql.page(st, { limit: 50, offset: 50, upto });
+  assert.deepEqual(after.rows, before.rows);
+  assert.deepEqual([after.total, after.newer], [120, 2]);
+  assert.equal(ql.page(st, { limit: 50, offset: 50, upto, match: 'ads' }).newer, 1);
+  // live (no upto): the new rows shift in at the top
+  assert.equal(ql.page(st, { limit: 1 }).rows[0].domain, 'ads-new.example.test');
+  assert.equal(ql.page(st, { upto: 'x' }).newer, 0);
+});

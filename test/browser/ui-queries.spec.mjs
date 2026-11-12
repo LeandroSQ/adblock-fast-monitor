@@ -298,3 +298,108 @@ test('T28: P2: a hidden page sends no log reads for 60 s and resumes when visibl
   await expect.poll(() => reads.length - before, { timeout: 10_000 }).toBeGreaterThan(0);
   await expect(queryRow(page, 'hidden.up.example.test')).toBeVisible({ timeout: 30_000 });
 });
+
+/* `count` fake dnsmasq queries (query + answer lines) named <prefix>-NNN, oldest first. */
+function fakeQueries(prefix, from, count, serial) {
+  const c = '192.0.2.68';
+  const lines = [];
+  for (let i = from; i < from + count; i++) {
+    const n = `${prefix}-${String(i).padStart(3, '0')}.example.test`;
+    lines.push(`${serial + i} ${c}/${2000 + i} query[A] ${n} from ${c}`, `${serial + i} ${c}/${2000 + i} reply ${n} is 192.0.2.10`);
+  }
+  fakeDnsmasq(lines);
+}
+const domains = (page) => queries(page).locator('tr[data-domain]').evaluateAll((trs) => trs.map((t) => t.getAttribute('data-domain')));
+const name = (prefix, i) => `${prefix}-${String(i).padStart(3, '0')}.example.test`;
+
+test('paging: 50 rows per page, newest first, the filter applies before paging', async ({ page }) => {
+  await login(page, admin);
+  fakeQueries('pgtest', 0, 120, 940000);
+  await page.getByLabel('Filter domains').fill('PGTEST');
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–50 of 120', { timeout: 30_000 });
+  expect(await domains(page)).toEqual(Array.from({ length: 50 }, (_, i) => name('pgtest', 119 - i)));
+  await expect(page.locator('#abfm-page-newer')).toBeDisabled();
+  await page.locator('#abfm-page-older').click();
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 51–100 of 120');
+  expect(await domains(page)).toEqual(Array.from({ length: 50 }, (_, i) => name('pgtest', 69 - i)));
+  await page.locator('#abfm-page-older').click();
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 101–120 of 120');
+  await expect(page.locator('#abfm-page-older')).toBeDisabled();
+  expect((await domains(page)).at(-1)).toBe(name('pgtest', 0));
+  // a new filter starts again on page 1
+  await page.getByLabel('Filter domains').fill('pgtest-00');
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–10 of 10');
+  await expect(page.locator('#abfm-page-older')).toBeDisabled();
+  // the whole list stays bounded in the DOM
+  await page.getByLabel('Filter domains').fill('');
+  await expect(queries(page).locator('tr[data-domain]')).toHaveCount(50);
+});
+
+test('later pages stay put while queries arrive and offer "N new queries"; page 1 shifts', async ({ page }) => {
+  await login(page, admin);
+  fakeQueries('stable', 0, 120, 950000);
+  await page.getByLabel('Filter domains').fill('stable-');
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–50 of 120', { timeout: 30_000 });
+  await page.locator('#abfm-page-older').click();
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 51–100 of 120');
+  const frozen = await domains(page);
+  const button = page.locator('#abfm-page-older');
+  await button.focus();
+  fakeQueries('stable', 120, 7, 950000);
+  await expect(page.locator('#abfm-new-queries')).toHaveAttribute('data-new', '7', { timeout: 30_000 });
+  await expect(page.locator('#abfm-new-queries')).toContainText('7 new queries');
+  expect(await domains(page)).toEqual(frozen);
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 51–100 of 120');
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('abfm-page-older');
+  // back to the newest: page 1 is live again and new rows shift in at the top
+  await page.locator('#abfm-new-queries').getByRole('button', { name: 'Show newest' }).click();
+  await expect(page.locator('#abfm-page-info')).toHaveText('Queries 1–50 of 127');
+  await expect(page.locator('#abfm-new-queries')).toBeHidden();
+  expect((await domains(page))[0]).toBe(name('stable', 126));
+  fakeQueries('stable', 127, 3, 950000);
+  await expect.poll(async () => (await domains(page))[0], { timeout: 30_000 }).toBe(name('stable', 129));
+  expect((await domains(page)).slice(0, 4)).toEqual([129, 128, 127, 126].map((i) => name('stable', i)));
+  await expect(page.locator('#abfm-new-queries')).toBeHidden();
+});
+
+// P4 regression guard (docs/performance.md): ~200 queries/s of synthetic
+// dnsmasq lines written with `logger` in the guest, so every poll reads a
+// full 900-entry reply and the 500-row list turns over; the browser runs
+// under a 4x CPU throttle like the gate. Each `abfm-poll` measure spans the
+// reply's arrival to the next painted frame.
+test('P4 guard: abfm-poll p95 <= 20 ms for 900-entry polls at ~200 qps under 4x CPU throttle', async ({ page }, testInfo) => {
+  const load = [
+    'touch /tmp/abfm-load',
+    "( s=3000000; while [ -f /tmp/abfm-load ]; do awk -v s=$s 'BEGIN { for (k = 0; k < 200; k++) { n = s + k; h = n \" 192.0.2.50/\" (1024 + k % 60000) \" \"; print h \"query[A] q\" n \".load.example.test from 192.0.2.50\"; if (k % 4 == 0) print h \"config q\" n \".load.example.test is NXDOMAIN\"; else print h \"reply q\" n \".load.example.test is 192.0.2.10\" } }' | logger -t 'dnsmasq[1]'; s=$((s + 200)); sleep 1; done ) </dev/null >/dev/null 2>&1 &"
+  ].join('\n');
+  try {
+    guest(load);
+    await login(page, admin);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    // let the list fill to 500 rows, then measure from a clean slate
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName('abfm-poll').filter((e) => e.detail.rows >= 500).length),
+      { timeout: 60_000 }).toBeGreaterThan(1);
+    await page.evaluate(() => performance.clearMeasures('abfm-poll'));
+    const full = () => page.evaluate(() => performance.getEntriesByName('abfm-poll')
+      .filter((e) => e.detail.entries >= 810).map((e) => ({ d: e.duration, ...e.detail })));
+    await expect.poll(async () => (await full()).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(20);
+    const m = await full();
+    const d = m.map((x) => x.d).sort((a, b) => a - b);
+    const p95 = d[Math.ceil(0.95 * d.length) - 1];
+    const summary = `abfm-poll over ${d.length} polls of >= 810 entries: p50 ${d[Math.floor(d.length / 2)].toFixed(1)} ms, ` +
+      `p95 ${p95.toFixed(1)} ms, max ${d.at(-1).toFixed(1)} ms; changed rows max ${Math.max(...m.map((x) => x.changed))}`;
+    console.log(`P4 guard: ${summary}`);
+    testInfo.annotations.push({ type: 'P4', description: summary });
+    // the load really turns the visible page over, and the DOM stays one page
+    expect(m.filter((x) => x.changed > 0).length).toBeGreaterThan(d.length / 2);
+    for (const x of m) {
+      expect(x.shown).toBeLessThanOrEqual(50);
+      expect(x.changed).toBeLessThanOrEqual(100);
+    }
+    await expect(queries(page).locator('tr[data-domain]')).toHaveCount(50);
+    expect(p95).toBeLessThanOrEqual(20);
+  } finally {
+    guest('rm -f /tmp/abfm-load');
+  }
+});

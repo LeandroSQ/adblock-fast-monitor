@@ -132,15 +132,6 @@ test('rowOp: Allow on blocked rows, Block on allowed rows, nothing otherwise', (
   assert.deepEqual(m.OPS, ['allow', 'block']);
 });
 
-test('filterRows: case-insensitive substring on the domain; blank keeps all', () => {
-  const rows = [{ domain: 'ads.example.test' }, { domain: 'www.example.org' }, { domain: null }, null];
-  assert.equal(m.filterRows(rows, ''), rows);
-  assert.equal(m.filterRows(rows, '  '), rows);
-  assert.deepEqual(m.filterRows(rows, ' EXAMPLE.'), [rows[0], rows[1]]);
-  assert.deepEqual(m.filterRows(rows, 'ads'), [rows[0]]);
-  assert.deepEqual(m.filterRows(rows, '<img'), []);
-});
-
 test('§6.4 normalization in the UI matches the grammar', () => {
   assert.equal(m.normalizeDomain('  Ads.Example.COM. '), 'ads.example.com');
   assert.equal(m.normalizeDomain('_dmarc.example.com'), '_dmarc.example.com');

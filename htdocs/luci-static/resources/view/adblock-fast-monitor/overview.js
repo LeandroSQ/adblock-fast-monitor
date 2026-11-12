@@ -19,15 +19,15 @@
  */
 
 /*
- * Sent at once, not batched: LuCI flushes batched calls from a
- * requestAnimationFrame callback, and the frame that runs it keeps the
- * compositor on its frame clock while the reply is on its way, so the frame
- * that shows the reply would wait for the next frame slot (P4). A poll
- * makes this one call anyway.
+ * The polled calls are sent at once, not batched: LuCI flushes batched
+ * calls from a requestAnimationFrame callback, and the frame that runs it
+ * keeps the compositor on its frame clock while a `log read` reply is on
+ * its way, so the frame that shows the reply would wait for the next frame
+ * slot (P4). Each is the only call of its poll anyway.
  */
 const callLogRead = rpc.declare({ object: 'log', method: 'read',
 	params: [ 'lines', 'stream', 'oneshot' ], reject: true, nobatch: true });
-const callInfo = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'info', reject: true });
+const callInfo = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'info', reject: true, nobatch: true });
 const callApply = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'apply',
 	params: [ 'ops', 'confirm_rebuild', 'rebuild', 'dry_run' ], reject: true });
 const callJob = rpc.declare({ object: 'luci.adblock-fast-monitor', method: 'job', params: [ 'job_id' ], reject: true });

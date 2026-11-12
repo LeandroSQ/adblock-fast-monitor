@@ -15,7 +15,7 @@ PKG_VERSION:=0.2.0
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_LICENSE_FILES:=LICENSE
-PKG_MAINTAINER:=Leandro Quaresma <11012599+LeandroSQ@users.noreply.github.com>
+PKG_MAINTAINER:=LeandroSQ <11012599+LeandroSQ@users.noreply.github.com>
 
 # luci.mk derives the package name from the directory name unless this is
 # set; the build directory may be named differently.

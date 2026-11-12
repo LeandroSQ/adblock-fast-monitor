@@ -147,7 +147,7 @@ Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-Copyright 2026 Leandro Quaresma and contributors. Licensed under the
+Copyright 2026 LeandroSQ and contributors. Licensed under the
 [Apache License 2.0](LICENSE).
 
 This is an independent project, not affiliated with or endorsed by OpenWrt

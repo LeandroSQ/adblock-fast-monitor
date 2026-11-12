@@ -88,7 +88,7 @@ treat the times as relative, not absolute.
 | Extra DNS delay | 0.1 ms or less |
 | Router memory | about 200 KB, inside rpcd |
 | Query logging itself (dnsmasq's own feature) | dnsmasq +0.5 to +1.7 % and logd +0.3 to +1.1 % of one CPU, at 50 to 200 queries per second |
-| One page update, in the browser | about 13 ms |
+| One page update, in the browser | about 14 ms |
 
 The only real cost is query logging, and it is dnsmasq's, not this
 package's: turning it on by hand costs the same. Details and method:

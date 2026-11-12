@@ -321,20 +321,26 @@ re-run the gate on a run directory to regenerate `summary.json`.
 
 ### Run of record (release candidate)
 
-Run `perf/20261112T070716Z-38758`, armsr-armv8 under hvf, 3 repeats, APK
-`artifacts/20261112T063248Z-1` (sha256 `9b48690a…`, built from `main`
-`230ef0b`): **PASS, all budgets**, no invalid window.
+Run `perf/20261112T201828Z-84202`, armsr-armv8 under hvf, 3 repeats, APK
+`artifacts/20261112T193858Z-1` (sha256 `7f977e8e…`, built from `201395d`,
+the simplified UI): **PASS, all budgets**, no invalid window.
 
 | ID | Result | Noise (50 / 200 qps) |
 | --- | --- | --- |
 | P1 | 0 resident, 0 transient at boot or idle, rpcd RssAnon +208 KiB | |
-| P2 | 0 / 0 requests in 60 s hidden / closed | |
-| P3 | −0.17 / −0.70 pp (≤ 1 / 2); `log read` p95 2.3 ms (N = 316), 4.3–5.7 ms (N = 900) | CPU 0.03 / 0.03 pp |
-| P4 | p95 12.7 ms over 120 polls (≤ 20); the 60 polls of ≥ 810 entries alone: p95 20.3 ms | |
-| P5 | −0.04 / +0.10 ms (≤ 2) | 0.11–0.12 / 0.04–0.05 ms |
-| P6 | on − off dnsmasq +0.47 / +1.73, logd +0.27 / +1.07 pp (≤ 4 / 6); on − manual drop-in 0 / +0.17 pp | dnsmasq 0.04 / 0.14 pp |
-| P7 / P8 | `info` p95 0.79 ms; apply 0.76 / 1.81 ms, rpcd worst 3.4 ms | |
+| P2 | page: 0 / 0 requests in 60 s hidden / closed (7 in the 12 s visible control); Status → Overview, this app's calls: 0 / 0 (3 in the 12 s visible control) | |
+| P3 | −0.23 / −0.63 pp (≤ 1 / 2); `log read` p95 2.2 ms (N = 316), 3.9–5.2 ms (N = 900) | CPU 0.07 / 0.17 pp |
+| P4 | p95 14.2 ms over 120 polls (≤ 20); the 61 polls of ≥ 810 entries alone: p95 21.6 ms | |
+| P5 | +0.25 / −0.05 ms (≤ 2) | 0.11–0.33 / 0.20 ms |
+| P6 | on − off dnsmasq +0.77 / +1.77, logd +0.4 / +1.1 pp (≤ 4 / 6); on − manual drop-in +0.17 / −0.26 pp | dnsmasq 0.4 / 1.03 pp |
+| P7 / P8 | `info` p95 0.83 ms; apply 0.86 / 2.09 ms, rpcd worst 3.9 ms | |
 | P10 | boot 0, enable [1, 1, 1, 1, 1], save 0 | |
+
+The previous candidate (`perf/20261112T070716Z-38758`, `230ef0b`, the
+earlier page) measured within the same noise: P3 −0.17 / −0.70 pp, P4 p95
+12.7 ms. The Status → Overview section is not measured for P3: it reads the
+log at most once per LuCI status poll (5 s), less often than the page
+(2 s), which P3 bounds.
 
 The on − manual figures are the attribution: the package with query logging
 on costs what its drop-in written by hand costs, so all of query logging's

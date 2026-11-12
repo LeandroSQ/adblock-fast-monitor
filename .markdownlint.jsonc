@@ -5,7 +5,7 @@
   "default": true,
   // Prose is wrapped by hand; tables and URLs can't be.
   "MD013": false,
-  // The superseded root stubs and some docs start with prose.
+  // Some docs start with prose rather than a heading.
   "MD041": false,
   "MD024": { "siblings_only": true },
   // Code spans quote exact log text, whose trailing space is significant

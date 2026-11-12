@@ -65,8 +65,10 @@ Contributions are licensed under the [Apache License 2.0](LICENSE).
 - Move or rename files with `git mv` so history follows them.
 - Commits written with an AI coding agent end with its `Co-authored-by:`
   trailer.
-- Never commit build output, `.local-validation/`, APKs, images, private
-  keys, passwords or DNS logs (see `.gitignore`).
+- Never commit build output, `.local-validation/`, APKs, guest images,
+  private keys, passwords or DNS logs (see `.gitignore`). The README
+  screenshots in `docs/images/` are regenerated with
+  `npm run docs:screenshots -- PKG.apk`.
 
 ## Translations
 

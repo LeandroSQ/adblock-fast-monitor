@@ -117,24 +117,25 @@ are documented at the top of the script.
 ## Performance (T26)
 
 `npm run test:performance:measure -- PKG.apk` measures the P-budgets on a
-guest and writes a run directory under `.local-validation/perf/`;
-`node scripts/performance-gate.mjs RUN_DIR` re-judges a run against
-`scripts/perf/budgets.json`. Two guests:
-
-- `ABFM_PERF_GUEST=armsr-hvf`, the run of record on an Apple-silicon Mac:
-  OpenWrt 25.12.6 armsr-armv8 under `qemu-system-aarch64 -accel hvf`,
-  natively, no Docker. One-time setup: `brew install qemu`, then
-  `scripts/perf/armsr/prepare-baseline.sh` (~1 min). The package is
-  PKGARCH all, so the x86/64 APK installs unchanged. Run time ~35 min.
-- the default (x86): OpenWrt x86/64 via `scripts/verify-guest.sh` (in
-  Docker on non-Linux hosts; KVM when `/dev/kvm` is usable, otherwise
-  TCG). On a Mac this is TCG, a smoke run of the harness: its P5 and P6
-  are reported but do not gate, because TCG inflates query logging's cost.
-
-The gate's own logic, including the per-accelerator budgets, is
+guest, writes a run directory under `.local-validation/perf/` and judges it
+against `scripts/perf/budgets.json`; `node scripts/performance-gate.mjs
+RUN_DIR` re-judges a run. The run of record uses the hardware-accelerated
+armsr-armv8 guest (`ABFM_PERF_GUEST=armsr-hvf`, Apple-silicon Mac); the
+default x86/64 guest is a smoke run under TCG. Setup, method, budgets and
+results: [`performance.md`](performance.md). The gate's own logic is
 unit-tested on synthetic run directories (`test/unit/perf-gate.test.mjs`,
-part of `npm run test:unit`). Method, noise and results:
-[`performance.md`](performance.md).
+part of `npm run test:unit`).
+
+## README screenshots
+
+`npm run docs:screenshots -- PKG.apk` (`scripts/docs/screenshots.sh`)
+boots a guest like `verify:guest --no-tests`, prepares it with the browser
+suite's setup (`test/browser/global-setup.mjs`: the fixture block list and a
+fake upstream answering `*.up.example.test` with `192.0.2.10`), sends test
+queries from the host and saves `docs/images/overview.png` and
+`docs/images/apply.png` (1280 px wide). It stages two changes and opens the
+Apply dialog but never applies them, and fails if an image is 300 KB or
+larger.
 
 ## CI
 
@@ -145,7 +146,8 @@ job timeouts:
 
 - `changes` decides whether anything outside the docs changed;
 - `host` always runs `npm run verify:host` (lint, static checks, unit,
-  ucode and shell suites, docs self-check) and a secret scan;
+  ucode and shell suites, docs self-check), and `secrets` runs gitleaks
+  over the full history;
 - only when code changed: `package` (SDK build and the signing self-test),
   `guest`, `browser` and `install` (T22), each on a fresh KVM guest;
 - `ci-ok` aggregates the result and is the check to require on `main`.

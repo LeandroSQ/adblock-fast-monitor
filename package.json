@@ -10,6 +10,7 @@
     "build:userland": "scripts/build-host-ucode.sh",
     "build:package": "scripts/build-package.sh",
     "check:static": "node scripts/check-static.mjs",
+    "docs:screenshots": "scripts/docs/screenshots.sh",
     "lint": "node scripts/lint/run.mjs",
     "lint:fix": "node scripts/lint/run.mjs --fix",
     "lint:baseline": "node scripts/lint/run.mjs --prune",

@@ -1,155 +1,130 @@
-# luci-app-adblock-fast-monitor
+# Adblock Fast Monitor
 
-A LuCI app for OpenWrt 25.12 that shows what
-[adblock-fast](https://github.com/openwrt/packages/tree/master/net/adblock-fast)
-does with your DNS queries and lets you allow or block a name in a click. It
-is a separate package that depends on adblock-fast; it contains no
-adblock-fast code and never patches it.
+A small LuCI page for OpenWrt that shows the DNS queries your router just
+answered, which ones [adblock-fast](https://github.com/openwrt/packages/tree/master/net/adblock-fast)
+blocked, and lets you allow or block a name with one click.
 
-> **Status:** not released yet. The signed feed below goes live with the
-> first release; until then only [developer builds](#developer-builds-unsigned)
-> exist. Changes: [`CHANGELOG.md`](CHANGELOG.md).
+> **Status:** no release is published yet, so the package feed below is not
+> live yet. Until then, build the package yourself
+> ([developer guide](CONTRIBUTING.md)) and install it over SSH with
+> `apk add --allow-untrusted`.
 
-## Features
+![The page with recent queries, some blocked and some allowed](docs/images/overview.png)
 
-- **Recent queries** (Services → Adblock Fast Monitor): the last few hundred
-  DNS queries with time, name, type, answer and whether adblock-fast blocked
-  or allowed them, and why (list, cache, upstream, local name, hosts file…).
-  The page refreshes while it is visible and stops when the tab is hidden.
-- **Allow / Block** on each row. Changes are staged in the browser and
-  applied together with one **Apply**, which writes adblock-fast's
-  `allowed_domain`/`blocked_domain`, runs one adblock-fast rebuild and checks
-  the result with real DNS lookups.
-- **Blocked %** over the shown rows (with their count and time span) and
-  counters since the page was opened.
-- **One setting.** Settings has a single option, **Log DNS queries**. What
-  the page shows (router queries, the client column, the filter) is chosen
-  on the page and is not saved on the router.
-- **No resident process.** The page reads the system log in your browser,
-  like LuCI's System Log page does. On the router the package only turns on
-  dnsmasq's query logging (a runtime drop-in; `/etc/config/dhcp` is never
-  edited) and runs a short job while an Apply is in progress.
+## What you get
 
-## Privacy and access
+- **Recent queries:** time, name, answer, and whether adblock-fast blocked
+  or allowed each one.
+- **Blocked %** over the recent queries.
+- **Allow / Block** on every row. Changes wait in a list until you press
+  **Apply**, so ten changes cost one rebuild, not ten.
 
-- **Admins only.** The dashboard needs read access to the **whole system
-  log** (`log read`: kernel, authentication and DHCP messages and every DNS
-  client address), the same access as luci-app-adblock-fast and System →
-  System Log. Grant `luci-app-adblock-fast-monitor` only to logins that may
-  read the system log.
-- **What is logged.** With query logging on, dnsmasq writes every DNS query,
-  with the client's address, to the system log. logd keeps it in RAM by
-  default; if logd also writes to a file (`log_file`) or a remote host
-  (`log_ip`), the queries go there too, and the page warns about it.
-- **What the package keeps.** Nothing about clients on the router. The page
-  keeps its rows in browser memory; staged changes (domain names only) stay
-  in the browser's local storage until applied or cancelled. The client
-  column and the router's own queries are hidden by default.
+![Two pending changes and the Apply confirmation](docs/images/apply.png)
 
-## Install
+It needs OpenWrt 25.12 and adblock-fast. It is its own package: it does not
+change or copy adblock-fast.
 
-Requires OpenWrt 25.12 (apk) and adblock-fast. The package also pulls
-`luci-base` and the `ucode-mod-io` and `ucode-mod-resolv` modules from the
-official feeds.
+## How to use
 
-### From the signed feed (LuCI only)
-
-Releases are signed and published as an apk feed on GitHub Pages:
-<https://leandrosq.github.io/adblock-fast-monitor/>. Once per router:
-
-1. **Check the key.** On a computer, download the key and compare its
-   fingerprint with the one in [`keys/README.md`](keys/README.md):
-
-   ```sh
-   curl -fsSLO https://leandrosq.github.io/adblock-fast-monitor/keys/adblock-fast-monitor.pem
-   openssl pkey -pubin -in adblock-fast-monitor.pem -outform DER | openssl dgst -sha256
-   ```
-
-2. **System → Administration → Repository Public Keys**: paste
+1. **Add the signing key.** In LuCI open **System → Administration →
+   Repository Public Keys**, paste
    `https://leandrosq.github.io/adblock-fast-monitor/keys/adblock-fast-monitor.pem`
-   and click **Add key**.
-3. **System → Software → Configure apk**: add
+   and click **Add key**. (To check it first, compare its fingerprint with
+   the one in [`keys/README.md`](keys/README.md).)
+2. **Add the feed.** In **System → Software → Configure apk**, add
    `https://leandrosq.github.io/adblock-fast-monitor/apk/packages.adb` to
-   `customfeeds.list` and **Save**.
-4. **Update lists…**, filter for `luci-app-adblock-fast-monitor`,
-   **Install…**.
-5. Open **Services → Adblock Fast Monitor → Settings**, tick **Log DNS
-   queries** and **Save & Apply** (skip this if dnsmasq already logs
-   queries, for example through luci-app-adblock-fast; the page tells you).
+   `customfeeds.list` and click **Save**.
+3. **Install.** In **System → Software**, click **Update lists…**, search
+   for `luci-app-adblock-fast-monitor` and click **Install…**.
+4. **Turn on logging.** Open **Services → Adblock Fast Monitor →
+   Settings**, tick **Log DNS queries** and click **Save & Apply**. (If
+   dnsmasq already logs queries, the page says so and you can skip this.)
+5. **Watch.** Open **Services → Adblock Fast Monitor**. New queries show up
+   every 2 seconds.
+6. **Change rules.** Click **Allow** on a blocked name or **Block** on an
+   allowed one. The change goes to **Pending changes**.
+7. **Apply.** Click **Apply changes**, then **Apply** in the dialog.
+   adblock-fast rebuilds its lists once, and the page checks each name with
+   a real DNS lookup.
 
-Updates appear under **System → Software → Updates**. Without the feed, add
-the key (steps 1–2), download the signed `.apk` from a GitHub release and use
-**Upload Package…**. LuCI refuses unsigned packages. The key file is kept
-across sysupgrade; apk keeps `customfeeds.list`.
+Updates appear later under **System → Software → Updates**.
 
-Translations install as `luci-i18n-adblock-fast-monitor-<lang>`.
+## How it works
 
-### Developer builds (unsigned)
-
-Build with Docker (`scripts/in-docker.sh --platform linux/amd64 -- scripts/build-package.sh`,
-which packages the committed `HEAD` and refuses uncommitted changes unless
-`ABFM_BUILD_FROM=worktree`; see [`docs/testing.md`](docs/testing.md)) or
-download the
-`luci-app-adblock-fast-monitor-unsigned-dev` artifact of a CI run on `main`
-(pull requests do not publish one). Install over SSH:
-
-```sh
-scp -O luci-app-adblock-fast-monitor-*.apk root@router:/tmp/
-ssh root@router 'apk add --allow-untrusted /tmp/luci-app-adblock-fast-monitor-*.apk'
+```text
+ your browser ──"read the system log"──▶ router (logd)
+      │                                      ▲
+      │ parses the lines, draws the table    │ dnsmasq writes one line per query
+      │                                      │
+      └──── Apply ──▶ adblock-fast rebuilds its lists once
 ```
+
+The **Log DNS queries** switch tells dnsmasq to write each query to the
+router's system log. The page asks for the newest log lines every 2 seconds,
+the same way LuCI's System Log page does, and does all the reading and
+counting in your browser. Nothing of this package runs in the background on
+the router. When you press Apply, your changes are saved in adblock-fast's
+own settings and adblock-fast rebuilds its block list once.
+
+## Resource usage
+
+Measured on an emulated ARM router (OpenWrt in QEMU, hardware-accelerated
+on a fast Mac), not on real router hardware. A real router is slower, so
+treat the times as relative, not absolute.
+
+| What | Result |
+| --- | --- |
+| Background processes | none |
+| Requests while the tab is hidden or closed | 0 |
+| Extra router CPU while the page is open | about 0 (lost in the noise) |
+| Extra DNS delay | 0.1 ms or less |
+| Router memory | about 200 KB, inside rpcd |
+| Query logging itself (dnsmasq's own feature) | dnsmasq +0.5 to +1.7 % and logd +0.3 to +1.1 % of one CPU, at 50 to 200 queries per second |
+| One page update, in the browser | about 13 ms |
+
+The only real cost is query logging, and it is dnsmasq's, not this
+package's: turning it on by hand costs the same. Details and method:
+[`docs/performance.md`](docs/performance.md).
 
 ## Limitations
 
-- **Short history.** Queries share logd's ring buffer (System → System →
-  Logging → *System log buffer size*, 128 KiB by default: a few hundred
-  queries) with every other service. The page shows the span it covers and
-  how many entries it missed; on a busy network some are always missed.
-- **dnsmasq only.** In adblock-fast's `ipset`/`nftset` modes blocking happens
-  in the firewall, so the log cannot show it. smartdns and unbound are not
-  supported.
-- **Rules are adblock-fast's.** Allow and Block edit adblock-fast's own
-  allowed and blocked domain lists; a rebuild takes as long as adblock-fast
-  needs to download and process its lists.
+- **Short history.** Queries share the router's in-memory log (128 KiB by
+  default, a few hundred queries) with everything else. The page shows how
+  far back it reaches and how many lines it missed. To keep more, raise
+  **System → System → Logging → System log buffer size**.
+- **dnsmasq only.** In adblock-fast's `ipset`/`nftset` modes blocking
+  happens in the firewall, so the page shows those names as allowed.
+  smartdns and unbound are not supported.
+- **Apply takes a while.** A rebuild downloads adblock-fast's lists again;
+  it takes as long as adblock-fast needs.
 
-The full list with reasons is in [`docs/CONTRACT.md`](docs/CONTRACT.md) §14.
+## Privacy: admins only
 
-## Troubleshooting
-
-| The page says | Do this |
-| --- | --- |
-| DNS query logging is off | Settings → tick **Log DNS queries** → Save & Apply. |
-| dnsmasq writes its log to a file | Clear dnsmasq's log facility (`logfacility` in `/etc/config/dhcp`, Network → DHCP and DNS); queries must reach the system log. |
-| The system log was restarted and dnsmasq has logged nothing since | Restart dnsmasq (System → Startup → dnsmasq → Restart). |
-| Log entries missed / short time span | Raise *System log buffer size* (System → System → Logging). |
-| Apply refused: uncommitted changes | Run `uci changes adblock-fast` over SSH, then `uci commit adblock-fast` or `uci revert adblock-fast`. |
-| Everything shows as allowed | adblock-fast runs in `ipset`/`nftset` mode (see Limitations). |
-| Upload Package… fails with `UNTRUSTED signature` | Add the key first (Install, steps 1–2). |
+- To show queries, the page reads the **whole system log**, which also
+  holds other messages and every client's address. Give access to this app
+  only to people who may read the system log, as you would for LuCI's
+  System Log page.
+- With logging on, every DNS query and the client's address go to the
+  system log. If your log is also saved to a file or sent to another
+  server, the queries go there too; the page warns you.
+- Nothing about your clients is stored on the router. The client column is
+  hidden by default. Pending changes (domain names only) stay in your
+  browser until you apply or discard them.
 
 ## Uninstall
 
-System → Software → Installed → `luci-app-adblock-fast-monitor` →
-**Remove…** (or `apk del luci-app-adblock-fast-monitor`). Removal deletes the
-query-logging drop-in and restarts dnsmasq once if it was active; `/etc/config/adblock-fast-monitor`
-may remain. Rules you applied stay in adblock-fast's configuration; manage
-them in luci-app-adblock-fast. To drop the feed, remove its line from
-`customfeeds.list` and the key from Repository Public Keys.
+**System → Software → Installed →** `luci-app-adblock-fast-monitor` **→
+Remove…**. Removal turns query logging off again. Rules you applied stay
+in adblock-fast; manage them in its own page. To drop the feed, remove its
+line from `customfeeds.list` and the key from Repository Public Keys.
 
-## Contributing
+## More
 
-Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md)
-(rules for humans and coding agents). The interface is frozen in
-[`docs/CONTRACT.md`](docs/CONTRACT.md); all docs are listed in
-[`docs/README.md`](docs/README.md).
+- [Developer guide](CONTRIBUTING.md) and [rules for contributors](AGENTS.md)
+- [All documentation](docs/README.md): testing, releasing, design, the
+  interface contract and performance
+- [Changelog](CHANGELOG.md) · [Security](SECURITY.md)
 
-## Security
-
-Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
-
-## License
-
-Copyright 2026 LeandroSQ and contributors. Licensed under the
-[Apache License 2.0](LICENSE).
-
-This is an independent project, not affiliated with or endorsed by OpenWrt
-or the adblock-fast authors. It contains no adblock-fast code; adblock-fast
-is a separate package under its own license.
+Copyright 2026 LeandroSQ and contributors, [Apache License 2.0](LICENSE).
+An independent project, not affiliated with OpenWrt or the adblock-fast
+authors.

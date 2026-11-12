@@ -298,12 +298,12 @@ top-level number follows in brackets where they differ.
 
 | ID | Budget (gate) | Why this number |
 | --- | --- | --- |
-| P1 | 0 resident package processes in every sample of every state (**hard**); transient init invocations ≤ 2 per boot window plus ≤ 1 boot start, and 0 while idle; rpcd RssAnon growth ≤ 1024 KiB | Nothing of the package stays running; the only cost allowed is the rpcd plugin in rpcd's heap. At boot procd's rcS starts the service once (`S18… boot`: it reconciles the drop-ins and registers the triggers, §4) and procd then runs its `running` check. With query logging on, the procd `instance.update` trigger (§4: re-attaches dnsmasq to a restarted logd) fires 3 s after the last instance start or stop; the 3 s debounce collapses the boot burst into one firing, which runs `logging.uc reconcile`. So a boot is one boot start plus at most two invocations (`running`, one firing); when nothing starts or stops, nothing may run. Measured under TCG (run `20261111T231647Z-53299`, watch from `S11`): logging on, boot start 0.2 s, `running` 0.1 s, the firing 10 s later; logging off, boot start and `running`; 0 in both 60 s idle watches after boot and in the installed watches. Under hvf the firing is shorter than the watch's 100 ms scan and is not seen (Known gaps). |
+| P1 | 0 resident package processes in every sample of every state (**hard**); transient init invocations ≤ 2 per boot window plus ≤ 1 boot start, and 0 while idle; rpcd RssAnon growth ≤ 1024 KiB | Nothing of the package stays running; the only cost allowed is the rpcd plugin in rpcd's heap. At boot procd's rcS starts the service once (`S18… boot`: it reconciles the drop-ins and registers the triggers, §4) and procd then runs its `running` check. With query logging on, the procd `instance.update` trigger (§4: re-attaches dnsmasq to a restarted logd) fires 3 s after the last instance start or stop; the 3 s debounce collapses the boot burst into one firing, which runs `logging.uc reconcile`. So a boot is one boot start plus at most two invocations (`running`, one firing); when nothing starts or stops, nothing may run. Measured under TCG (smoke reference, watch from `S11`): logging on, boot start 0.2 s, `running` 0.1 s, the firing 10 s later; logging off, boot start and `running`; 0 in both 60 s idle watches after boot and in the installed watches. Under hvf the firing is shorter than the watch's 100 ms scan and is not seen (Known gaps). |
 | P2 | 0 requests in 60 s hidden, 0 in 60 s closed (**hard**) | LuCI's `Poll` never pauses for hidden tabs; the page must remove its poll on `visibilitychange`. |
-| P3 | uhttpd+ubusd+logd+rpcd CPU with one visible page polling every 2 s minus the same load with no page ≤ 1 / 2 pp at 50 / 200 qps [2 / 6 pp]; `log read` p95 ≤ 50 ms at the adaptive N (< 900), ≤ 150 ms at N = 900 | A resident `logread -f` reader (the obvious alternative design, measured in an earlier prototype) alone cost 3.4 / 8.1 % at 50 / 200 qps under TCG (run `20261110T195320Z-79115`); a page must cost less than that while open, and nothing when closed. A poll is one `log read`, all in C plus rpcd's session check. Under hvf the page measured +0.07…+0.10 / +0.10…+0.20 pp in three runs, so 1 / 2 pp leaves ≥ 5× margin. |
+| P3 | uhttpd+ubusd+logd+rpcd CPU with one visible page polling every 2 s minus the same load with no page ≤ 1 / 2 pp at 50 / 200 qps [2 / 6 pp]; `log read` p95 ≤ 50 ms at the adaptive N (< 900), ≤ 150 ms at N = 900 | A resident `logread -f` reader (the obvious alternative design, measured in an earlier prototype) alone cost 3.4 / 8.1 % at 50 / 200 qps under TCG; a page must cost less than that while open, and nothing when closed. A poll is one `log read`, all in C plus rpcd's session check. Under hvf the page measures within noise of zero (run of record), so 1 / 2 pp leaves a wide margin. |
 | P4 | `abfm-poll` p95 ≤ 20 ms at ≥ 810 entries; ≤ 500 rows kept | One poll every 2 s: 20 ms is 1 % of one browser core, and a 900-entry first load stays within about one 60 Hz frame (16.7 ms) plus layout. |
-| P5 | median(on p95) − median(off p95) ≤ max(2 ms [3 ms], noise floor), ≥ 3 runs per state and rate, loss ≤ 0.5 % | "Within noise", with the noise floor measured in the same run. The 3 ms floor is the TCG cost of query logging itself (dnsmasq's syslog write per line): +1.95 and +2.23 ms p95 at 50 qps in two TCG runs, plus the on-state spread (≈ 1.2 ms), rounded down. Under hvf the delta is −0.40…+0.14 ms with spreads ≤ 0.62 ms (three runs), so the original 2 ms floor holds there. |
-| P6 | per process (logd, dnsmasq, rpcd, uhttpd, ubusd): on − off ≤ 4 / 6 pp at 50 / 200 qps [4 / 12 pp, dnsmasq 10 / 12 pp]; RssAnon delta ≤ 256 KiB; and on − manual ≤ the run-to-run noise of those two states (≥ 0.5 pp) | Query logging is the feature, and its cost is dnsmasq's own: one syslog datagram per log line, which logd receives. The on − manual condition checks exactly that: the package's drop-in written by hand, with the package's switch off, costs what the package costs. The dnsmasq 10 pp ceiling at 50 qps is the TCG figure (+7.9 pp medians with ≈ 2 pp spread, run `20261111T032551Z-32856`): TCG inflates the context switches each syslog write causes. Under hvf the same cost is dnsmasq +0.60…+0.67 / +2.06…+2.10 pp and logd +0.33…+0.37 / +1.07…+1.10 pp (three runs, spreads ≤ 0.6 pp at 50 qps and ≤ 2.4 pp at 200), so 4 / 6 pp leaves ≥ 2.8× margin. |
+| P5 | median(on p95) − median(off p95) ≤ max(2 ms [3 ms], noise floor), ≥ 3 runs per state and rate, loss ≤ 0.5 % | "Within noise", with the noise floor measured in the same run. The 3 ms floor is the TCG cost of query logging itself (dnsmasq's syslog write per line, about +2 ms p95 at 50 qps under TCG). Under hvf the delta is about 0.1 ms with spreads ≤ 0.12 ms (run of record), so 2 ms holds there. |
+| P6 | per process (logd, dnsmasq, rpcd, uhttpd, ubusd): on − off ≤ 4 / 6 pp at 50 / 200 qps [4 / 12 pp, dnsmasq 10 / 12 pp]; RssAnon delta ≤ 256 KiB; and on − manual ≤ the run-to-run noise of those two states (≥ 0.5 pp) | Query logging is the feature, and its cost is dnsmasq's own: one syslog datagram per log line, which logd receives. The on − manual condition checks exactly that: the package's drop-in written by hand, with the package's switch off, costs what the package costs. The top-level dnsmasq ceilings are TCG figures: TCG inflates the context switches each syslog write causes (smoke reference below). Under hvf the same cost is dnsmasq +0.47 / +1.73 pp and logd +0.27 / +1.07 pp (run of record), so 4 / 6 pp leaves ≥ 3.4× margin. |
 | P7 | `info` p95 ≤ 50 ms | Cheap UCI reads, `stat` and one `service list` call (§6.1). |
 | P8 | `apply` ≤ 200 ms (dry run and real) and rpcd never blocked > 200 ms (**hard**) | §6: rpcd is single-threaded. |
 | P10 | dnsmasq restarts: boot 0, enabling query logging 1 (every time), a settings save 0 (**hard**) | §5. Boot is the on-boot count minus the off-boot count. |
@@ -311,18 +311,14 @@ top-level number follows in brackets where they differ.
 ## Measured results
 
 Host: Apple M4 Pro (12 cores, 64 GiB), macOS. Guests 2 vCPU / 256 MiB.
-APK built from `main` `29eff19` (`.local-validation/artifacts/20261111T194850Z-1`,
-sha256 `9822bb4f…`), the UI before the incremental-render change, so P4 is
-the old `abfm-poll` semantics. Raw data stays in the shared cache (not
-committed); re-run the gate on a directory to regenerate `summary.json`.
-Another unit's Docker guest tests shared the host during part of the hvf
-runs.
+Raw data stays in the local `.local-validation/` cache (not committed);
+re-run the gate on a run directory to regenerate `summary.json`.
 
-### Release candidate (run of record)
+### Run of record (release candidate)
 
-Run `.local-validation/perf/20261112T070716Z-38758`, armsr-armv8 under hvf,
-3 repeats, APK `.local-validation/artifacts/20261112T063248Z-1` (sha256
-`9b48690a…`, built from `main` `230ef0b`): **PASS, all budgets**.
+Run `perf/20261112T070716Z-38758`, armsr-armv8 under hvf, 3 repeats, APK
+`artifacts/20261112T063248Z-1` (sha256 `9b48690a…`, built from `main`
+`230ef0b`): **PASS, all budgets**, no invalid window.
 
 | ID | Result | Noise (50 / 200 qps) |
 | --- | --- | --- |
@@ -335,149 +331,33 @@ Run `.local-validation/perf/20261112T070716Z-38758`, armsr-armv8 under hvf,
 | P7 / P8 | `info` p95 0.79 ms; apply 0.76 / 1.81 ms, rpcd worst 3.4 ms | |
 | P10 | boot 0, enable [1, 1, 1, 1, 1], save 0 | |
 
-P4 is the poll cost after the table started updating its 50 rows in place
-(no rows are created when the page shifts) and `log read` stopped going
-through LuCI's frame-aligned request batching. The earlier run of the
-incremental table that created and removed rows per poll
-(`20261112T002608Z-78435`, 114 ms p95) and the first 50-row paging run
-(`20261112T022752Z-828`, 24.6 ms p95) are superseded by it.
+The on − manual figures are the attribution: the package with query logging
+on costs what its drop-in written by hand costs, so all of query logging's
+cost is dnsmasq's own `log-queries` plus logd receiving the lines. A user
+who already logs queries pays nothing more for the package.
 
-### armsr-armv8 under hvf (measurement of record, old P4 semantics)
+### Smoke reference (x86/64 under TCG)
 
-Run `.local-validation/perf/20261111T224327Z-51761`
-(`ABFM_PERF_GUEST=armsr-hvf npm run test:performance:measure`): **PASS,
-all of P1–P8 and P10**, 24 load windows, none invalid.
+Run `perf/20261111T231647Z-53299`, default guest, APK built from `main`
+`29eff19` (before the 50-row in-place table, so its P4 is not comparable):
+every gated metric passes; P5 and P6 exceed even their TCG-calibrated
+numbers and are reported only.
 
-| ID | Result | Noise (spread over 3 repeats, 50 / 200 qps) |
-| --- | --- | --- |
-| P1 | 0 resident in every snapshot, window and watch; 0 idle invocations; boot window: no invocation seen (shorter than the 100 ms scan, Known gaps); rpcd RssAnon +208 KiB (540 → 748) | |
-| P2 | 0 requests hidden 60 s, 0 closed 60 s; visible control 7 / 12 s | |
-| P3 | +0.10 pp at 50 qps, +0.13 pp at 200; `log read` p95 2.3 ms (N = 391), 4.1–5.0 ms (N = 900); the page polled every 2.03 s | CPU 0 / 0.03 pp (page / no page) at 50, 0.24 / 0.10 at 200; `log read` 0.4 / 0.4 ms, 0.7 / 0.4 ms |
-| P4 | `abfm-poll` p95 16.9 ms over 60 polls (the browser runs on the host; not affected by the guest's accelerator) | |
-| P5 | Δp95 +0.03 ms at 50 qps, +0.09 ms at 200 (p95 ≈ 1.2–1.8 ms); 0 loss; on − manual within the spread | p95 0.49 / 0.07 ms (off / on) at 50, 0.47 / 0.04 at 200 |
-| P6 | on − off: dnsmasq +0.63 / +2.06 pp, logd +0.33 / +1.10 pp, rpcd, uhttpd, ubusd 0; on − manual: dnsmasq +0.03 / +0.13 pp, logd −0.03 / −0.13 pp (≤ 0.5 pp); RssAnon +0 / +4 KiB | dnsmasq 0.40 / 0.63 pp, logd 0.03 / 0.14 pp |
-| P7 | `info` p95 0.82 ms (ubus floor 0.1 ms) | |
-| P8 | apply dry max 0.75 ms, real 1.91 ms; rpcd worst 2.3 ms | |
-| P10 | boot 0, enable [1, 1, 1, 1, 1], save 0 | |
-
-Two earlier hvf runs on the same APK
-(`20261111T210749Z-41290`, `20261111T214443Z-45782`) agree on every CPU and
-latency number above within the spreads (P6 dnsmasq on − off +0.60 / +2.10
-and +0.67 / +2.10 pp; on − manual −0.2…+0.13 pp). Their P10/P1 boot phases
-exposed two harness faults, since fixed: the manual drop-in was still in
-place when query logging was switched on, and dnsmasq refused the
-repeated options, so 3 of 5 enables counted 0 restarts; and a serial
-console Enter was lost during a cold boot.
-
-`/proc/stat` busy ticks are unusable under hvf: for the same state they
-ranged from 0.2 % to 10.8 % of one CPU while the tasks' own times summed to
-a steady 1.5–7.3 % (`summary.json` → P6 → `system_total`). The gate's
-system total is therefore task-based (Method).
-
-### x86/64 under TCG (smoke test)
-
-Run `.local-validation/perf/20261111T231647Z-53299` (default guest, same
-APK, same harness, nothing else running): every gated metric passes; P5
-and P6 fail their TCG-calibrated numbers, which as a smoke run are
-reported only (the gate as first run, before the per-accelerator budgets,
-said FAIL: P5, P6). 24 windows, none invalid.
-
-| ID | Result | Noise (spread over 3 repeats, 50 / 200 qps) |
+| ID | Result | Noise (50 / 200 qps) |
 | --- | --- | --- |
 | P1 | 0 resident; boot window with logging on: the boot start (`S18… boot`, 0.2 s) + `running` + one trigger firing (`logging.uc reconcile`, 10 s later); off: boot start + `running`; 0 idle; rpcd RssAnon +200 KiB | |
-| P2 | 0 / 0 requests in 60.5 s; visible control 7 / 12 s | |
-| P3 | +1.55 pp at 50 qps, +1.72 at 200; `log read` p95 32.4 ms (N = 394), 54–74 ms (N = 900) | CPU 0.19 / 0.13 pp, 0.20 / 0.54; `log read` 2.0 / 2.3 ms, 1.7 / 2.8 ms |
-| P4 | `abfm-poll` p95 9.9 ms | |
-| P5 | **Δp95 +3.22 ms at 50 qps (> 3)**, +0.83 at 200; on − manual −0.60 / −0.24 ms | p95 0.54 / 0.19 ms, 0.17 / 0.33 |
-| P6 | on − off: **dnsmasq +10.05 pp at 50 (> 10) and +13.39 at 200 (> 12)**, **logd +4.83 at 50 (> 4)**, +10.95 at 200; on − manual: dnsmasq −1.17 / −0.68, logd −0.20 / +0.49 pp (within noise) | dnsmasq 1.45 / 1.03 pp, logd 0.16 / 0.54 pp |
-| P7 | `info` p95 6.5 ms | |
-| P8 | apply dry max 8.3 ms, real 27.9 ms; rpcd worst 23.3 ms | |
+| P2 | 0 / 0 requests in 60.5 s | |
+| P3 | +1.55 / +1.72 pp; `log read` p95 32.4 ms (N = 394), 54–74 ms (N = 900) | CPU 0.19 / 0.13 pp, 0.20 / 0.54 |
+| P5 | Δp95 +3.22 / +0.83 ms; on − manual −0.60 / −0.24 ms | p95 0.54 / 0.19 ms, 0.17 / 0.33 |
+| P6 | on − off dnsmasq +10.05 / +13.39 pp, logd +4.83 / +10.95 pp; on − manual dnsmasq −1.17 / −0.68, logd −0.20 / +0.49 pp (within noise) | dnsmasq 1.45 / 1.03 pp, logd 0.16 / 0.54 pp |
+| P7 / P8 | `info` p95 6.5 ms; apply dry 8.3 ms, real 27.9 ms; rpcd worst 23.3 ms | |
 | P10 | boot 0, enable [1, 1, 1, 1, 1], save 0 | |
 
-With every state now starting from a dnsmasq of the same age, TCG puts
-query logging's own cost above even the TCG-calibrated P5/P6 ceilings. The
-package's share (on − manual) is zero within noise here too.
-
-### Noise: TCG and hvf side by side
-
-Spread (max − min over 3 repeats) in the two runs of record, 50 / 200 qps:
-
-| Number | TCG (x86/64) | hvf (armsr-armv8) |
-| --- | --- | --- |
-| P3 CPU, page / no page (pp) | 0.19 / 0.13, 0.20 / 0.54 | 0 / 0.03, 0.24 / 0.10 |
-| `log read` p95, adaptive N / N = 900 (ms) | 2.0 / 2.3, 1.7 / 2.8 | 0.4 / 0.4, 0.7 / 0.4 |
-| P5 p95, off / on (ms) | 0.54 / 0.19, 0.17 / 0.33 | 0.49 / 0.07, 0.47 / 0.04 |
-| P6 dnsmasq CPU (pp) | 1.45, 1.03 | 0.40, 0.63 |
-| P6 logd CPU (pp) | 0.16, 0.54 | 0.03, 0.14 |
-| query logging's dnsmasq cost, on − off (pp) | +10.05, +13.39 | +0.63, +2.06 |
-
-The noise is of the same order; what differs is the size of the effect
-TCG produces. Earlier TCG runs taken while other guests and builds shared
-the host showed spreads up to 3 pp (P6 dnsmasq) and 7.4 ms (P5).
-
-### P6: dnsmasq cost of query logging (attribution)
-
-`scripts/perf/ab-dnsmasq.sh`: package installed; arms **off**
-(`query_logging=0`), **manual** (`query_logging=0` + the package's drop-in
-copied by hand: dnsmasq's own query logging) and **product**
-(`query_logging=1`); arm order rotated every repeat, every arm starting
-from a dnsmasq restart 20 s old, 20 s windows, switches through `uci
-commit` + `reload_config` only. Medians, spread in brackets:
-
-| Guest, run | Rate | dnsmasq % off / manual / product | logd % off / manual / product | product − manual | DNS p95 ms off / manual / product |
-| --- | --- | --- | --- | --- | --- |
-| hvf, `ab-20261111T222121Z-9805`, 5 repeats | 50 | 1.05 (0.40) / 1.50 (0.70) / 1.40 (0.45) | 0.00 / 0.35 / 0.30 | dnsmasq −0.10 pp, logd −0.05 pp | 1.75 / 1.55 / 1.43 |
-| | 200 | 2.65 (0.90) / 4.30 (0.55) / 4.14 (1.20) | 0.00 / 0.95 / 0.95 | dnsmasq −0.16 pp, logd 0.00 pp | 1.34 / 1.24 / 1.36 |
-| TCG, `ab-20261111T235051Z-19814`, 3 repeats | 50 | 7.12 (0.18) / 17.85 (0.54) / 17.45 (0.96) | 0.15 / 4.89 / 4.55 | dnsmasq −0.40 pp, logd −0.34 pp | 4.40 / 8.05 / 7.51 |
-
-No dnsmasq restart happened inside any window (pids unchanged), and no
-window was invalid.
-
-Findings:
-
-- **The attribution holds.** The package on costs what its drop-in written
-  by hand costs, within noise, on both accelerators and at both rates, for
-  dnsmasq, logd and DNS latency. The cost of query logging is dnsmasq's
-  own (one syslog datagram per log line, about 2.5 lines per query) plus
-  logd receiving it. A user who already logs queries pays nothing more for
-  the package.
-- **The size of that cost is a TCG artifact.** Under hvf it is +0.4–0.7 pp
-  of one CPU at 50 qps and +1.5–2.1 pp at 200 qps for dnsmasq, +0.3–0.4 /
-  +1.0–1.1 pp for logd, and no measurable latency. Under TCG it is +10 pp, +4.7 pp
-  and +3.1–3.7 ms: every syslog write wakes logd, and with logging on
-  dnsmasq's involuntary context switches rise from 0 to 0.4–0.6 per query
-  (hvf: 0.14–0.2), each of which TCG emulates expensively.
-- The earlier TCG A/B (arms in a fixed order, the cheap arms measured
-  longest after a dnsmasq restart, `init reload` between arms) is
-  superseded by this one.
-
-### Budgets adopted from these results
-
-The hvf numbers support tighter budgets than the TCG-calibrated ones, and
-these were adopted for the hvf run of record (`budgets.json` →
-`accelerators.hvf`); TCG keeps the old numbers as a smoke run:
-
-| Budget | Top-level (TCG, KVM) | hvf measured (3 runs) | hvf (adopted) |
-| --- | --- | --- | --- |
-| P5 floor | 3 ms | Δp95 −0.40…+0.14 ms; spreads ≤ 0.62 ms | 2 ms |
-| P6 dnsmasq, 50 qps | 10 pp | +0.60…+0.67 pp (spread ≤ 0.54) | 4 pp |
-| P6 dnsmasq / logd, 200 qps | 12 pp | dnsmasq +2.06…+2.10, logd +1.07…+1.10 | 6 pp |
-| P3 CPU | 2 / 6 pp | +0.07…+0.10 / +0.10…+0.20 pp | 1 / 2 pp |
-
-The loosened P5 (3 ms) and P6 dnsmasq (10 pp) budgets are not needed under
-acceleration. The absolute-time budgets (`log read`, P7, P8) are unchanged.
-
-### Earlier TCG results (before this harness revision)
-
-Before the task-based system total, the manual state and the equal-age
-restarts, TCG runs on the release candidates passed with the loosened
-P5/P6 budgets: `20261111T051631Z-42044` (`main` `024b06c`: P5 +2.04 / +1.39
-ms, P6 dnsmasq +8.34 / +7.91 pp, P3 +1.23 / +2.53 pp, P4 11.0 ms, P1
-rpcd +220 KiB) and `20261111T042902Z-37426` (`7ed430e`: P5 +2.23 / +0.96 ms,
-P6 dnsmasq +8.81 / +7.35 pp). An earlier prototype that ran a resident
-`logread -f` reader (`20261110T195320Z-79115`) failed its own budgets
-(reader CPU 11.3 / 35.6 % at 50 / 200 qps); its reader alone cost 3.4 /
-8.1 %, which is the ceiling P3 is set under.
+The noise is of the same order as under hvf; what differs is the size of
+the effect. TCG emulates every context switch, and with logging on each
+syslog write wakes logd and adds 0.4–0.6 involuntary dnsmasq context
+switches per query, so query logging costs about 8 to 20 times more CPU than under
+hvf. The package's own share (on − manual) is zero within noise here too.
 
 ## Known gaps
 

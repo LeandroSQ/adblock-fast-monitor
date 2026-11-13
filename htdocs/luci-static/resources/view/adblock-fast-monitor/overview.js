@@ -588,7 +588,7 @@ return view.extend({
 					E('dd', { 'style': 'margin:0;font-size:1.6em;font-weight:bold;line-height:1.3;white-space:nowrap' }, [ v.figures[key] ])
 				]);
 			};
-			const pair = (a, b) => E('div', { 'style': 'display:flex;flex:1 1 11em;gap:' + PANEL_GAP }, [ a, b ]);
+			const pair = (a, b) => E('div', { 'style': 'display:flex;flex:1 1 13em;gap:' + PANEL_GAP }, [ a, b ]);
 			for (let i = 0; i < TOP_BLOCKED; i++) {
 				const name = textNode(), count = textNode();
 				const li = E('li', { 'style': 'display:none;justify-content:space-between;gap:1em' }, [

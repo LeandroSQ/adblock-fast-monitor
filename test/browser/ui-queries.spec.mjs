@@ -131,7 +131,7 @@ test('the blocked share is computed over the answered queries the list keeps', a
   const donut = (pct) => stat.getByRole('img', { name: `${pct} % of recent queries blocked` });
   const fig = (key) => stat.locator(`[data-stat="${key}"] dd`);
   const topList = page.getByRole('list', { name: 'Top blocked' });
-  await expect(page.locator('#abfm-top-blocked')).toContainText('Nothing blocked yet');
+  await expect(page.locator('#abfm-top-blocked').getByText('Nothing blocked yet')).toBeVisible();
   await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
   await expect(fig('blocked')).toHaveText('1');
   await expect(fig('queries')).toHaveText('1');
@@ -149,7 +149,7 @@ test('the blocked share is computed over the answered queries the list keeps', a
   // Top blocked: a tie goes to the most recent; a second block of a name puts it first
   const topRows = () => topList.locator('li[data-domain]').evaluateAll((lis) => lis.map((li) => li.textContent));
   await expect.poll(topRows).toEqual(['metrics.example.test1', 'telemetry.example.test1', 'ads.example.test1']);
-  await expect(page.locator('#abfm-top-blocked')).not.toContainText('Nothing blocked yet');
+  await expect(page.locator('#abfm-top-blocked').getByText('Nothing blocked yet')).toBeHidden();
   await dnsQuery('telemetry.example.test');
   await expect.poll(topRows).toEqual(['telemetry.example.test2', 'metrics.example.test1', 'ads.example.test1']);
 });

@@ -56,7 +56,11 @@ test('real queries from a LAN client: decisions, sources, the statistics and the
   await expect(stat.locator('[data-stat="window"]')).toHaveText(/^Window\s*last \d+ (s|min)$/);
   // no sentence while a percentage is shown
   await expect(stat.locator('[data-stat="text"]')).toBeHidden();
-  // a narrow screen stacks the figures under the donut, nothing scrolls sideways
+  // a wide screen puts the figures beside the donut ...
+  const [wd, wf] = await Promise.all([donut.boundingBox(), stat.locator('[data-stat="blocked"]').boundingBox()]);
+  expect(wf.x).toBeGreaterThan(wd.x + wd.width);
+  expect(wf.y).toBeLessThan(wd.y + wd.height);
+  // ... a narrow screen stacks them under it, and nothing scrolls sideways
   await page.setViewportSize({ width: 360, height: 800 });
   const [d, f] = await Promise.all([donut.boundingBox(), stat.locator('[data-stat="queries"]').boundingBox()]);
   expect(f.y).toBeGreaterThan(d.y + d.height - 1);

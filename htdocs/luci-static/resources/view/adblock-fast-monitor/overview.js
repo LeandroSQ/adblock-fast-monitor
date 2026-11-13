@@ -583,7 +583,7 @@ return view.extend({
 			this.missedNode = E('div', { 'id': 'abfm-missed', 'data-missed': '0', 'data-paused': '0' }, [ v.missed, v.paused ]);
 			dom.content(this.statsNode, [
 				E('div', { 'class': 'ifacebox', 'data-stat': 'blocked_pct',
-					'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:.5em 2em;margin:0;padding:.5em 1em;text-align:left;white-space:normal;box-sizing:border-box;width:100%' }, [
+					'style': 'display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:.5em 2em;margin:0;padding:.5em 1em;text-align:left;white-space:normal;box-sizing:border-box;width:100%' }, [
 					E('div', { 'style': 'text-align:center' }, [ v.donut.node, E('div', {}, T(_('blocked'))) ]),
 					E('div', { 'style': 'display:grid;grid-template-columns:repeat(2, minmax(9em, max-content));gap:.5em 2em' }, [
 						figure('blocked', _('Blocked')), figure('allowed', _('Allowed')),

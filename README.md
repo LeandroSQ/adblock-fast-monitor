@@ -13,8 +13,8 @@ blocked, and lets you allow or block a name with one click.
 
 ## What you get
 
-- **Blocked %** of the recent queries as a small ring chart, also as a card
-  on **Status → Overview**:
+- **Blocked %** of the recent queries as a small ring chart, with the
+  blocked, allowed and total counts, also as a card on **Status → Overview**:
 
   ![The Adblock Fast Monitor card on Status → Overview](docs/images/status.png)
 

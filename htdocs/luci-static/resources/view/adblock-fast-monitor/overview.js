@@ -560,9 +560,10 @@ return view.extend({
 	},
 
 	/*
-	 * The blocked share as a donut in a LuCI card (.ifacebox, as on Status →
-	 * Overview) next to one sentence (model.summary). Built once; a poll
-	 * rewrites only the attributes and texts that changed (P4).
+	 * One full-width panel (LuCI's .ifacebox card): the donut with "blocked"
+	 * under it, and the figures in two columns (Blocked / Allowed, Queries /
+	 * Window) as text. On a narrow screen the figures wrap under the donut.
+	 * Built once; a poll rewrites only the texts that changed (P4).
 	 */
 	updateStats() {
 		const s = querylog.stats(this.log, { show_router: false });
@@ -570,24 +571,39 @@ return view.extend({
 		const sum = model.summary(s, model.dnsModeNote(this.infoResult));
 		let v = this.statView;
 		if (!v) {
-			v = this.statView = { donut: chart.donut(96), text: textNode(), line: undefined };
+			v = this.statView = { donut: chart.donut(80), text: textNode(), line: undefined, figures: {}, vals: {} };
+			v.note = E('p', { 'data-stat': 'text', 'style': 'flex-basis:100%;margin:0;display:none' }, [ v.text ]);
+			const figure = (key, label) => {
+				v.figures[key] = textNode();
+				return E('div', { 'data-stat': key }, [ E('span', { 'style': 'display:inline-block;min-width:5em' }, T(label)),
+					E('strong', {}, [ v.figures[key] ]) ]);
+			};
 			v.missed = E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]);
 			v.paused = E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ]);
 			this.missedNode = E('div', { 'id': 'abfm-missed', 'data-missed': '0', 'data-paused': '0' }, [ v.missed, v.paused ]);
 			dom.content(this.statsNode, [
-				E('div', { 'data-stat': 'blocked_pct', 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:1em' }, [
-					E('div', { 'class': 'ifacebox', 'style': 'margin:0' }, [
-						E('div', { 'class': 'ifacebox-head' }, T(_('Blocked'))),
-						E('div', { 'class': 'ifacebox-body' }, [ v.donut.node ])
+				E('div', { 'class': 'ifacebox', 'data-stat': 'blocked_pct',
+					'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:.5em 2em;margin:0;padding:.5em 1em;text-align:left;white-space:normal;box-sizing:border-box;width:100%' }, [
+					E('div', { 'style': 'text-align:center' }, [ v.donut.node, E('div', {}, T(_('blocked'))) ]),
+					E('div', { 'style': 'display:grid;grid-template-columns:repeat(2, minmax(9em, max-content));gap:.5em 2em' }, [
+						figure('blocked', _('Blocked')), figure('allowed', _('Allowed')),
+						figure('queries', _('Queries')), figure('window', _('Window'))
 					]),
-					E('p', { 'data-stat': 'text' }, [ v.text ])
+					v.note
 				]),
 				this.missedNode
 			]);
 		}
 		v.donut.update(sum.pct, sum.value, sum.label || sum.text);
-		if (v.line !== sum.text)
-			v.text.data = v.line = sum.text;
+		for (const k in v.figures)
+			if (v.vals[k] !== sum[k])
+				v.figures[k].data = v.vals[k] = sum[k];
+		/* the sentence only explains why there is no percentage */
+		const note = (sum.pct == null) ? sum.text : '';
+		if (v.line !== note) {
+			v.text.data = v.line = note;
+			show(v.note, !!note);
+		}
 
 		const missed = s.missed_total || 0;
 		const paused = s.paused_total || 0;

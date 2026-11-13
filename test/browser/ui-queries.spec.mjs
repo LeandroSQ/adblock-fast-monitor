@@ -45,13 +45,23 @@ test('real queries from a LAN client: decisions, sources, the statistics and the
   // answers are not shown
   await expect(page.locator('#abfm-overview')).not.toContainText('192.0.2.10');
 
-  // the statistics: a donut in a LuCI card, with its number inside and a text alternative, and one sentence
+  // the statistics: one LuCI card with the donut (number inside, text alternative) and the figures in two columns
   const stat = page.locator('[data-stat="blocked_pct"]');
   const donut = stat.getByRole('img', { name: /^\d+ % of recent queries blocked$/ });
   await expect(donut).toBeVisible();
   await expect(donut.locator('text')).toHaveText(/^\d+ %$/);
-  await expect(stat.locator('.ifacebox-head')).toHaveText('Blocked');
-  await expect(stat.locator('[data-stat="text"]')).toHaveText(/^\d+ of \d+ queries blocked in the last \d+ (s|min)$/);
+  await expect(stat).toHaveClass(/ifacebox/);
+  for (const [key, label] of [['blocked', 'Blocked'], ['allowed', 'Allowed'], ['queries', 'Queries']])
+    await expect(stat.locator(`[data-stat="${key}"]`)).toHaveText(new RegExp(`^${label}\\s*\\d+$`));
+  await expect(stat.locator('[data-stat="window"]')).toHaveText(/^Window\s*last \d+ (s|min)$/);
+  // no sentence while a percentage is shown
+  await expect(stat.locator('[data-stat="text"]')).toBeHidden();
+  // a narrow screen stacks the figures under the donut, nothing scrolls sideways
+  await page.setViewportSize({ width: 360, height: 800 });
+  const [d, f] = await Promise.all([donut.boundingBox(), stat.locator('[data-stat="queries"]').boundingBox()]);
+  expect(f.y).toBeGreaterThan(d.y + d.height - 1);
+  expect(await stat.evaluate((n) => n.scrollWidth <= n.clientWidth + 1)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   // polls are incremental after the first read, within 16..900
   await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(3);
@@ -99,11 +109,16 @@ test('the blocked share is computed over the answered queries the list keeps', a
   const stat = page.locator('[data-stat="blocked_pct"]');
   const donut = (pct) => stat.getByRole('img', { name: `${pct} % of recent queries blocked` });
   await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
-  await expect(stat).toContainText(/1 of 1 queries blocked in the last \d+ s/);
+  const fig = (key) => stat.locator(`[data-stat="${key}"] strong`);
+  await expect(fig('blocked')).toHaveText('1');
+  await expect(fig('queries')).toHaveText('1');
   await expect(donut(100)).toBeVisible();
   for (const name of ['telemetry.example.test', 'metrics.example.test']) await seeQuery(page, name, { decision: 'blocked' });
   await seeQuery(page, 'pct.up.example.test', { decision: 'allowed' });
-  await expect(stat).toContainText(/3 of 4 queries blocked in the last \d+ (s|min)/);
+  await expect(fig('blocked')).toHaveText('3');
+  await expect(fig('allowed')).toHaveText('1');
+  await expect(fig('queries')).toHaveText('4');
+  await expect(fig('window')).toHaveText(/^last \d+ (s|min)$/);
   await expect(donut(75)).toBeVisible();
   await expect(donut(75).locator('text')).toHaveText('75 %');
   // the arc is three quarters of the ring
@@ -399,7 +414,7 @@ test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms o
       { timeout: 60_000 }).toBeGreaterThan(0);
     await page.evaluate(() => {
       window.abfmRows = [...document.querySelectorAll('#abfm-queries tr[data-domain]')];
-      window.abfmStats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats p[data-stat="text"]')];
+      window.abfmStats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats [data-stat] strong')];
     });
     const filled = (await polls()).length;
     await expect.poll(async () => (await polls()).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(filled + 20);
@@ -431,9 +446,9 @@ test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms o
     expect(loaded.filter((x) => x.changed === 50).length).toBeGreaterThanOrEqual(0.8 * loaded.length);
     expect(await page.evaluate(() => {
       const now = [...document.querySelectorAll('#abfm-queries tr[data-domain]')];
-      const stats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats p[data-stat="text"]')];
+      const stats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats [data-stat] strong')];
       return now.length === 50 && now.every((tr, i) => tr === window.abfmRows[i]) &&
-        stats.length === 2 && stats.every((n, i) => n === window.abfmStats[i]);
+        stats.length === 5 && stats.every((n, i) => n === window.abfmStats[i]);
     })).toBe(true);
     expect(pct(d, 0.95)).toBeLessThanOrEqual(P4_P95_MS);
     expect(pct(d, 0.5)).toBeLessThanOrEqual(P4_P50_MS);

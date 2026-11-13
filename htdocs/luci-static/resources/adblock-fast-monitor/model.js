@@ -501,23 +501,26 @@ function formatClock(epoch) {
 /*
  * The statistics of the page and of the Status → Overview include, from
  * querylog.stats(): {pct (number or null), value ("33 %", or null when not
- * shown), label (the donut's accessible name, when shown), text}. dnsMode is dnsModeNote(): in the firewall modes the log
+ * shown), label (the donut's accessible name, when shown), text, and the
+ * panel's figures as text: blocked, allowed, queries (answered), window}. dnsMode is dnsModeNote(): in the firewall modes the log
  * cannot show blocks, so no percentage is given.
  */
 function summary(stats, dnsMode) {
 	const s = isObject(stats) ? stats : {};
 	const blocked = int(s.blocked, 0), allowed = int(s.allowed, 0);
 	const answered = blocked + allowed;
+	const figures = { blocked: formatCount(blocked), allowed: formatCount(allowed), queries: formatCount(answered),
+		window: answered ? fmt(_('last %s'), formatDuration(s.span_s)) : '—' };
 	if (dnsMode)
-		return { pct: null, value: null, text: dnsMode == 'firewall'
+		return Object.assign({ pct: null, value: null, text: dnsMode == 'firewall'
 			? _('Not shown: adblock-fast blocks in the firewall in this DNS mode.')
-			: _('Not shown: adblock-fast does not use dnsmasq in this DNS mode.') };
+			: _('Not shown: adblock-fast does not use dnsmasq in this DNS mode.') }, figures, { blocked: '—' });
 	if (!answered)
-		return { pct: null, value: null, text: _('No queries yet.') };
+		return Object.assign({ pct: null, value: null, text: _('No queries yet.') }, figures);
 	const pct = (typeof(s.blocked_pct) == 'number' && isFinite(s.blocked_pct)) ? s.blocked_pct : Math.round(1000 * blocked / answered) / 10;
 	const value = formatPct(pct);
-	return { pct: pct, value: value, label: fmt(_('%s of recent queries blocked'), value),
-		text: fmt(_('%s of %s queries blocked in the last %s'), formatCount(blocked), formatCount(answered), formatDuration(s.span_s)) };
+	return Object.assign({ pct: pct, value: value, label: fmt(_('%s of recent queries blocked'), value),
+		text: fmt(_('%s of %s queries blocked in the last %s'), formatCount(blocked), formatCount(answered), formatDuration(s.span_s)) }, figures);
 }
 
 /*

@@ -821,9 +821,12 @@ earlier data); `loading`. Every state except `healthy` is one notice
 Page layout, top to bottom: title and one line (what the page does; for
 administrators only, D6); the state notice; short notes only while they
 apply (DNS mode §8.3, log stalled, log unreadable, retrying, paused when
-idle); the statistics (a donut in a LuCI card, below, next to
-`"%s of %s queries blocked in the last %s"`, plus the missed and paused
-counts with the log buffer size, §8.1); the staged-changes bar and the job
+idle); the statistics: one full-width LuCI card with the donut (below,
+"blocked" under it) and four figures as text in two columns, Blocked /
+Allowed and Queries (answered) / Window ("last 8 s"), which wrap under the
+donut on a narrow screen; without a percentage (no answered query yet, or
+the DNS modes of §8.3) one sentence says why. Then the missed and paused
+counts with the log buffer size (§8.1); the staged-changes bar and the job
 (§8.4); the last queries (Time, Domain, Client, Result as "Decision
 (source)", and Block/Allow for admins) in a box of at most 60 % of the
 window height that scrolls on its own (focusable, named region "Last
@@ -836,8 +839,8 @@ widget): a ring whose arc is the blocked percentage, the value ("33 %")
 inside, `role="img"` with the accessible name "33 % of recent queries
 blocked" (or the reason no percentage is shown), the theme's
 `--primary-color-high` and `--border-color-medium` colours with fallbacks,
-and no animation. It sits in LuCI's `.ifacebox` card, the box the Port
-status and Network sections of Status → Overview use.
+and no animation. Its card is LuCI's `.ifacebox`, the box the Port status
+and Network sections of Status → Overview use.
 
 The query-logging line: when this app's `query_logging` is on, it says that
 dnsmasq logs every query, also while the page is closed, with a "Turn off

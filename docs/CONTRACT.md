@@ -669,6 +669,10 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
     query-log lines but matched neither `BODY` nor `LOST`.
   - `since_open`: queries and decisions since the page was opened, not
     limited to the kept rows (router clients excluded when `hide_router`).
+  - `top_blocked` (only with `{top: N}`, N ≤ 10): `[{domain, count}]`, the
+    blocked rows counted per domain over the same rows, most blocked first;
+    a tie goes to the domain blocked most recently. Counted in the same
+    pass, so it follows eviction and costs no request.
 
 ### 8.3 Line grammar and classification
 
@@ -821,11 +825,15 @@ earlier data); `loading`. Every state except `healthy` is one notice
 Page layout, top to bottom: title and one line (what the page does; for
 administrators only, D6); the state notice; short notes only while they
 apply (DNS mode §8.3, log stalled, log unreadable, retrying, paused when
-idle); the statistics: one full-width LuCI card with the donut (below,
-"blocked" under it) and four figures as text in two columns, Blocked /
-Allowed and Queries (answered) / Window ("last 8 s"), which wrap under the
-donut on a narrow screen; without a percentage (no answered query yet, or
-the DNS modes of §8.3) one sentence says why. Then the missed and paused
+idle); the statistics: one full-width LuCI card with the donut
+("blocked" under it), four figures as text, each a small uppercase label
+over a large value in a `<dl>` (Blocked, Allowed, Queries answered, Window
+"8 s"), spread evenly, and "Top blocked": the 3 most blocked domains of
+the kept rows with their counts (`stats({top: 3})`, text only; "Nothing
+blocked yet" when empty; hidden in the DNS modes of §8.3). On a narrow
+screen the figures wrap into a 2×2 grid under the donut and Top blocked
+goes below; nothing scrolls sideways at 360 px. Without a percentage (no
+answered query yet, or the DNS modes of §8.3) one sentence says why. Then the missed and paused
 counts with the log buffer size (§8.1); the staged-changes bar and the job
 (§8.4); the last queries (Time, Domain, Client, Result as "Decision
 (source)", and Block/Allow for admins) in a box of at most 60 % of the

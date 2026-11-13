@@ -13,7 +13,8 @@ First public release (contract api 2), for OpenWrt 25.12 with adblock-fast
 ### Added
 
 - One page (Services → Adblock Fast Monitor): the blocked share of recent
-  DNS queries as a ring chart, and the newest 50 queries (time, domain,
+  DNS queries as a ring chart with the counts and the three most blocked
+  names, and the newest 50 queries (time, domain,
   client, decision and its source) in a scrolling list, read from the
   system log in the browser and updated every 2 seconds, with the number of
   missed log entries.

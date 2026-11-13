@@ -45,7 +45,7 @@ test('real queries from a LAN client: decisions, sources, the statistics and the
   // answers are not shown
   await expect(page.locator('#abfm-overview')).not.toContainText('192.0.2.10');
 
-  // the statistics: one LuCI card with the donut (number inside, text alternative) and the figures in two columns
+  // the statistics: one LuCI card with the donut (number inside, text alternative), four figures and the top blocked
   const stat = page.locator('[data-stat="blocked_pct"]');
   const donut = stat.getByRole('img', { name: /^\d+ % of recent queries blocked$/ });
   await expect(donut).toBeVisible();
@@ -53,17 +53,34 @@ test('real queries from a LAN client: decisions, sources, the statistics and the
   await expect(stat).toHaveClass(/ifacebox/);
   for (const [key, label] of [['blocked', 'Blocked'], ['allowed', 'Allowed'], ['queries', 'Queries']])
     await expect(stat.locator(`[data-stat="${key}"]`)).toHaveText(new RegExp(`^${label}\\s*\\d+$`));
-  await expect(stat.locator('[data-stat="window"]')).toHaveText(/^Window\s*last \d+ (s|min)$/);
+  await expect(stat.locator('[data-stat="window"]')).toHaveText(/^Window\s*\d+ (s|min)$/);
+  // each value is the definition of its label
+  await expect(stat.getByRole('definition').first()).toBeVisible();
+  const top = page.locator('#abfm-top-blocked');
+  await expect(top.getByRole('list', { name: 'Top blocked' }).locator('li[data-domain="ads.example.test"]')).toBeVisible();
   // no sentence while a percentage is shown
   await expect(stat.locator('[data-stat="text"]')).toBeHidden();
-  // a wide screen puts the figures beside the donut ...
-  const [wd, wf] = await Promise.all([donut.boundingBox(), stat.locator('[data-stat="blocked"]').boundingBox()]);
-  expect(wf.x).toBeGreaterThan(wd.x + wd.width);
-  expect(wf.y).toBeLessThan(wd.y + wd.height);
-  // ... a narrow screen stacks them under it, and nothing scrolls sideways
+  // 1280 px: donut, the four figures on one line spread evenly, then Top blocked, all in one row
+  const box = (sel) => stat.locator(sel).boundingBox();
+  const boxes = async () => Object.fromEntries(await Promise.all(['blocked', 'allowed', 'queries', 'window']
+    .map(async (k) => [k, await box(`[data-stat="${k}"]`)])));
+  let [d, f, t] = [await donut.boundingBox(), await boxes(), await top.boundingBox()];
+  for (const k of ['allowed', 'queries', 'window']) expect(Math.abs(f[k].y - f.blocked.y)).toBeLessThanOrEqual(1);
+  expect(f.blocked.x).toBeGreaterThan(d.x + d.width);
+  const gaps = [f.allowed.x - f.blocked.x, f.queries.x - f.allowed.x, f.window.x - f.queries.x];
+  expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(2);
+  expect(t.x).toBeGreaterThan(f.window.x + f.window.width - 1);
+  expect(t.y).toBeLessThan(d.y + d.height);
+  // 360 px: a 2×2 grid under the donut, Top blocked below it, and nothing scrolls sideways
   await page.setViewportSize({ width: 360, height: 800 });
-  const [d, f] = await Promise.all([donut.boundingBox(), stat.locator('[data-stat="queries"]').boundingBox()]);
-  expect(f.y).toBeGreaterThan(d.y + d.height - 1);
+  [d, f, t] = [await donut.boundingBox(), await boxes(), await top.boundingBox()];
+  expect(f.blocked.y).toBeGreaterThan(d.y + d.height - 1);
+  expect(Math.abs(f.allowed.y - f.blocked.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(f.window.y - f.queries.y)).toBeLessThanOrEqual(1);
+  expect(f.queries.y).toBeGreaterThan(f.blocked.y + f.blocked.height - 1);
+  expect(Math.abs(f.queries.x - f.blocked.x)).toBeLessThanOrEqual(1);
+  expect(t.y).toBeGreaterThan(f.queries.y + f.queries.height - 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await stat.evaluate((n) => n.scrollWidth <= n.clientWidth + 1)).toBe(true);
   await page.setViewportSize({ width: 1280, height: 720 });
 
@@ -112,8 +129,10 @@ test('the blocked share is computed over the answered queries the list keeps', a
   await expect.poll(() => reads.length, { timeout: 30_000 }).toBeGreaterThan(1);
   const stat = page.locator('[data-stat="blocked_pct"]');
   const donut = (pct) => stat.getByRole('img', { name: `${pct} % of recent queries blocked` });
+  const fig = (key) => stat.locator(`[data-stat="${key}"] dd`);
+  const topList = page.getByRole('list', { name: 'Top blocked' });
+  await expect(page.locator('#abfm-top-blocked')).toContainText('Nothing blocked yet');
   await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
-  const fig = (key) => stat.locator(`[data-stat="${key}"] strong`);
   await expect(fig('blocked')).toHaveText('1');
   await expect(fig('queries')).toHaveText('1');
   await expect(donut(100)).toBeVisible();
@@ -122,11 +141,17 @@ test('the blocked share is computed over the answered queries the list keeps', a
   await expect(fig('blocked')).toHaveText('3');
   await expect(fig('allowed')).toHaveText('1');
   await expect(fig('queries')).toHaveText('4');
-  await expect(fig('window')).toHaveText(/^last \d+ (s|min)$/);
+  await expect(fig('window')).toHaveText(/^\d+ (s|min)$/);
   await expect(donut(75)).toBeVisible();
   await expect(donut(75).locator('text')).toHaveText('75 %');
   // the arc is three quarters of the ring
   await expect(donut(75).locator('circle[stroke-dasharray]')).toHaveAttribute('stroke-dasharray', '75 25');
+  // Top blocked: a tie goes to the most recent; a second block of a name puts it first
+  const topRows = () => topList.locator('li[data-domain]').evaluateAll((lis) => lis.map((li) => li.textContent));
+  await expect.poll(topRows).toEqual(['metrics.example.test1', 'telemetry.example.test1', 'ads.example.test1']);
+  await expect(page.locator('#abfm-top-blocked')).not.toContainText('Nothing blocked yet');
+  await dnsQuery('telemetry.example.test');
+  await expect.poll(topRows).toEqual(['telemetry.example.test2', 'metrics.example.test1', 'ads.example.test1']);
 });
 
 test('T27: hostile log data never becomes HTML', async ({ page }) => {
@@ -418,7 +443,7 @@ test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms o
       { timeout: 60_000 }).toBeGreaterThan(0);
     await page.evaluate(() => {
       window.abfmRows = [...document.querySelectorAll('#abfm-queries tr[data-domain]')];
-      window.abfmStats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats [data-stat] strong')];
+      window.abfmStats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats dd, #abfm-top-blocked li')];
     });
     const filled = (await polls()).length;
     await expect.poll(async () => (await polls()).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(filled + 20);
@@ -450,9 +475,9 @@ test(`P4 guard: abfm-poll p95 <= ${P4_P95_MS} ms and median <= ${P4_P50_MS} ms o
     expect(loaded.filter((x) => x.changed === 50).length).toBeGreaterThanOrEqual(0.8 * loaded.length);
     expect(await page.evaluate(() => {
       const now = [...document.querySelectorAll('#abfm-queries tr[data-domain]')];
-      const stats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats [data-stat] strong')];
+      const stats = [...document.querySelectorAll('#abfm-stats svg text, #abfm-stats dd, #abfm-top-blocked li')];
       return now.length === 50 && now.every((tr, i) => tr === window.abfmRows[i]) &&
-        stats.length === 5 && stats.every((n, i) => n === window.abfmStats[i]);
+        stats.length === 8 && stats.every((n, i) => n === window.abfmStats[i]);
     })).toBe(true);
     expect(pct(d, 0.95)).toBeLessThanOrEqual(P4_P95_MS);
     expect(pct(d, 0.5)).toBeLessThanOrEqual(P4_P50_MS);

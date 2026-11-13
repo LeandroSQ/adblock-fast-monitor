@@ -197,7 +197,8 @@ test('ipset/nftset mode: the page explains why everything is allowed and hides %
     await expect(stat).toContainText('Not shown: adblock-fast blocks in the firewall in this DNS mode.');
     const donut = stat.getByRole('img', { name: 'Not shown: adblock-fast blocks in the firewall in this DNS mode.' });
     await expect(donut.locator('text')).toHaveText('—');
-    await expect(stat.locator('[data-stat="blocked"] strong')).toHaveText('—');
+    await expect(stat.locator('[data-stat="blocked"] dd')).toHaveText('—');
+    await expect(page.locator('#abfm-top-blocked')).toBeHidden();
   } finally {
     guest('uci set adblock-fast.config.dns=dnsmasq.servers; uci commit adblock-fast');
   }

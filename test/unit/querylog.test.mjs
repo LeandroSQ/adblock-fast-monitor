@@ -362,6 +362,30 @@ test('row cap: at most max_rows (≤500) entries, oldest dropped first', () => {
   assert.equal(p.pending.size, 500);
 });
 
+test('stats top: blocked domains by count among the kept rows, ties to the most recent, bounded', () => {
+  const C = '192.0.2.10';
+  let n = 0;
+  const q = (name, blocked, client = C) => {
+    n++;
+    return [`dnsmasq[1]: ${n} ${client}/1 query[A] ${name} from ${client}`,
+      blocked ? `dnsmasq[1]: ${n} ${client}/1 config ${name} is NXDOMAIN` : `dnsmasq[1]: ${n} ${client}/1 reply ${name} is 192.0.2.1`];
+  };
+  const st = ql.create({ max_rows: 6 });
+  // oldest first: a twice, b once, c once (newer than b), an allowed name and a router query
+  ql.ingest(st, reply([...q('a.example.test', true), ...q('b.example.test', true), ...q('a.example.test', true),
+    ...q('ok.example.test', false), ...q('c.example.test', true), ...q('r.example.test', true, '127.0.0.1')], { id: 1 }));
+  assert.equal(ql.stats(st).top_blocked, undefined, 'only when asked');
+  assert.deepEqual(ql.stats(st, { top: 3, show_router: false }).top_blocked,
+    [{ domain: 'a.example.test', count: 2 }, { domain: 'c.example.test', count: 1 }, { domain: 'b.example.test', count: 1 }]);
+  assert.deepEqual(ql.stats(st, { top: 1, show_router: false }).top_blocked, [{ domain: 'a.example.test', count: 2 }]);
+  assert.deepEqual(ql.stats(st, { top: 1000 }).top_blocked.length, 3, 'capped by the distinct names, at most 10');
+  // eviction: four newer rows push out the oldest four (a, b, a, ok); counts follow the kept rows
+  ql.ingest(st, reply([...q('d.example.test', true), ...q('d.example.test', true), ...q('e.example.test', false), ...q('f.example.test', false)], { id: 13 }));
+  assert.deepEqual(ql.stats(st, { top: 3 }).top_blocked,
+    [{ domain: 'd.example.test', count: 2 }, { domain: 'c.example.test', count: 1 }]);
+  assert.deepEqual(ql.stats(ql.create(), { top: 3 }).top_blocked, []);
+});
+
 test('rows are copies: mutating them does not change the state', () => {
   const { row, st } = decide('reply ads.example.test is 192.0.2.1');
   row.answers.push('x');

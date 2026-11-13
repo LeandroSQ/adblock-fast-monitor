@@ -510,7 +510,7 @@ function summary(stats, dnsMode) {
 	const blocked = int(s.blocked, 0), allowed = int(s.allowed, 0);
 	const answered = blocked + allowed;
 	const figures = { blocked: formatCount(blocked), allowed: formatCount(allowed), queries: formatCount(answered),
-		window: answered ? fmt(_('last %s'), formatDuration(s.span_s)) : '—' };
+		window: answered ? formatDuration(s.span_s) : '—' };
 	if (dnsMode)
 		return Object.assign({ pct: null, value: null, text: dnsMode == 'firewall'
 			? _('Not shown: adblock-fast blocks in the firewall in this DNS mode.')

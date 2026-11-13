@@ -44,6 +44,10 @@ const MAX_ROWS = 500;
 const PAGE_SIZE = 50;
 /* The list scrolls inside its box, under a header that stays in view. */
 const LIST_STYLE = 'max-height:60vh;overflow-y:auto';
+/* The statistics panel: one spacing step everywhere, small grey uppercase labels (theme colour with fallback). */
+const PANEL_GAP = '1em';
+const LABEL_STYLE = 'font-size:.75em;text-transform:uppercase;letter-spacing:.05em;color:var(--text-color-medium, #666)';
+const TOP_BLOCKED = 3;
 const HEAD_STYLE = 'position:sticky;top:0;z-index:1;background:var(--background-color-high, #fff)';
 /* about 33 min of 2 s polls; then the old `abfm-poll` measures are dropped */
 const MAX_MEASURES = 1000;
@@ -560,35 +564,57 @@ return view.extend({
 	},
 
 	/*
-	 * One full-width panel (LuCI's .ifacebox card): the donut with "blocked"
-	 * under it, and the figures in two columns (Blocked / Allowed, Queries /
-	 * Window) as text. On a narrow screen the figures wrap under the donut.
-	 * Built once; a poll rewrites only the texts that changed (P4).
+	 * One full-width panel (LuCI's .ifacebox card): the donut, four figures
+	 * (Blocked, Allowed, Queries, Window: a small label over a large value,
+	 * each a <dl>) and the three most blocked domains (querylog stats top,
+	 * counted over the kept rows in the same pass). Wide: one row. Narrow:
+	 * the figures wrap in pairs into a 2×2 grid under the donut and the top
+	 * list goes below, with no media query. Built once; a poll rewrites
+	 * only the texts that changed (P4).
 	 */
 	updateStats() {
-		const s = querylog.stats(this.log, { show_router: false });
+		const s = querylog.stats(this.log, { show_router: false, top: TOP_BLOCKED });
 		this.keptRows = s.kept || 0;
-		const sum = model.summary(s, model.dnsModeNote(this.infoResult));
+		const dnsMode = model.dnsModeNote(this.infoResult);
+		const sum = model.summary(s, dnsMode);
 		let v = this.statView;
 		if (!v) {
-			v = this.statView = { donut: chart.donut(80), text: textNode(), line: undefined, figures: {}, vals: {} };
+			v = this.statView = { donut: chart.donut(80), text: textNode(), line: undefined, figures: {}, vals: {}, top: [], topKey: null };
 			v.note = E('p', { 'data-stat': 'text', 'style': 'flex-basis:100%;margin:0;display:none' }, [ v.text ]);
 			const figure = (key, label) => {
 				v.figures[key] = textNode();
-				return E('div', { 'data-stat': key }, [ E('span', { 'style': 'display:inline-block;min-width:5em' }, T(label)),
-					E('strong', {}, [ v.figures[key] ]) ]);
+				return E('dl', { 'data-stat': key, 'style': 'flex:1 1 0;margin:0;min-width:0' }, [
+					E('dt', { 'style': LABEL_STYLE }, T(label)),
+					E('dd', { 'style': 'margin:0;font-size:1.6em;font-weight:bold;line-height:1.3;white-space:nowrap' }, [ v.figures[key] ])
+				]);
 			};
-			v.missed = E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]);
-			v.paused = E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ]);
+			const pair = (a, b) => E('div', { 'style': 'display:flex;flex:1 1 11em;gap:' + PANEL_GAP }, [ a, b ]);
+			for (let i = 0; i < TOP_BLOCKED; i++) {
+				const name = textNode(), count = textNode();
+				const li = E('li', { 'style': 'display:none;justify-content:space-between;gap:1em' }, [
+					E('span', { 'style': 'overflow-wrap:anywhere' }, [ name ]),
+					E('strong', {}, [ count ])
+				]);
+				v.top.push({ li: li, name: name, count: count });
+			}
+			v.topEmpty = E('p', { 'style': 'margin:0' }, T(_('Nothing blocked yet')));
+			v.topNode = E('div', { 'id': 'abfm-top-blocked', 'style': 'flex:1 1 14em;min-width:0' }, [
+				E('div', { 'id': 'abfm-top-label', 'style': LABEL_STYLE }, T(_('Top blocked'))),
+				E('ol', { 'aria-labelledby': 'abfm-top-label', 'style': 'list-style:none;margin:0;padding:0' }, v.top.map(t => t.li)),
+				v.topEmpty
+			]);
+			v.missed = E('div', { 'class': 'alert-message warning', 'style': 'display:none;margin:' + PANEL_GAP + ' 0 0' }, [ textNode() ]);
+			v.paused = E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none;margin:' + PANEL_GAP + ' 0 0' }, [ textNode() ]);
 			this.missedNode = E('div', { 'id': 'abfm-missed', 'data-missed': '0', 'data-paused': '0' }, [ v.missed, v.paused ]);
 			dom.content(this.statsNode, [
 				E('div', { 'class': 'ifacebox', 'data-stat': 'blocked_pct',
-					'style': 'display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:.5em 2em;margin:0;padding:.5em 1em;text-align:left;white-space:normal;box-sizing:border-box;width:100%' }, [
-					E('div', { 'style': 'text-align:center' }, [ v.donut.node, E('div', {}, T(_('blocked'))) ]),
-					E('div', { 'style': 'display:grid;grid-template-columns:repeat(2, minmax(9em, max-content));gap:.5em 2em' }, [
-						figure('blocked', _('Blocked')), figure('allowed', _('Allowed')),
-						figure('queries', _('Queries')), figure('window', _('Window'))
+					'style': 'display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:' + PANEL_GAP + ';margin:0;padding:' + PANEL_GAP + ';text-align:left;white-space:normal;box-sizing:border-box;width:100%' }, [
+					E('div', { 'style': 'flex:none;text-align:center' }, [ v.donut.node, E('div', { 'style': LABEL_STYLE }, T(_('blocked'))) ]),
+					E('div', { 'style': 'display:flex;flex-wrap:wrap;flex:3 1 22em;gap:' + PANEL_GAP }, [
+						pair(figure('blocked', _('Blocked')), figure('allowed', _('Allowed'))),
+						pair(figure('queries', _('Queries')), figure('window', _('Window')))
 					]),
+					v.topNode,
 					v.note
 				]),
 				this.missedNode
@@ -603,6 +629,27 @@ return view.extend({
 		if (v.line !== note) {
 			v.text.data = v.line = note;
 			show(v.note, !!note);
+		}
+		/* blocks are not visible in the log in the other DNS modes (§8.3) */
+		const top = dnsMode ? [] : (s.top_blocked || []);
+		const topKey = (dnsMode ? 'x' : '') + top.map(t => t.domain + '\n' + t.count).join('\n');
+		if (topKey !== v.topKey) {
+			v.topKey = topKey;
+			show(v.topNode, !dnsMode);
+			v.top.forEach((slot, i) => {
+				const t = top[i];
+				const name = t ? String(t.domain) : '', count = t ? model.formatCount(t.count) : '';
+				if (slot.name.data !== name)
+					slot.name.data = name;
+				if (slot.count.data !== count)
+					slot.count.data = count;
+				slot.li.style.display = t ? 'flex' : 'none';
+				if (t)
+					slot.li.setAttribute('data-domain', name);
+				else
+					slot.li.removeAttribute('data-domain');
+			});
+			show(v.topEmpty, !top.length);
 		}
 
 		const missed = s.missed_total || 0;

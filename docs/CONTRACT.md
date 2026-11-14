@@ -49,6 +49,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | `/www/luci-static/resources/adblock-fast-monitor/querylog.js` | 0644 | pure log cursor, parser, correlator and classifier (§8.1–8.3) |
 | `/www/luci-static/resources/adblock-fast-monitor/model.js` | 0644 | pure UI logic: staging reducer (§8.4), state derivation (§8.5) |
 | `/www/luci-static/resources/adblock-fast-monitor/chart.js` | 0644 | the blocked-share donut (inline SVG) of the page and the Status section (§8.5, §8.6) |
+| `/www/luci-static/resources/adblock-fast-monitor/designs.js` | 0644 | candidate visual directions (`?design=quiet\|cards\|compact`) while one is chosen; without the parameter the page keeps its current look (§8.5) |
 
 Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 

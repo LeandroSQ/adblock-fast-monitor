@@ -8,6 +8,7 @@
 'require adblock-fast-monitor.model as model';
 'require adblock-fast-monitor.querylog as querylog';
 'require adblock-fast-monitor.chart as chart';
+'require adblock-fast-monitor.designs as designs';
 
 /*
  * SPDX-License-Identifier: Apache-2.0
@@ -219,7 +220,9 @@ return view.extend({
 		this.visibility = 0;
 		this.ticks = { log: L.bind(this.pollLog, this), info: L.bind(this.pollInfo, this), job: L.bind(this.pollJob, this) };
 
-		const node = E('div', { 'class': 'cbi-map', 'id': 'abfm-overview' }, [
+		/* candidate visual direction while one is chosen (`?design=`), else the current look */
+		this.design = designs.pick(window.location.search);
+		const node = E('div', { 'class': 'cbi-map', 'id': 'abfm-overview', 'data-design': this.design || '' }, [
 			E('h2', {}, T(_('Adblock Fast Monitor'))),
 			E('div', { 'class': 'cbi-map-descr' }, [
 				E('span', {}, T(_('Recent DNS queries and whether adblock-fast blocked them. Block or allow a domain, then click "Apply and save".'))), ' ',
@@ -227,6 +230,8 @@ return view.extend({
 			])
 		]);
 
+		if (this.design)
+			node.appendChild(designs.style(this.design));
 		this.stateNode = E('div', { 'id': 'abfm-state', 'role': 'status', 'aria-live': 'polite' });
 		this.notesNode = E('div', { 'id': 'abfm-notes' });
 		node.appendChild(this.stateNode);
@@ -507,7 +512,9 @@ return view.extend({
 		/* one line about the switch that makes dnsmasq log every query, and its risks */
 		const line = [];
 		if (flags.source == 'ours') {
-			line.push(E('span', {}, T(_('Query logging is on: dnsmasq writes every DNS query to the system log, also while this page is closed.'))));
+			line.push(E('span', {}, T(this.design
+				? _('Query logging is on, also while this page is closed.')
+				: _('Query logging is on: dnsmasq writes every DNS query to the system log, also while this page is closed.'))));
 			if (this.canWrite)
 				line.push(' ', E('button', { 'class': 'cbi-button cbi-button-neutral', 'id': 'abfm-logging-off',
 					'click': ui.createHandlerFn(this, 'handleLoggingOff') }, T(_('Turn off query logging'))));
@@ -577,6 +584,8 @@ return view.extend({
 		this.keptRows = s.kept || 0;
 		const dnsMode = model.dnsModeNote(this.infoResult);
 		const sum = model.summary(s, dnsMode);
+		if (this.design)
+			return this.updateDesignStats(s, sum, dnsMode);
 		let v = this.statView;
 		if (!v) {
 			v = this.statView = { donut: chart.donut(80), text: textNode(), line: undefined, figures: {}, vals: {}, top: [], topKey: null };
@@ -664,6 +673,29 @@ return view.extend({
 		this.setNote(v.paused, paused ? _('%d log entries were overwritten while updates were paused (page hidden or not in use); they are not shown.').format(paused) : '');
 	},
 
+	/* The statistics of a candidate direction (designs.js), then the missed and paused notes. */
+	updateDesignStats(s, sum, dnsMode) {
+		let v = this.statView;
+		if (!v) {
+			v = this.statView = { block: designs.stats(this.design) };
+			v.missed = E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]);
+			v.paused = E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ]);
+			this.missedNode = E('div', { 'id': 'abfm-missed', 'data-missed': '0', 'data-paused': '0' }, [ v.missed, v.paused ]);
+			dom.content(this.statsNode, [ v.block.node, this.missedNode ]);
+		}
+		v.block.update(sum, dnsMode ? [] : (s.top_blocked || []));
+		const missed = s.missed_total || 0;
+		const paused = s.paused_total || 0;
+		const key = missed + ':' + paused;
+		if (key == this.missedKey)
+			return;
+		this.missedKey = key;
+		this.missedNode.setAttribute('data-missed', String(missed));
+		this.missedNode.setAttribute('data-paused', String(paused));
+		this.setNote(v.missed, missed ? this.missedText(missed) : '');
+		this.setNote(v.paused, paused ? _('%d log entries were overwritten while updates were paused (page hidden or not in use); they are not shown.').format(paused) : '');
+	},
+
 	/* A note is shown while it has text; unchanged text or visibility is not written again. */
 	setNote(node, text) {
 		if (node.firstChild.data !== text)
@@ -722,11 +754,21 @@ return view.extend({
 			tds[0].firstChild.appendChild(textNode());
 			for (let i = 1; i < 4; i++)
 				tds[i].appendChild(textNode());
+			/* candidate directions: a coloured dot, the decision, the source muted */
+			if (this.design) {
+				tds[3].insertBefore(E('span', { 'class': 'abfm-dot', 'aria-hidden': 'true' }), tds[3].firstChild);
+				tds[3].appendChild(E('span', { 'class': 'abfm-src' }, [ textNode() ]));
+			}
 		}
 		const tr = this.rowTemplate.cloneNode(true);
 		const tds = tr.children;
+		const text = [ tds[0].firstChild.firstChild, tds[1].firstChild, tds[2].firstChild ];
+		if (this.design)
+			text.push(tds[3].childNodes[1], tds[3].lastChild.firstChild);
+		else
+			text.push(tds[3].firstChild);
 		return { tr: tr, key: null, domain: null, valid: null, decision: null, vals: [],
-			text: [ tds[0].firstChild.firstChild, tds[1].firstChild, tds[2].firstChild, tds[3].firstChild ],
+			text: text,
 			act: null, aria: null, ariaButton: null, actCell: this.canWrite ? tds[4] : null, buttons: {}, staged: null, inflight: null };
 	},
 
@@ -761,7 +803,12 @@ return view.extend({
 			this.timeKey = r.time;
 			this.timeText = model.formatClock(r.time);
 		}
-		const vals = [ this.timeText, String(r.domain), (r.client == null) ? '' : String(r.client), this.resultLabel(r.decision, r.source) ];
+		const vals = [ this.timeText, String(r.domain), (r.client == null) ? '' : String(r.client) ];
+		if (this.design)
+			vals.push(Object.prototype.hasOwnProperty.call(DECISION_LABEL, r.decision) ? DECISION_LABEL[r.decision] : String(r.decision),
+				r.source ? (SOURCE_LABEL[r.source] || String(r.source)) : '');
+		else
+			vals.push(this.resultLabel(r.decision, r.source));
 		for (let i = 0; i < vals.length; i++) {
 			if (slot.vals[i] !== vals[i]) {
 				slot.vals[i] = vals[i];
@@ -812,7 +859,7 @@ return view.extend({
 			else if (state.indexOf('op:') == 0) {
 				const op = state.substring(3);
 				if (!slot.buttons[op])
-					slot.buttons[op] = E('button', { 'class': OP_BUTTON_CLASS[op], 'data-op': op,
+					slot.buttons[op] = E('button', { 'class': this.design ? 'cbi-button cbi-button-neutral abfm-act' : OP_BUTTON_CLASS[op], 'data-op': op,
 						'click': () => this.stageOp(op, slot.domain) }, T(OP_LABEL[op]));
 				nodes = [ slot.buttons[op] ];
 			}

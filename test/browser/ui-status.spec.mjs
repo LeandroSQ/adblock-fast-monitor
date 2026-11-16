@@ -29,19 +29,18 @@ test('T23: the section shows the blocked share of the recent queries and links t
   const calls = trackAppCalls(page);
   await login(page, admin, STATUS);
   await expect(section(page)).toHaveAttribute('data-state', 'healthy', { timeout: 60_000 });
-  // a LuCI card (.ifacebox) with the donut, its number inside and a text alternative
-  const card = section(page).locator('.ifacebox');
-  await expect(card.locator('.ifacebox-head')).toHaveText('Blocked queries');
+  // the page's "Blocked share" card: the same ring (number inside, text alternative) and wording
+  const card = section(page).getByRole('region', { name: 'Blocked share' });
   const donut = card.getByRole('img', { name: '75 % of recent queries blocked' });
   await expect(donut).toBeVisible({ timeout: 30_000 });
   await expect(donut.locator('text')).toHaveText('75 %');
-  await expect(section(page).locator('[data-stat="text"]')).toHaveText(/^3 of 4 queries blocked in the last \d+ (s|min)$/);
+  await expect(section(page).locator('[data-stat="text"]')).toHaveText(/^3 of 4 queries in the last \d+ (s|min)$/);
   await expect(section(page).getByRole('link', { name: 'Open Adblock Fast Monitor' })).toHaveAttribute('href', new RegExp(`${OVERVIEW}$`));
   // the section's own reads: 900 first, then bounded incremental reads on LuCI's status poll
   await expect.poll(() => calls.filter((c) => c.call === 'log.read').length, { timeout: 30_000 }).toBeGreaterThan(2);
   // new queries show up without a reload
   await dnsQuery('ads.example.test');
-  await expect(section(page).locator('[data-stat="text"]')).toHaveText(/^4 of 5 queries blocked/, { timeout: 30_000 });
+  await expect(section(page).locator('[data-stat="text"]')).toHaveText(/^4 of 5 queries in the last/, { timeout: 30_000 });
   // the info grant is used at most every 30 s
   const infos = calls.filter((c) => c.call === 'luci.adblock-fast-monitor.info');
   expect(infos.length).toBeGreaterThanOrEqual(1);

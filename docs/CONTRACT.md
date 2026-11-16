@@ -49,7 +49,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | `/www/luci-static/resources/adblock-fast-monitor/querylog.js` | 0644 | pure log cursor, parser, correlator and classifier (§8.1–8.3) |
 | `/www/luci-static/resources/adblock-fast-monitor/model.js` | 0644 | pure UI logic: staging reducer (§8.4), state derivation (§8.5) |
 | `/www/luci-static/resources/adblock-fast-monitor/chart.js` | 0644 | the blocked-share donut (inline SVG) of the page and the Status section (§8.5, §8.6) |
-| `/www/luci-static/resources/adblock-fast-monitor/designs.js` | 0644 | candidate visual directions (`?design=quiet\|cards\|compact`) while one is chosen; without the parameter the page keeps its current look (§8.5) |
+| `/www/luci-static/resources/adblock-fast-monitor/cards.js` | 0644 | the page's look: statistics tiles, the scoped stylesheet (theme variables, light and dark, narrow screens) and the Status card (§8.5, §8.6) |
 
 Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 
@@ -826,21 +826,29 @@ earlier data); `loading`. Every state except `healthy` is one notice
 Page layout, top to bottom: title and one line (what the page does; for
 administrators only, D6); the state notice; short notes only while they
 apply (DNS mode §8.3, log stalled, log unreadable, retrying, paused when
-idle); the statistics: one full-width LuCI card with the donut
-("blocked" under it), four figures as text, each a small uppercase label
-over a large value in a `<dl>` (Blocked, Allowed, Queries answered, Window
-"8 s"), spread evenly, and "Top blocked": the 3 most blocked domains of
-the kept rows with their counts (`stats({top: 3})`, text only; "Nothing
-blocked yet" when empty; hidden in the DNS modes of §8.3). On a narrow
-screen the figures wrap into a 2×2 grid under the donut and Top blocked
-goes below; nothing scrolls sideways at 360 px. Without a percentage (no
-answered query yet, or the DNS modes of §8.3) one sentence says why. Then the missed and paused
+idle); the statistics as three tiles side by side (stacked on a narrow
+screen): "Blocked share" (the donut and "4 of 12 queries in the last 8 s",
+or why there is no percentage), "Recent queries" (Blocked, Allowed,
+Answered, Time span as a `<dl>`) and "Most blocked" (the 3 most blocked
+domains of the kept rows with their counts and bars scaled to the first,
+`stats({top: 3})`, text only; "Nothing blocked yet" when empty; hidden in
+the DNS modes of §8.3). Then the missed and paused
 counts with the log buffer size (§8.1); the staged-changes bar and the job
-(§8.4); the last queries (Time, Domain, Client, Result as "Decision
-(source)", and Block/Allow for admins) in a box of at most 60 % of the
+(§8.4); the last queries (Time, Domain, Client, Result as a coloured dot,
+the decision and the source muted, and one neutral Block/Allow button for
+admins; blocked rows lightly tinted) in a box of at most 60 % of the
 window height that scrolls on its own (focusable, named region "Last
 queries", so the keyboard scrolls it too) under a header row that stays in
-view; one line about query logging.
+view; on a narrow screen (≤ 600 px) each query is two lines without
+column labels: dot, domain and the action (at least 36 px high), then
+time · client · decision and source, muted; nothing scrolls sideways at
+360 px. Last, one line about query logging.
+
+Look: the stylesheet (`cards.js`) is a constant set through
+`textContent`, scoped to `#abfm-overview` (or `#abfm-status`), and uses the
+theme's CSS variables (`--error-color-high`, `--success-color-high`,
+`--border-color-medium`, `--background-color-high`, …) with fallbacks, so
+luci-theme-bootstrap's light and dark modes both apply.
 
 The donut (`chart.js`) is an inline SVG built with
 `document.createElementNS`, as LuCI's realtime graphs do (LuCI has no chart
@@ -848,8 +856,7 @@ widget): a ring whose arc is the blocked percentage, the value ("33 %")
 inside, `role="img"` with the accessible name "33 % of recent queries
 blocked" (or the reason no percentage is shown), the theme's
 `--primary-color-high` and `--border-color-medium` colours with fallbacks,
-and no animation. Its card is LuCI's `.ifacebox`, the box the Port status
-and Network sections of Status → Overview use.
+and no animation.
 
 The query-logging line: when this app's `query_logging` is on, it says that
 dnsmasq logs every query, also while the page is closed, with a "Turn off
@@ -872,9 +879,9 @@ All dynamic text goes through `E()` array children or text nodes. Views
 ### 8.6 Status → Overview section
 
 `view/status/include/75_adblock-fast-monitor.js` adds a section "Adblock
-Fast Monitor" to LuCI's Status → Overview: one `.ifacebox` card, "Blocked
-queries", with the same donut and sentence as the page (`abfm.model.summary`)
-over the queries it read itself, and a link to the page. LuCI's status page calls each section's
+Fast Monitor" to LuCI's Status → Overview: the page's "Blocked share" tile
+(`cards.js`: the same donut and wording, `abfm.model.summary`) over the
+queries it read itself, and a link to the page. LuCI's status page calls each section's
 `load()` on its own poll (`env.pollinterval`, 5 s), also in a hidden tab.
 The section therefore:
 

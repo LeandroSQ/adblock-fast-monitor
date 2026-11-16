@@ -12,16 +12,17 @@ First public release (contract api 2), for OpenWrt 25.12 with adblock-fast
 
 ### Added
 
-- One page (Services → Adblock Fast Monitor): the blocked share of recent
-  DNS queries as a ring chart with the counts and the three most blocked
-  names, and the newest 50 queries (time, domain,
-  client, decision and its source) in a scrolling list, read from the
-  system log in the browser and updated every 2 seconds, with the number of
-  missed log entries.
+- One page (Services → Adblock Fast Monitor): three cards (the blocked
+  share of recent DNS queries as a ring chart, the counts, the three most
+  blocked names) and the newest 50 queries (time, domain, client, a
+  coloured decision dot and its source) in a scrolling list, two lines per
+  query on a phone, read from the system log in the browser and updated
+  every 2 seconds, with the number of missed log entries. Follows LuCI's
+  light and dark modes.
 - Block and Allow on each row, staged in the browser and applied together
   with **Apply and save**: written to adblock-fast's own Allowed/Blocked
   Domains lists, then one rebuild, checked with real DNS lookups.
-- A Status → Overview card with the same blocked share.
+- A Status → Overview card with the same blocked share card.
 - Turn query logging on or off from the page, through a runtime dnsmasq
   drop-in, without editing `/etc/config/dhcp`.
 - Signed apk feed on GitHub Pages for installation from LuCI.

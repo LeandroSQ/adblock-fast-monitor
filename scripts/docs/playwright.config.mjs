@@ -6,8 +6,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: '.',
-  // ABFM_OPTIONS=1: the candidate visual directions (options.spec.mjs) instead
-  testMatch: process.env.ABFM_OPTIONS === '1' ? 'options.spec.mjs' : 'screenshots.spec.mjs',
+  testMatch: 'screenshots.spec.mjs',
   globalSetup: '../../test/browser/global-setup.mjs',
   workers: 1,
   timeout: 600_000,

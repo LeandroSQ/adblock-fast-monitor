@@ -13,15 +13,18 @@ blocked, and lets you allow or block a name with one click.
 
 ## What you get
 
-- **Blocked %** of the recent queries as a small ring chart, with the
-  blocked, allowed and total counts and the most blocked names, also as a
-  card on **Status → Overview**:
+- **Blocked share** of the recent queries as a ring chart, with the
+  blocked, allowed and answered counts and the most blocked names, in three
+  cards; the share card also appears on **Status → Overview**:
 
   ![The Adblock Fast Monitor card on Status → Overview](docs/images/status.png)
 
 - **Recent queries:** time, name, the client that asked, and whether
-  adblock-fast blocked or allowed each one. The list updates by itself and
-  scrolls in its own box.
+  adblock-fast blocked or allowed each one, with a coloured dot. The list
+  updates by itself and scrolls in its own box; on a phone each query is
+  two short lines. LuCI's dark mode is followed:
+
+  ![The page in LuCI's dark mode](docs/images/overview-dark.png)
 - **Block / Allow** on every row. Changes wait in a bar until you press
   **Apply and save**, so ten changes cost one rebuild, not ten. They go into
   adblock-fast's own **Allowed Domains** and **Blocked Domains** lists, so

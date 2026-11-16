@@ -3,15 +3,15 @@
 'require rpc';
 'require adblock-fast-monitor.model as model';
 'require adblock-fast-monitor.querylog as querylog';
-'require adblock-fast-monitor.chart as chart';
+'require adblock-fast-monitor.cards as cards';
 
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Status → Overview section (docs/CONTRACT.md §8.6): a card (LuCI's
- * .ifacebox, as the Port status and Network sections use) with the share of
- * recent DNS queries adblock-fast blocked, read from the system log in the
- * browser like the app's page. LuCI's status page calls load() for every section on each
+ * Status → Overview section (docs/CONTRACT.md §8.6): the page's "Blocked
+ * share" card (cards.js: the same ring and wording) for the recent DNS
+ * queries adblock-fast blocked, read from the system log in the browser
+ * like the app's page. LuCI's status page calls load() for every section on each
  * of its polls (every 5 s), also in a hidden tab, so load() makes no request
  * while the tab is hidden or after 15 minutes without input (P0, P2), and
  * none for an account without this app's grant (it renders nothing then).
@@ -98,19 +98,14 @@ return baseclass.extend({
 			node.appendChild(E('p', {}, [ E('span', {}, T(text)), ' ', link ]));
 			return node;
 		}
-		const s = res.summary;
-		const donut = chart.donut(96);
-		donut.update(s.pct, s.value, s.label || s.text);
-		node.appendChild(E('div', { 'class': 'ifacebox', 'data-stat': 'blocked_pct',
-			'style': 'margin:.25em 0;width:12em;white-space:normal' }, [
-			E('div', { 'class': 'ifacebox-head' }, T(_('Blocked queries'))),
-			E('div', { 'class': 'ifacebox-body' }, [
-				donut.node,
-				E('p', { 'data-stat': 'text' }, T(s.text)),
-				res.paused ? E('p', { 'id': 'abfm-status-paused' }, T(_('Paused: this page has not been used for 15 minutes.'))) : '',
-				E('p', {}, [ link ])
-			])
-		]));
+		const tile = cards.share('abfm-status-title');
+		tile.update(res.summary);
+		tile.node.style.maxWidth = '24em';
+		node.appendChild(cards.style('abfm-status', false));
+		node.appendChild(tile.node);
+		node.appendChild(E('p', { 'style': 'margin:.6em 0 0' }, res.paused
+			? [ E('span', { 'id': 'abfm-status-paused' }, T(_('Paused: this page has not been used for 15 minutes.'))), ' ', link ]
+			: [ link ]));
 		return node;
 	}
 });

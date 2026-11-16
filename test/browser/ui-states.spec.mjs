@@ -197,7 +197,7 @@ test('ipset/nftset mode: the page explains why everything is allowed and hides %
     await expect(stat).toContainText('Not shown: adblock-fast blocks in the firewall in this DNS mode.');
     const donut = stat.getByRole('img', { name: 'Not shown: adblock-fast blocks in the firewall in this DNS mode.' });
     await expect(donut.locator('text')).toHaveText('—');
-    await expect(stat.locator('[data-stat="blocked"] dd')).toHaveText('—');
+    await expect(stat.locator('dd[data-stat="blocked"]')).toHaveText('—');
     await expect(page.locator('#abfm-top-blocked')).toBeHidden();
   } finally {
     guest('uci set adblock-fast.config.dns=dnsmasq.servers; uci commit adblock-fast');
@@ -278,10 +278,18 @@ async function axe(page, include, exclude = []) {
   return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`);
 }
 
-test('accessibility: no axe violations on the page, its changes bar, its dialog and the logging-off state', async ({ page }) => {
+test('accessibility: no axe violations on the page (light, dark, 360 px), its changes bar, its dialog and the logging-off state', async ({ page }) => {
   await login(page, admin);
   await seeQuery(page, 'ads.example.test', { decision: 'blocked' });
   expect(await axe(page, '#abfm-overview')).toEqual([]);
+  // the theme's dark mode (luci-theme-bootstrap follows prefers-color-scheme) and the two-line rows of a narrow screen
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-darkmode', 'true');
+  expect(await axe(page, '#abfm-overview')).toEqual([]);
+  await page.setViewportSize({ width: 360, height: 800 });
+  expect(await axe(page, '#abfm-overview')).toEqual([]);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.emulateMedia({ colorScheme: 'light' });
   // the changes bar and the confirmation dialog
   await queryRow(page, 'ads.example.test').getByRole('button', { name: 'Allow ads.example.test' }).click();
   await stageFromRow(page, 'block', 'axe.up.example.test');

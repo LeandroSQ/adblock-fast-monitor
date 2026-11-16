@@ -11,9 +11,9 @@ the repository.
 
 | Item | Value |
 | --- | --- |
-| Source | `0da1162` (the simplified UI with the statistics panel and Top blocked) |
-| Artifact | `.local-validation/artifacts/20261113T201334Z-1/package.apk` |
-| SHA-256 | `005d295b28917dbc892c93719fbe4af1cf70c6a930ded1935c885f12f614125f` |
+| Source | `14abd2a` (the simplified UI, Cards look) |
+| Artifact | `.local-validation/artifacts/20261116T015519Z-1/package.apk` |
+| SHA-256 | `7c59e51b4158a5f7002a1cc310232490286a969d5221469f0cf63980ed31c477` |
 | Functional guest | OpenWrt 25.12.6 x86/64, stock image + adblock-fast 1.2.4-r4, QEMU TCG in Docker on an Apple-silicon Mac |
 | P0 guest (run of record) | OpenWrt 25.12.6 armsr-armv8 + adblock-fast 1.2.4-r4, QEMU with hvf acceleration on the same Mac |
 | Date | 2026-11-12 |
@@ -30,11 +30,11 @@ feature evidence.
 | Node unit (real `querylog.js`, `model.js`, perf gate) | behavioural | `npm run test:unit` | 130/130 pass; coverage lines 100 %, branches 96.7 % | n/a |
 | ucode (real modules and rpcd plugin) | behavioural | `npm run test:ucode` | 7/7 files pass | n/a |
 | BusyBox ash | behavioural | `npm run test:shell` | 1/1 file pass | n/a |
-| Guest + browser | behavioural | `npm run verify:guest -- --browser PKG.apk` | 18/18 guest files, 444 checks, 0 `not ok`; Playwright 45/45 (install spec runs separately) | `qemu/runs/20261113T202438Z-1-56` |
-| T22 LuCI install from a signed feed | behavioural | `scripts/release/verify-luci-install.sh PKG.apk` | pass (Playwright 1/1) | `qemu/runs/20261113T212245Z-1-1887` |
-| T30 upgrade api 2 → api 2 | behavioural | `scripts/release/verify-upgrade.sh PKG.apk` | 30/30 | `qemu/runs/20261113T213213Z-1-28467` |
+| Guest + browser | behavioural | `npm run verify:guest -- --browser PKG.apk` | 18/18 guest files, 444 checks, 0 `not ok`; Playwright 45/45 (install spec runs separately) | `qemu/runs/20261116T020308Z-1-1434` |
+| T22 LuCI install from a signed feed | behavioural | `scripts/release/verify-luci-install.sh PKG.apk` | pass (Playwright 1/1) | `qemu/runs/20261116T030019Z-1-2233` |
+| T30 upgrade api 2 → api 2 | behavioural | `scripts/release/verify-upgrade.sh PKG.apk` | 30/30 | `qemu/runs/20261116T030845Z-1-13610` |
 | Release signing (throwaway key) | behavioural | `scripts/release/selftest.sh WORKDIR PKG.apk` (linux/amd64 container) | 16/16 | n/a |
-| T26 P0 | behavioural | `ABFM_PERF_GUEST=armsr-hvf npm run test:performance:measure -- PKG.apk` | PASS, all budgets (below) | `perf/20261113T204728Z-41147` |
+| T26 P0 | behavioural | `ABFM_PERF_GUEST=armsr-hvf npm run test:performance:measure -- PKG.apk` | PASS, all budgets (below) | `perf/20261116T022458Z-83967` |
 
 Not run here: the GitHub workflows (Actions are disabled until go-live),
 mutation testing (`npm run test:mutation`, last run by its owner at 87.6 %
@@ -47,7 +47,7 @@ with break 85), and any real router.
 | Last queries with blocked/allowed result, parsed in the browser | T01–T04 (`test/unit/querylog*.test.mjs`), T09 (`dataplane-live.host.sh`), `ui-queries.spec.mjs` "real queries from a LAN client" | Node + guest + browser | pass |
 | Parser decisions unchanged against the frozen expected results | T05 differential oracle (`test/fixtures/logread/differential/`, one intentional difference: an in-flight query becomes `no-answer` on dnsmasq restart) | Node | pass |
 | Refresh as new logs arrive; gaps reported | T04, T29 (`ui-queries.spec.mjs` burst: missed count equals the id gap) | Node + browser | pass |
-| Statistics: one panel with the % blocked donut (text alternative), Blocked / Allowed / Queries / Window figures and the 3 most blocked domains (counting, ties, eviction), one row at 1280 px, a 2×2 grid at 360 px; a Status → Overview card | T04 `stats()`, `ui-model.test.mjs` "summary", `ui-queries.spec.mjs` "the blocked share is computed over the answered queries", T23 `ui-status.spec.mjs` | Node + browser | pass |
+| Statistics: three tiles (Blocked share with the donut and its text alternative, the counts, the 3 most blocked domains: counting, ties, eviction), side by side at 1280 px and stacked at 360 px; the same Blocked share tile on Status → Overview; two-line rows and no horizontal scroll at 360 px; axe clean in light and dark mode | `ui-queries.spec.mjs`, `ui-states.spec.mjs` accessibility, `ui-status.spec.mjs`, `test/unit/querylog.test.mjs`, T04 `stats()`, `ui-model.test.mjs` "summary", `ui-queries.spec.mjs` "the blocked share is computed over the answered queries", T23 `ui-status.spec.mjs` | Node + browser | pass |
 | Simple list: newest 50 rows, Time / Domain / Client / Result (source) / Action, auto-refresh, no router queries; scrolls in its own box with a sticky header, also by keyboard | `ui-queries.spec.mjs` "real queries from a LAN client", "the list shows the newest 50 queries", "the list scrolls in its own box" | browser | pass |
 | Block / Allow buttons → staged (Undo, Remove, Discard) → one "Apply and save" → one rebuild, DNS verified | T12–T19 (`test/ucode/actions/*`, `actions-api.sh`, `actions-jobs.sh`, `actions-session.host.sh`, `actions-reboot.host.sh`), T24 (`ui-staging.spec.mjs`: Block then Allow flips the real DNS answer; failed job returns items to the bar) | ucode + guest + browser | pass |
 | Applied domains appear in luci-app-adblock-fast's Allowed / Blocked Domains | T24 `ui-upstream-lists.spec.mjs` (luci-app-adblock-fast 1.2.4-r4 installed on the guest) | browser | pass |

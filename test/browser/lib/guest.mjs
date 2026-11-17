@@ -42,9 +42,25 @@ export function guest(command, { input, allowFail = false } = {}) {
   }
 }
 
+// What a failed wait leaves behind for the report: dnsmasq, the drop-ins,
+// this app's procd state and the tail of the system log.
+const WAIT_DIAG = [
+  'echo "--- dnsmasq service"; ubus call service list \'{"name":"dnsmasq"}\'',
+  'echo "--- adblock-fast-monitor service"; ubus call service list \'{"name":"adblock-fast-monitor","verbose":true}\'',
+  'echo "--- drop-ins"; ls -l /tmp/dnsmasq*.d/ /var/run/adblock-fast-monitor/ 2>&1',
+  'echo "--- dhcp logqueries"; uci -q get dhcp.@dnsmasq[0].logqueries',
+  'echo "--- /dev/log"; ls -li /dev/log',
+  'echo "--- logread"; logread | tail -n 60'
+].join('; ');
+
 /** Polls a guest shell condition (exit 0) once a second. */
 export function guestWait(condition, seconds = 60) {
-  guest(`i=0; until ${condition}; do i=$((i+1)); [ $i -lt ${seconds} ] || exit 1; sleep 1; done`);
+  try {
+    guest(`i=0; until ${condition}; do i=$((i+1)); [ $i -lt ${seconds} ] || exit 1; sleep 1; done`);
+  } catch (error) {
+    error.message += `\n--- guest state after the failed wait ---\n${guest(WAIT_DIAG, { allowFail: true })}`;
+    throw error;
+  }
 }
 
 /** Sends one DNS A query to the guest's dnsmasq from the host (a non-router client). */

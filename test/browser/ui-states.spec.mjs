@@ -126,6 +126,8 @@ test('log-stalled notice: logd restarted, dnsmasq silent since, recovered by a d
       'uci set dhcp.@dnsmasq[0].logqueries=1', 'uci commit dhcp', '/etc/init.d/dnsmasq restart'
     ].join('; '));
     guestWait('! grep -qs "^log-queries" /tmp/dnsmasq.*.d/* && pidof dnsmasq >/dev/null', 60);
+    // readiness: the restarted dnsmasq logs queries through its own option (two restarts ran back to back)
+    guestWait('nslookup ready.up.example.test 127.0.0.1 >/dev/null 2>&1; logread | grep -q "query\\[A\\] ready.up.example.test"', 60);
     await login(page, admin);
     await expectState(page, 'healthy');
     await expect(page.locator('#abfm-logging-elsewhere')).toContainText('dnsmasq\'s own settings');

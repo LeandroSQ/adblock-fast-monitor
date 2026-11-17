@@ -321,26 +321,29 @@ re-run the gate on a run directory to regenerate `summary.json`.
 
 ### Run of record (release candidate)
 
-Run `perf/20261112T221743Z-98497`, armsr-armv8 under hvf, 3 repeats, APK
-`artifacts/20261112T213735Z-1` (sha256 `36dbec0a…`, built from `0ae7490`,
-the simplified UI with the donut, the scrolling list and the Client
-column): **PASS, all budgets**, no invalid window.
+Run `perf/20261116T022458Z-83967`, armsr-armv8 under hvf, 3 repeats, APK
+`artifacts/20261116T015519Z-1` (sha256 `7c59e51b…`, built from `14abd2a`,
+the Cards look): **PASS, all budgets**, no invalid window.
 
-| ID | Result | Noise (50 / 200 qps) |
-| --- | --- | --- |
-| P1 | 0 resident, 0 transient at boot or idle, rpcd RssAnon +208 KiB | |
-| P2 | page: 0 / 0 requests in 60 s hidden / closed (7 in the 12 s visible control); Status → Overview, this app's calls: 0 / 0 (3 in the 12 s visible control) | |
-| P3 | −0.23 / −0.73 pp (≤ 1 / 2); `log read` p95 2.0 ms (N = 316), 4.1–5.5 ms (N = 900) | CPU 0.1 / 0.2 pp |
-| P4 | p95 14.0 ms over 120 polls (≤ 20); the 60 polls of ≥ 810 entries alone: p95 23.6 ms | |
-| P5 | +0.02 / +0.10 ms (≤ 2) | 0.10–0.17 / 0.14–0.17 ms |
-| P6 | on − off dnsmasq +0.57 / +2.0, logd +0.37 / +1.13 pp (≤ 4 / 6); on − manual drop-in −0.03 / 0 pp | dnsmasq 0.13 / 1.23 pp |
-| P7 / P8 | `info` p95 0.74 ms; apply 0.72 / 1.64 ms, rpcd worst 11.0 ms | |
-| P10 | boot 0, enable [1, 1, 1, 1, 1], save 0 | |
+| ID | Result |
+| --- | --- |
+| P1 | 0 resident, 0 transient at boot or idle, rpcd RssAnon +208 KiB |
+| P2 | page: 0 / 0 requests in 60 s hidden / closed (7 in the 12 s visible control); Status → Overview, this app's calls: 0 / 0 (3 in the 12 s visible control) |
+| P3 | −0.43 / −1.1 pp (≤ 1 / 2); `log read` p95 2.5 ms (N = 319), 5.1–6.0 ms (N = 900) |
+| P4 | p95 15.0 ms over 120 polls (≤ 20); the 60 polls of ≥ 810 entries alone: p95 22.5 ms |
+| P5 | +0.16 / +0.04 ms (≤ 2) |
+| P6 | on − off dnsmasq +1.07 / +2.87, logd +0.53 / +1.5 pp (≤ 4 / 6); on − manual drop-in −0.03 / −0.17 pp |
+| P7 / P8 | `info` p95 0.75 ms; apply 0.79 / 1.74 ms, rpcd worst 5.6 ms |
+| P10 | boot 0, enable [1, 1, 1, 1, 1], save 0 |
 
 Earlier candidates measured within the same noise: `perf/20261112T070716Z-38758`
 (`230ef0b`, the first page) P3 −0.17 / −0.70 pp, P4 p95 12.7 ms;
 `perf/20261112T201828Z-84202` (`201395d`, progress bar, no Client column)
-P3 −0.23 / −0.63 pp, P4 p95 14.2 ms. The Status → Overview section is not measured for P3: it reads the
+P3 −0.23 / −0.63 pp, P4 p95 14.2 ms; `perf/20261112T221743Z-98497`
+(`0ae7490`, donut card and sentence) P3 −0.23 / −0.73 pp, P4 p95 14.0 ms;
+`perf/20261113T051049Z-18103` (`c60da13`, panel C) P3 −0.23 / −0.87 pp, P4
+p95 11.8 ms; `perf/20261113T204728Z-41147` (`0da1162`, panel C2) P3 −0.2 /
+−0.83 pp, P4 p95 12.8 ms. The Status → Overview section is not measured for P3: it reads the
 log at most once per LuCI status poll (5 s), less often than the page
 (2 s), which P3 bounds.
 

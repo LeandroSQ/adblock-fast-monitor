@@ -85,7 +85,9 @@ reload_config
 t_ok "query_logging=1: drop-in written" abfm_wait_until 30 dropin_ok
 reconciled
 t_ok "query_logging=1: queries reach log read" abfm_wait_until 20 logged before
-t_ok "the trigger is registered while query logging is on" sh -c \
+# The drop-in is written inside start_service; procd registers the trigger
+# when the reload finishes, which can be just after (fast runners).
+t_ok "the trigger is registered while query logging is on" abfm_wait_until 20 sh -c \
 	"ubus call service list '{\"name\":\"adblock-fast-monitor\",\"verbose\":true}' | grep -q instance.update"
 t_ok "dnsmasq runs jailed" test -n "$(jailed_pid)"
 t_eq "dnsmasq's jailed /dev/log is logd's socket" "$(host_log)" "$(jail_log)"

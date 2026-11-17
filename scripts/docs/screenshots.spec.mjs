@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Captures the README screenshots (scripts/docs/screenshots.sh) from the
 // guest's LuCI: the page with blocked and allowed rows, then two staged
-// changes with the "Apply and save" confirmation open, then the Status →
+// changes with the "Apply and save" confirmation open, the page in dark
+// mode, then the Status →
 // Overview section. Traffic is test-only: A queries
 // for *.example.test names, blocked by the fixture list or answered by the
 // fake upstream with 192.0.2.10. Nothing is applied; the staged changes are
@@ -45,9 +46,20 @@ test('README screenshots', async ({ page }) => {
     clip: { x: 0, y: 0, width: 1280, height: Math.ceil(box.y + box.height + 16) }
   });
 
+  // the same page in the theme's dark mode (bootstrap follows prefers-color-scheme)
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-darkmode', 'true');
+  const darkBox = await page.locator('#view').boundingBox();
+  await page.screenshot({
+    path: new URL('overview-dark.png', OUT).pathname, animations: 'disabled', fullPage: true,
+    clip: { x: 0, y: 0, width: 1280, height: Math.ceil(darkBox.y + darkBox.height + 16) }
+  });
+  await page.emulateMedia({ colorScheme: 'light' });
+
   await queryRow(page, 'metrics.example.test').getByRole('button', { name: 'Allow metrics.example.test' }).click();
   await queryRow(page, 'tracker.up.example.test').getByRole('button', { name: 'Block tracker.up.example.test' }).click();
   await expect(pending(page).locator('li[data-domain]')).toHaveCount(2);
+  await page.mouse.move(0, 0);
   await page.locator('#abfm-changes').scrollIntoViewIfNeeded();
   await page.getByRole('button', { name: 'Apply and save' }).click();
   const modal = page.locator('.modal');

@@ -29,9 +29,15 @@ return baseclass.extend({
 	 * null (no data: an empty ring and "—"); value the text inside ("33 %");
 	 * label the accessible name. update() writes only what changed (P4).
 	 */
-	donut(size) {
+	donut(size, opts) {
+		/* opts.text false: no value inside; opts.decorative: hidden from assistive tech (the text next to it says it) */
+		const o = opts || {};
 		const root = svg('svg', { 'viewBox': '0 0 36 36', 'width': String(size), 'height': String(size),
-			'role': 'img', 'class': 'abfm-donut' });
+			'class': 'abfm-donut' });
+		if (o.decorative)
+			root.setAttribute('aria-hidden', 'true');
+		else
+			root.setAttribute('role', 'img');
 		const title = svg('title', {});
 		const track = svg('circle', { 'cx': '18', 'cy': '18', 'r': R, 'fill': 'none', 'stroke-width': '3.6',
 			'style': 'stroke:var(--border-color-medium, #ddd)' });
@@ -41,7 +47,9 @@ return baseclass.extend({
 		const text = svg('text', { 'x': '18', 'y': '18', 'text-anchor': 'middle', 'dominant-baseline': 'central',
 			'font-size': '8', 'font-weight': 'bold', 'fill': 'currentColor' });
 		text.textContent = '—';
-		root.append(title, track, arc, text);
+		root.append(title, track, arc);
+		if (o.text !== false)
+			root.append(text);
 		const last = {};
 		return {
 			node: root,
@@ -59,7 +67,8 @@ return baseclass.extend({
 				if (last.l !== l) {
 					last.l = l;
 					title.textContent = l;
-					root.setAttribute('aria-label', l);
+					if (!o.decorative)
+						root.setAttribute('aria-label', l);
 				}
 			}
 		};

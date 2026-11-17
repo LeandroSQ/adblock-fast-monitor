@@ -36,7 +36,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | --- | --- | --- |
 | `/etc/config/adblock-fast-monitor` | 0644 conffile | §3 |
 | `/etc/init.d/adblock-fast-monitor` | 0755 | procd init, `START=18` (before dnsmasq `START=19`), no instance (§4) |
-| `/usr/libexec/adblock-fast-monitor/logging.uc` | 0755 | `reconcile` / `disable` / `status` of the dnsmasq drop-ins (§4, §5) |
+| `/usr/libexec/adblock-fast-monitor/logging.uc` | 0755 | `start` / `stop` / `reconcile` / `disable` / `status` of the dnsmasq drop-ins (§4, §5) |
 | `/usr/libexec/adblock-fast-monitor/job.uc` | 0755 | detached apply job (§7) |
 | `/usr/share/ucode/abfm/domain.uc` | 0644 | grammar, protected domains, public-suffix guard, `plan()`, job verification helpers (§6.4–6.6, §7.2) |
 | `/usr/share/ucode/abfm/system.uc` | 0644 | discovery of UCI, dnsmasq instances/confdirs, logd ring size and adblock-fast state; stale `/dev/log` detection (§4) |
@@ -49,6 +49,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | `/www/luci-static/resources/adblock-fast-monitor/querylog.js` | 0644 | pure log cursor, parser, correlator and classifier (§8.1–8.3) |
 | `/www/luci-static/resources/adblock-fast-monitor/model.js` | 0644 | pure UI logic: staging reducer (§8.4), state derivation (§8.5) |
 | `/www/luci-static/resources/adblock-fast-monitor/chart.js` | 0644 | the blocked-share donut (inline SVG) of the page and the Status section (§8.5, §8.6) |
+| `/www/luci-static/resources/adblock-fast-monitor/cards.js` | 0644 | the page's look: statistics tiles, the scoped stylesheet (theme variables, light and dark, narrow screens) and the Status card (§8.5, §8.6) |
 
 Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 
@@ -58,6 +59,7 @@ Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 | `/var/run/adblock-fast-monitor/job.json` | plugin + job, 0600, atomic rename | last job (§7) |
 | `/var/run/adblock-fast-monitor/uci/` | plugin, 0700 | private UCI savedir for `apply` |
 | `/var/run/adblock-fast-monitor/stale-restart` | `logging.uc` | the `/dev/log` socket the last stale restart was made for (§4 loop guard) |
+| `/var/run/adblock-fast-monitor/stopped` | `logging.uc` | empty mark set by `stop`, cleared by `start`; while it exists `reconcile` does nothing (§4) |
 | `/var/lock/adblock-fast-monitor.lock` | plugin + job | `flock` target (§7.3) |
 | `/var/lock/adblock-fast-monitor.logging.lock` | `logging.uc` | `flock` that serializes reconciles (§5) |
 | `<confdir>/adblock-fast-monitor.conf` | `logging.uc`, 0644 | the lines `log-queries=extra` and `log-async=25` |
@@ -112,11 +114,13 @@ only when the set changes).
 
 ```text
 START=18, USE_PROCD=1
-start_service:    logging.uc reconcile   (reads query_logging itself: 1 -> write
-                  the drop-ins, 0 -> remove ours; no procd_open_instance:
-                  nothing runs, procd keeps the service for its triggers)
-stop_service:     logging.uc disable, except during `restart` (start reconciles,
-                  so dnsmasq is not restarted twice)
+start_service:    logging.uc start       (clears the stopped mark, then reads
+                  query_logging: 1 -> write the drop-ins, 0 -> remove ours; no
+                  procd_open_instance: nothing runs, procd keeps the service
+                  for its triggers)
+stop_service:     logging.uc stop        (sets the stopped mark, removes the
+                  drop-ins), except during `restart` (start reconciles, so
+                  dnsmasq is not restarted twice)
 service_triggers: procd_add_reload_trigger adblock-fast-monitor
                   query_logging=1 -> procd_add_raw_trigger instance.update 3000
                                      /usr/libexec/adblock-fast-monitor/logging.uc reconcile
@@ -124,6 +128,13 @@ service_triggers: procd_add_reload_trigger adblock-fast-monitor
 
 `reload` (what the config trigger runs) re-runs `start_service` and
 re-registers the triggers. With an unchanged drop-in set nothing restarts.
+Every mode takes the logging lock first and reads `query_logging`, the dhcp
+config and the stopped mark only while holding it, so a reconcile that waited
+acts on the state as it is then. A trigger firing that procd queued before a
+`stop` (its 3 s debounce) finds the stopped mark and changes nothing; without
+the mark it would write the drop-ins back and restart dnsmasq a second time. Likewise `reload_service` does nothing while the mark exists: procd runs
+the config trigger's `reload` 1 s after a settings save, and one still queued
+at a `stop` must not start the service again.
 procd runs the `instance.update` command directly (`execvp`, no shell), so
 a firing costs one short-lived `ucode` process.
 
@@ -669,6 +680,10 @@ no `rpc` — loadable by the Node tests the same way as `model.js`. Shape
     query-log lines but matched neither `BODY` nor `LOST`.
   - `since_open`: queries and decisions since the page was opened, not
     limited to the kept rows (router clients excluded when `hide_router`).
+  - `top_blocked` (only with `{top: N}`, N ≤ 10): `[{domain, count}]`, the
+    blocked rows counted per domain over the same rows, most blocked first;
+    a tie goes to the domain blocked most recently. Counted in the same
+    pass, so it follows eviction and costs no request.
 
 ### 8.3 Line grammar and classification
 
@@ -821,14 +836,29 @@ earlier data); `loading`. Every state except `healthy` is one notice
 Page layout, top to bottom: title and one line (what the page does; for
 administrators only, D6); the state notice; short notes only while they
 apply (DNS mode §8.3, log stalled, log unreadable, retrying, paused when
-idle); the statistics (a donut in a LuCI card, below, next to
-`"%s of %s queries blocked in the last %s"`, plus the missed and paused
-counts with the log buffer size, §8.1); the staged-changes bar and the job
-(§8.4); the last queries (Time, Domain, Client, Result as "Decision
-(source)", and Block/Allow for admins) in a box of at most 60 % of the
+idle); the statistics as three tiles side by side (stacked on a narrow
+screen): "Blocked share" (the donut and "4 of 12 queries in the last 8 s",
+or why there is no percentage), "Recent queries" (Blocked, Allowed,
+Answered, Time span as a `<dl>`) and "Most blocked" (the 3 most blocked
+domains of the kept rows with their counts and bars scaled to the first,
+`stats({top: 3})`, text only; "Nothing blocked yet" when empty; hidden in
+the DNS modes of §8.3). Then the missed and paused
+counts with the log buffer size (§8.1); the staged-changes bar and the job
+(§8.4); the last queries (Time, Domain, Client, Result as a coloured dot,
+the decision and the source muted, and one neutral Block/Allow button for
+admins; blocked rows lightly tinted) in a box of at most 60 % of the
 window height that scrolls on its own (focusable, named region "Last
 queries", so the keyboard scrolls it too) under a header row that stays in
-view; one line about query logging.
+view; on a narrow screen (≤ 600 px) each query is two lines without
+column labels: dot, domain and the action (at least 36 px high), then
+time · client · decision and source, muted; nothing scrolls sideways at
+360 px. Last, one line about query logging.
+
+Look: the stylesheet (`cards.js`) is a constant set through
+`textContent`, scoped to `#abfm-overview` (or `#abfm-status`), and uses the
+theme's CSS variables (`--error-color-high`, `--success-color-high`,
+`--border-color-medium`, `--background-color-high`, …) with fallbacks, so
+luci-theme-bootstrap's light and dark modes both apply.
 
 The donut (`chart.js`) is an inline SVG built with
 `document.createElementNS`, as LuCI's realtime graphs do (LuCI has no chart
@@ -836,8 +866,7 @@ widget): a ring whose arc is the blocked percentage, the value ("33 %")
 inside, `role="img"` with the accessible name "33 % of recent queries
 blocked" (or the reason no percentage is shown), the theme's
 `--primary-color-high` and `--border-color-medium` colours with fallbacks,
-and no animation. It sits in LuCI's `.ifacebox` card, the box the Port
-status and Network sections of Status → Overview use.
+and no animation.
 
 The query-logging line: when this app's `query_logging` is on, it says that
 dnsmasq logs every query, also while the page is closed, with a "Turn off
@@ -860,9 +889,9 @@ All dynamic text goes through `E()` array children or text nodes. Views
 ### 8.6 Status → Overview section
 
 `view/status/include/75_adblock-fast-monitor.js` adds a section "Adblock
-Fast Monitor" to LuCI's Status → Overview: one `.ifacebox` card, "Blocked
-queries", with the same donut and sentence as the page (`abfm.model.summary`)
-over the queries it read itself, and a link to the page. LuCI's status page calls each section's
+Fast Monitor" to LuCI's Status → Overview: the page's "Blocked share" tile
+(`cards.js`: the same donut and wording, `abfm.model.summary`) over the
+queries it read itself, and a link to the page. LuCI's status page calls each section's
 `load()` on its own poll (`env.pollinterval`, 5 s), also in a hidden tab.
 The section therefore:
 
@@ -1013,7 +1042,7 @@ Environments:
 | T05 | §8.3 port | differential: `querylog.js` over the dnsmasq fixtures reaches the decisions recorded from the replaced ucode parser, same decision per key | N | `test/fixtures/logread/differential/` |
 | T06 | D1, P1 | 0 package processes and no procd instance in every state: default, `query_logging` 0/1, settings save, restart, stop, after boot with `query_logging=1`; an `instance.update` firing costs one process | G | `test/guest/logging-lifecycle.sh`, `test/guest/logging-logd-restart.sh`, `test/guest/dataplane-boot.host.sh`, `test/guest/perf-p1-disabled.sh` |
 | T07 | §4 stale scope, loop guard | only procd dnsmasq instance pids and their jailed children are compared; one stale restart per logd socket; a foreign dnsmasq with a different `/dev/log` (own root) never restarts dnsmasq and causes no loop | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
-| T08 | §4, §5, P10 | drop-in set for reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
+| T08 | §4, §5, P10 | drop-in set for start/stop/reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a reconcile or `reload` after `stop` (a queued trigger) changes nothing; a reconcile waiting on the lock reads the config it finds then; a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
 | T09 | §8.1 live | with the drop-in, real queries from a LAN source appear in `log read` (query, blocked `config`/addnhosts, `reply`, `cached` lines) with consecutive ids; none with `query_logging=0` | G | `test/guest/dataplane-live.host.sh` |
 | T10 | §8.1 bound | `log_size=1024`, ~1000-byte lines: `log read` with `lines:900` succeeds through `/ubus` and the CLI, reply < 1 MiB, logd stays on ubus | G | `test/guest/logd-oversize.host.sh` |
 | T11 | §6.1 | `info` fields (`api` 2, `monitor`, `local_domains`, `protected_suffixes`, `logd`), warnings for `log_file`, `log_ip`, dhcp `logfacility`/`logqueries`; through LuCI sessions | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-api.sh`, `test/guest/actions-session.host.sh` |

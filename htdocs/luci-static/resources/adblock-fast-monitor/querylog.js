@@ -48,6 +48,10 @@
  *       since_open: {queries, blocked, allowed}}  (since_open excludes
  *       router clients when hide_router)
  *
+ *   stats(state, {show_router, top}) also returns top_blocked when top > 0
+ *       (at most 10): [{domain, count}] of the blocked rows kept, most
+ *       blocked first; a tie goes to the domain blocked most recently.
+ *
  * Every string in a row is the raw text dnsmasq logged; the UI must render
  * it as text only (PTR answers can carry HTML, §8).
  */
@@ -55,6 +59,7 @@
 const LINES_MIN = 16;
 const LINES_MAX = 900;          // keeps 1 KiB lines under ubus's 1 MiB cap
 const ANSWERS_MAX = 4;
+const TOP_MAX = 10;             // stats({top}) returns at most this many domains
 const ADDNHOSTS = '/var/run/adblock-fast/dnsmasq.addnhosts';
 
 // §8.3: logd keeps the `dnsmasq[pid]: ` tag in `msg`; there is no ctime /
@@ -446,12 +451,27 @@ return baseclass.extend({
 				queries: st.sinceOpen.queries, blocked: st.sinceOpen.blocked, allowed: st.sinceOpen.allowed
 			}
 		};
-		for (const e of list) {
+		/* top: blocked rows counted per domain in the same pass (bounded by max_rows) */
+		const top = opts && +opts.top > 0 ? Math.min(+opts.top | 0, TOP_MAX) : 0;
+		const counts = top ? new Map() : null;
+		for (let i = 0; i < list.length; i++) {
+			const e = list[i];
 			if (e.decision === 'no-answer')
 				s.no_answer++;
 			else
 				s[e.decision]++;
+			if (counts && e.decision === 'blocked') {
+				const c = counts.get(e.domain);
+				if (c)
+					c.count++, c.last = i;
+				else
+					counts.set(e.domain, { domain: e.domain, count: 1, last: i });
+			}
 		}
+		if (counts)
+			s.top_blocked = Array.from(counts.values())
+				.sort((a, b) => b.count - a.count || b.last - a.last)
+				.slice(0, top).map((c) => ({ domain: c.domain, count: c.count }));
 		const d = s.blocked + s.allowed;
 		if (d > 0)
 			s.blocked_pct = Math.round(1000 * s.blocked / d) / 10;

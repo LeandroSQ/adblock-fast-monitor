@@ -37,8 +37,11 @@ const npmScripts = JSON.parse(read('package.json')).scripts;
 // A relative path whose first segment is a repository directory is checked
 // even when that directory no longer exists, so a reference into a removed or
 // renamed directory fails instead of being mistaken for a non-repo path.
+// Top-level names a path reference is checked under. Ignored, machine-local
+// directories (the `.local-validation/` cache, build output) are not part of
+// the repository: their contents differ per machine and CI run.
 const repoDirs = new Set([
-  ...readdirSync(repo),
+  ...readdirSync(repo).filter((n) => !skipDirs.has(n)),
   '.claude', '.github', '.githooks', 'docs', 'htdocs', 'keys', 'po', 'root', 'scripts', 'test'
 ]);
 
@@ -270,6 +273,10 @@ test('glob matcher semantics', () => {
   assert.ok(!g('test/guest/*.sh', 'test/guest/lib/x.sh'));
   assert.ok(g('src/*.{ts,tsx}', 'src/a.tsx'));
   assert.ok(!g('src/*.{ts,tsx}', 'src/a.js'));
+});
+
+test('paths into the ignored, machine-local cache are not checked', () => {
+  assert.deepEqual(repoPathRefs('`.local-validation/qemu/runs/` `node_modules/x/y.js` `docs/gone.md`'), ['docs/gone.md']);
 });
 
 test('a path into a removed repository directory is checked, not skipped', () => {

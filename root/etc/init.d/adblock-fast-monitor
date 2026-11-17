@@ -10,13 +10,21 @@ USE_PROCD=1
 LOGGING=/usr/libexec/adblock-fast-monitor/logging.uc
 
 start_service() {
-	"$LOGGING" reconcile
+	"$LOGGING" start
+}
+
+# procd queues the config trigger's `reload` 1 s after a settings save; one
+# still queued when the service is stopped must not start it again (§4).
+reload_service() {
+	[ -e /var/run/adblock-fast-monitor/stopped ] || start
 }
 
 stop_service() {
 	# restart = stop + start with the same configuration: keep the drop-ins
 	# so dnsmasq is not restarted twice; start_service reconciles them.
-	[ "$action" = restart ] || "$LOGGING" disable
+	# `stop` marks the service stopped, so a trigger firing still queued in
+	# procd (debounced 3 s) does nothing until the next start (§4).
+	[ "$action" = restart ] || "$LOGGING" stop
 }
 
 service_triggers() {

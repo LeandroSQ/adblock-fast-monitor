@@ -7,7 +7,7 @@
 'require dom';
 'require adblock-fast-monitor.model as model';
 'require adblock-fast-monitor.querylog as querylog';
-'require adblock-fast-monitor.chart as chart';
+'require adblock-fast-monitor.cards as cards';
 
 /*
  * SPDX-License-Identifier: Apache-2.0
@@ -57,7 +57,6 @@ const OP_ARIA = _('%s %s');
 const UNDO_ARIA = _('Undo: %s %s');
 /* a staged row offers one button that takes the change back */
 const UNDO_LABEL = { allow: _('Undo allow'), block: _('Undo block') };
-const OP_BUTTON_CLASS = { allow: 'cbi-button cbi-button-positive', block: 'cbi-button cbi-button-negative' };
 const DECISION_LABEL = {
 	blocked: _('Blocked'), allowed: _('Allowed'), other: _('Other'), 'no-answer': _('No answer'),
 	pending: _('Waiting')
@@ -201,7 +200,6 @@ return view.extend({
 		this.querySlots = [];
 		this.slotPool = [];
 		this.rowTemplate = null;
-		this.resultLabels = new Map();
 		this.queryCreated = 0;
 		this.queryLayout = null;
 		this.pending = model.parsePending(storageGet(model.STORAGE_KEY));
@@ -223,6 +221,7 @@ return view.extend({
 			])
 		]);
 
+		node.appendChild(cards.style('abfm-overview', true));
 		this.stateNode = E('div', { 'id': 'abfm-state', 'role': 'status', 'aria-live': 'polite' });
 		this.notesNode = E('div', { 'id': 'abfm-notes' });
 		node.appendChild(this.stateNode);
@@ -503,7 +502,7 @@ return view.extend({
 		/* one line about the switch that makes dnsmasq log every query, and its risks */
 		const line = [];
 		if (flags.source == 'ours') {
-			line.push(E('span', {}, T(_('Query logging is on: dnsmasq writes every DNS query to the system log, also while this page is closed.'))));
+			line.push(E('span', {}, T(_('Query logging is on, also while this page is closed.'))));
 			if (this.canWrite)
 				line.push(' ', E('button', { 'class': 'cbi-button cbi-button-neutral', 'id': 'abfm-logging-off',
 					'click': ui.createHandlerFn(this, 'handleLoggingOff') }, T(_('Turn off query logging'))));
@@ -560,35 +559,26 @@ return view.extend({
 	},
 
 	/*
-	 * The blocked share as a donut in a LuCI card (.ifacebox, as on Status →
-	 * Overview) next to one sentence (model.summary). Built once; a poll
-	 * rewrites only the attributes and texts that changed (P4).
+	 * The statistics as three tiles (cards.js): the blocked share with the
+	 * ring, the counts, and the most blocked names (querylog stats top,
+	 * counted over the kept rows in the same pass, §8.2), then the missed
+	 * and paused notes. Built once; a poll rewrites only what changed (P4).
 	 */
 	updateStats() {
-		const s = querylog.stats(this.log, { show_router: false });
+		const s = querylog.stats(this.log, { show_router: false, top: cards.TOP });
 		this.keptRows = s.kept || 0;
-		const sum = model.summary(s, model.dnsModeNote(this.infoResult));
+		const dnsMode = model.dnsModeNote(this.infoResult);
+		const sum = model.summary(s, dnsMode);
 		let v = this.statView;
 		if (!v) {
-			v = this.statView = { donut: chart.donut(96), text: textNode(), line: undefined };
+			v = this.statView = { block: cards.stats() };
 			v.missed = E('div', { 'class': 'alert-message warning', 'style': 'display:none' }, [ textNode() ]);
 			v.paused = E('div', { 'class': 'alert-message notice', 'id': 'abfm-paused-gap', 'style': 'display:none' }, [ textNode() ]);
 			this.missedNode = E('div', { 'id': 'abfm-missed', 'data-missed': '0', 'data-paused': '0' }, [ v.missed, v.paused ]);
-			dom.content(this.statsNode, [
-				E('div', { 'data-stat': 'blocked_pct', 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:1em' }, [
-					E('div', { 'class': 'ifacebox', 'style': 'margin:0' }, [
-						E('div', { 'class': 'ifacebox-head' }, T(_('Blocked'))),
-						E('div', { 'class': 'ifacebox-body' }, [ v.donut.node ])
-					]),
-					E('p', { 'data-stat': 'text' }, [ v.text ])
-				]),
-				this.missedNode
-			]);
+			dom.content(this.statsNode, [ v.block.node, this.missedNode ]);
 		}
-		v.donut.update(sum.pct, sum.value, sum.label || sum.text);
-		if (v.line !== sum.text)
-			v.text.data = v.line = sum.text;
-
+		/* blocks are not visible in the log in the other DNS modes (§8.3) */
+		v.block.update(sum, dnsMode ? [] : (s.top_blocked || []), !!dnsMode);
 		const missed = s.missed_total || 0;
 		const paused = s.paused_total || 0;
 		const key = missed + ':' + paused;
@@ -648,7 +638,7 @@ return view.extend({
 	newSlot() {
 		if (!this.rowTemplate) {
 			const tds = [
-				cell(_('Time'), [ E('time') ]),
+				cell(_('Time'), [ E('time') ], 'abfm-time'),
 				cell(_('Domain'), [], 'abfm-domain'),
 				cell(_('Client'), [], 'abfm-client'),
 				cell(_('Result'), [], 'abfm-result')
@@ -659,25 +649,18 @@ return view.extend({
 			tds[0].firstChild.appendChild(textNode());
 			for (let i = 1; i < 4; i++)
 				tds[i].appendChild(textNode());
+			/* a coloured dot, the decision, the source muted */
+			tds[3].insertBefore(E('span', { 'class': 'abfm-dot', 'aria-hidden': 'true' }), tds[3].firstChild);
+			tds[3].appendChild(document.createTextNode(' '));
+			tds[3].appendChild(E('span', { 'class': 'abfm-src' }, [ textNode() ]));
 		}
 		const tr = this.rowTemplate.cloneNode(true);
 		const tds = tr.children;
+		const text = [ tds[0].firstChild.firstChild, tds[1].firstChild, tds[2].firstChild ];
+		text.push(tds[3].childNodes[1], tds[3].lastChild.firstChild);
 		return { tr: tr, key: null, domain: null, valid: null, decision: null, vals: [],
-			text: [ tds[0].firstChild.firstChild, tds[1].firstChild, tds[2].firstChild, tds[3].firstChild ],
+			text: text,
 			act: null, aria: null, ariaButton: null, actCell: this.canWrite ? tds[4] : null, buttons: {}, staged: null, inflight: null };
-	},
-
-	/* "Decision (source)", formatted once per pair (a few dozen at most). */
-	resultLabel(decision, source) {
-		const k = decision + '\n' + source;
-		let text = this.resultLabels.get(k);
-		if (text === undefined) {
-			const d = Object.prototype.hasOwnProperty.call(DECISION_LABEL, decision) ? DECISION_LABEL[decision] : decision;
-			text = source ? _('%s (%s)').format(d, SOURCE_LABEL[source] || source) : String(d);
-			if (this.resultLabels.size < 256)
-				this.resultLabels.set(k, text);
-		}
-		return text;
 	},
 
 	/* Writes only what differs from the slot's last values; returns true if anything changed. */
@@ -698,7 +681,9 @@ return view.extend({
 			this.timeKey = r.time;
 			this.timeText = model.formatClock(r.time);
 		}
-		const vals = [ this.timeText, String(r.domain), (r.client == null) ? '' : String(r.client), this.resultLabel(r.decision, r.source) ];
+		const vals = [ this.timeText, String(r.domain), (r.client == null) ? '' : String(r.client) ];
+		vals.push(Object.prototype.hasOwnProperty.call(DECISION_LABEL, r.decision) ? DECISION_LABEL[r.decision] : String(r.decision),
+			r.source ? (SOURCE_LABEL[r.source] || String(r.source)) : '');
 		for (let i = 0; i < vals.length; i++) {
 			if (slot.vals[i] !== vals[i]) {
 				slot.vals[i] = vals[i];
@@ -749,7 +734,7 @@ return view.extend({
 			else if (state.indexOf('op:') == 0) {
 				const op = state.substring(3);
 				if (!slot.buttons[op])
-					slot.buttons[op] = E('button', { 'class': OP_BUTTON_CLASS[op], 'data-op': op,
+					slot.buttons[op] = E('button', { 'class': 'cbi-button cbi-button-neutral abfm-act', 'data-op': op,
 						'click': () => this.stageOp(op, slot.domain) }, T(OP_LABEL[op]));
 				nodes = [ slot.buttons[op] ];
 			}

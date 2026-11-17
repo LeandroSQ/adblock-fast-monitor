@@ -139,6 +139,13 @@ sleep 5
 reconciled
 t_ok "stopped: still no drop-in after the trigger debounce" test ! -e "$DROPIN"
 t_eq "stopped: a late trigger reconcile restarts nothing" 0 "$(dnsmasq_starts)"
+# procd's config trigger queues `reload` 1 s after a settings save, so one
+# can run after the stop: it must not start the service again.
+$INIT reload
+reconciled
+t_ok "stopped: a late reload keeps the drop-in removed" test ! -e "$DROPIN"
+t_eq "stopped: a late reload does not start the service" "" "$(ubus call service list '{"name":"adblock-fast-monitor"}' | jsonfilter -e '@["adblock-fast-monitor"]' 2>/dev/null)"
+t_eq "stopped: a late reload restarts nothing" 0 "$(dnsmasq_starts)"
 mark
 $INIT start
 reconciled

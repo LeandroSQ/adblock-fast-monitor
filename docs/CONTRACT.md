@@ -132,7 +132,9 @@ Every mode takes the logging lock first and reads `query_logging`, the dhcp
 config and the stopped mark only while holding it, so a reconcile that waited
 acts on the state as it is then. A trigger firing that procd queued before a
 `stop` (its 3 s debounce) finds the stopped mark and changes nothing; without
-the mark it would write the drop-ins back and restart dnsmasq a second time.
+the mark it would write the drop-ins back and restart dnsmasq a second time. Likewise `reload_service` does nothing while the mark exists: procd runs
+the config trigger's `reload` 1 s after a settings save, and one still queued
+at a `stop` must not start the service again.
 procd runs the `instance.update` command directly (`execvp`, no shell), so
 a firing costs one short-lived `ucode` process.
 
@@ -1040,7 +1042,7 @@ Environments:
 | T05 | §8.3 port | differential: `querylog.js` over the dnsmasq fixtures reaches the decisions recorded from the replaced ucode parser, same decision per key | N | `test/fixtures/logread/differential/` |
 | T06 | D1, P1 | 0 package processes and no procd instance in every state: default, `query_logging` 0/1, settings save, restart, stop, after boot with `query_logging=1`; an `instance.update` firing costs one process | G | `test/guest/logging-lifecycle.sh`, `test/guest/logging-logd-restart.sh`, `test/guest/dataplane-boot.host.sh`, `test/guest/perf-p1-disabled.sh` |
 | T07 | §4 stale scope, loop guard | only procd dnsmasq instance pids and their jailed children are compared; one stale restart per logd socket; a foreign dnsmasq with a different `/dev/log` (own root) never restarts dnsmasq and causes no loop | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
-| T08 | §4, §5, P10 | drop-in set for start/stop/reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a reconcile after `stop` (a queued trigger) changes nothing; a reconcile waiting on the lock reads the config it finds then; a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
+| T08 | §4, §5, P10 | drop-in set for start/stop/reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a reconcile or `reload` after `stop` (a queued trigger) changes nothing; a reconcile waiting on the lock reads the config it finds then; a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
 | T09 | §8.1 live | with the drop-in, real queries from a LAN source appear in `log read` (query, blocked `config`/addnhosts, `reply`, `cached` lines) with consecutive ids; none with `query_logging=0` | G | `test/guest/dataplane-live.host.sh` |
 | T10 | §8.1 bound | `log_size=1024`, ~1000-byte lines: `log read` with `lines:900` succeeds through `/ubus` and the CLI, reply < 1 MiB, logd stays on ubus | G | `test/guest/logd-oversize.host.sh` |
 | T11 | §6.1 | `info` fields (`api` 2, `monitor`, `local_domains`, `protected_suffixes`, `logd`), warnings for `log_file`, `log_ip`, dhcp `logfacility`/`logqueries`; through LuCI sessions | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-api.sh`, `test/guest/actions-session.host.sh` |

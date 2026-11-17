@@ -132,10 +132,10 @@ guest__qemu_alive() { # PID: running, not a zombie
 guest__launch_qemu() {
 	local accel
 	read -r -a accel <<<"$GUEST__ACCEL_ARGS"
-	rm -f "$GUEST_RUN_DIR/serial.sock"
+	rm -f "$GUEST__SOCK"
 	qemu-system-x86_64 "${accel[@]}" -smp "${GUEST_CPUS:-2}" -m "${GUEST_MEMORY:-256}" \
 		-display none -nic none \
-		-chardev "socket,id=serial0,path=$GUEST_RUN_DIR/serial.sock,server=on,wait=off,logfile=$GUEST_RUN_DIR/serial.log,logappend=on" \
+		-chardev "socket,id=serial0,path=$GUEST__SOCK,server=on,wait=off,logfile=$GUEST_RUN_DIR/serial.log,logappend=on" \
 		-serial chardev:serial0 \
 		-drive "file=$GUEST__DISK,format=qcow2,if=virtio" \
 		-netdev "user,id=lan,hostfwd=tcp:127.0.0.1:$GUEST_SSH_PORT-:22,hostfwd=tcp:127.0.0.1:$GUEST_HTTP_PORT-:80,hostfwd=udp:127.0.0.1:$GUEST_DNS_PORT-:53" \
@@ -163,6 +163,15 @@ guest_start() {
 
 	GUEST_RUN_DIR="${GUEST_RUN_DIR:-$cache/runs/$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM}"
 	mkdir -p "$GUEST_RUN_DIR"
+	# AF_UNIX paths are limited to 108 bytes (103 on macOS); a deep checkout
+	# (a CI runner's workspace) makes the run directory too long for QEMU's
+	# serial socket, which then lives in a short private directory instead.
+	GUEST__SOCK="$GUEST_RUN_DIR/serial.sock" GUEST__SOCK_DIR=''
+	if ((${#GUEST__SOCK} > 100)); then
+		GUEST__SOCK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/abfm.XXXXXX")"
+		GUEST__SOCK="$GUEST__SOCK_DIR/serial.sock"
+		((${#GUEST__SOCK} <= 100)) || { guest__die "no short directory for the serial socket: $GUEST__SOCK"; return 1; }
+	fi
 	local disk="${GUEST_DISK:-}"
 	if [[ -z "$disk" ]]; then
 		if [[ ! -f "$baseline" ]]; then
@@ -243,7 +252,7 @@ guest_start() {
 	# The setup commits rpcd (and maybe network) and applies them itself; the
 	# last step records that like reload_config would, without its events, so
 	# a test's own reload_config never replays the harness's changes.
-	python3 "$GUEST_LIB_ROOT/scripts/guest/serial-console.py" "$GUEST_RUN_DIR/serial.sock" "$boot_timeout" <<-EOF || { tail -n 40 "$GUEST_RUN_DIR/serial.log" >&2; guest_stop; return 1; }
+	python3 "$GUEST_LIB_ROOT/scripts/guest/serial-console.py" "$GUEST__SOCK" "$boot_timeout" <<-EOF || { tail -n 40 "$GUEST_RUN_DIR/serial.log" >&2; guest_stop; return 1; }
 		ubus -t "$boot_timeout" wait_for network.interface.lan session uci service
 		sed -i 's|^root:[^:]*:|root:$root_hash:|' /etc/shadow
 		mkdir -p /etc/dropbear && chmod 700 /etc/dropbear && printf '%s\n' '$(cat "$GUEST_SSH_KEY.pub")' >/etc/dropbear/authorized_keys && chmod 600 /etc/dropbear/authorized_keys
@@ -317,5 +326,7 @@ guest_stop() {
 	if [[ "${GUEST__DISK_OWNED:-0}" == 1 && "${GUEST_KEEP_DISK:-0}" != 1 ]]; then
 		rm -f "$GUEST__DISK"
 	fi
-	rm -f "${GUEST_RUN_DIR:-/nonexistent}/serial.sock"
+	rm -f "${GUEST__SOCK:-/nonexistent}"
+	[[ -z "${GUEST__SOCK_DIR:-}" ]] || rm -rf "$GUEST__SOCK_DIR"
+	GUEST__SOCK_DIR=''
 }

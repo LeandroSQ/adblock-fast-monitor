@@ -80,10 +80,10 @@ guest__launch_qemu() {
 	fw="$(armsr__firmware)"
 	# shellcheck disable=SC2054 # the comma is part of the QEMU option value
 	if [[ "${ARMSR_ACCEL:-tcg}" == hvf ]]; then accel=(-accel hvf -cpu host); else accel=(-accel tcg,thread=multi -cpu max); fi
-	rm -f "$GUEST_RUN_DIR/serial.sock"
+	rm -f "$GUEST__SOCK"
 	qemu-system-aarch64 -M virt "${accel[@]}" -smp "${GUEST_CPUS:-2}" -m "${GUEST_MEMORY:-256}" \
 		-bios "$fw" -display none -nic none \
-		-chardev "socket,id=serial0,path=$GUEST_RUN_DIR/serial.sock,server=on,wait=off,logfile=$GUEST_RUN_DIR/serial.log,logappend=on" \
+		-chardev "socket,id=serial0,path=$GUEST__SOCK,server=on,wait=off,logfile=$GUEST_RUN_DIR/serial.log,logappend=on" \
 		-serial chardev:serial0 \
 		-drive "file=$GUEST__DISK,format=qcow2,if=virtio" \
 		-netdev "user,id=lan,hostfwd=tcp:127.0.0.1:$GUEST_SSH_PORT-:22,hostfwd=tcp:127.0.0.1:$GUEST_HTTP_PORT-:80,hostfwd=udp:127.0.0.1:$GUEST_DNS_PORT-:53" \

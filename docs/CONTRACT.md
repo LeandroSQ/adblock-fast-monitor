@@ -36,7 +36,7 @@ adds one `ucode job.uc` plus adblock-fast's own children until it ends.
 | --- | --- | --- |
 | `/etc/config/adblock-fast-monitor` | 0644 conffile | §3 |
 | `/etc/init.d/adblock-fast-monitor` | 0755 | procd init, `START=18` (before dnsmasq `START=19`), no instance (§4) |
-| `/usr/libexec/adblock-fast-monitor/logging.uc` | 0755 | `reconcile` / `disable` / `status` of the dnsmasq drop-ins (§4, §5) |
+| `/usr/libexec/adblock-fast-monitor/logging.uc` | 0755 | `start` / `stop` / `reconcile` / `disable` / `status` of the dnsmasq drop-ins (§4, §5) |
 | `/usr/libexec/adblock-fast-monitor/job.uc` | 0755 | detached apply job (§7) |
 | `/usr/share/ucode/abfm/domain.uc` | 0644 | grammar, protected domains, public-suffix guard, `plan()`, job verification helpers (§6.4–6.6, §7.2) |
 | `/usr/share/ucode/abfm/system.uc` | 0644 | discovery of UCI, dnsmasq instances/confdirs, logd ring size and adblock-fast state; stale `/dev/log` detection (§4) |
@@ -59,6 +59,7 @@ Runtime paths. Everything is tmpfs, so nothing survives a reboot by design.
 | `/var/run/adblock-fast-monitor/job.json` | plugin + job, 0600, atomic rename | last job (§7) |
 | `/var/run/adblock-fast-monitor/uci/` | plugin, 0700 | private UCI savedir for `apply` |
 | `/var/run/adblock-fast-monitor/stale-restart` | `logging.uc` | the `/dev/log` socket the last stale restart was made for (§4 loop guard) |
+| `/var/run/adblock-fast-monitor/stopped` | `logging.uc` | empty mark set by `stop`, cleared by `start`; while it exists `reconcile` does nothing (§4) |
 | `/var/lock/adblock-fast-monitor.lock` | plugin + job | `flock` target (§7.3) |
 | `/var/lock/adblock-fast-monitor.logging.lock` | `logging.uc` | `flock` that serializes reconciles (§5) |
 | `<confdir>/adblock-fast-monitor.conf` | `logging.uc`, 0644 | the lines `log-queries=extra` and `log-async=25` |
@@ -113,11 +114,13 @@ only when the set changes).
 
 ```text
 START=18, USE_PROCD=1
-start_service:    logging.uc reconcile   (reads query_logging itself: 1 -> write
-                  the drop-ins, 0 -> remove ours; no procd_open_instance:
-                  nothing runs, procd keeps the service for its triggers)
-stop_service:     logging.uc disable, except during `restart` (start reconciles,
-                  so dnsmasq is not restarted twice)
+start_service:    logging.uc start       (clears the stopped mark, then reads
+                  query_logging: 1 -> write the drop-ins, 0 -> remove ours; no
+                  procd_open_instance: nothing runs, procd keeps the service
+                  for its triggers)
+stop_service:     logging.uc stop        (sets the stopped mark, removes the
+                  drop-ins), except during `restart` (start reconciles, so
+                  dnsmasq is not restarted twice)
 service_triggers: procd_add_reload_trigger adblock-fast-monitor
                   query_logging=1 -> procd_add_raw_trigger instance.update 3000
                                      /usr/libexec/adblock-fast-monitor/logging.uc reconcile
@@ -125,6 +128,11 @@ service_triggers: procd_add_reload_trigger adblock-fast-monitor
 
 `reload` (what the config trigger runs) re-runs `start_service` and
 re-registers the triggers. With an unchanged drop-in set nothing restarts.
+Every mode takes the logging lock first and reads `query_logging`, the dhcp
+config and the stopped mark only while holding it, so a reconcile that waited
+acts on the state as it is then. A trigger firing that procd queued before a
+`stop` (its 3 s debounce) finds the stopped mark and changes nothing; without
+the mark it would write the drop-ins back and restart dnsmasq a second time.
 procd runs the `instance.update` command directly (`execvp`, no shell), so
 a firing costs one short-lived `ucode` process.
 
@@ -1032,7 +1040,7 @@ Environments:
 | T05 | §8.3 port | differential: `querylog.js` over the dnsmasq fixtures reaches the decisions recorded from the replaced ucode parser, same decision per key | N | `test/fixtures/logread/differential/` |
 | T06 | D1, P1 | 0 package processes and no procd instance in every state: default, `query_logging` 0/1, settings save, restart, stop, after boot with `query_logging=1`; an `instance.update` firing costs one process | G | `test/guest/logging-lifecycle.sh`, `test/guest/logging-logd-restart.sh`, `test/guest/dataplane-boot.host.sh`, `test/guest/perf-p1-disabled.sh` |
 | T07 | §4 stale scope, loop guard | only procd dnsmasq instance pids and their jailed children are compared; one stale restart per logd socket; a foreign dnsmasq with a different `/dev/log` (own root) never restarts dnsmasq and causes no loop | U+G | `test/ucode/logging/system.test.uc`, `test/guest/logging-logd-restart.sh` |
-| T08 | §4, §5, P10 | drop-in set for reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
+| T08 | §4, §5, P10 | drop-in set for start/stop/reconcile/disable/disabled instances/dhcp `logqueries` (also handed over through the trigger); a reconcile after `stop` (a queued trigger) changes nothing; a reconcile waiting on the lock reads the config it finds then; a damaged drop-in is rewritten; dnsmasq restarts exactly once per set change, never on a settings-only save, `restart`, `reload` or at boot; `write-failed` exit; `/etc/config/dhcp` byte-identical | U+G | `test/ucode/logging/system.test.uc`, `test/ucode/logging/script.test.uc`, `test/guest/logging-lifecycle.sh`, `test/guest/dataplane-boot.host.sh` |
 | T09 | §8.1 live | with the drop-in, real queries from a LAN source appear in `log read` (query, blocked `config`/addnhosts, `reply`, `cached` lines) with consecutive ids; none with `query_logging=0` | G | `test/guest/dataplane-live.host.sh` |
 | T10 | §8.1 bound | `log_size=1024`, ~1000-byte lines: `log read` with `lines:900` succeeds through `/ubus` and the CLI, reply < 1 MiB, logd stays on ubus | G | `test/guest/logd-oversize.host.sh` |
 | T11 | §6.1 | `info` fields (`api` 2, `monitor`, `local_domains`, `protected_suffixes`, `logd`), warnings for `log_file`, `log_ip`, dhcp `logfacility`/`logqueries`; through LuCI sessions | U+G | `test/ucode/actions/plugin.test.uc`, `test/guest/actions-api.sh`, `test/guest/actions-session.host.sh` |

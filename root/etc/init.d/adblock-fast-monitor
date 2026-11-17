@@ -10,13 +10,15 @@ USE_PROCD=1
 LOGGING=/usr/libexec/adblock-fast-monitor/logging.uc
 
 start_service() {
-	"$LOGGING" reconcile
+	"$LOGGING" start
 }
 
 stop_service() {
 	# restart = stop + start with the same configuration: keep the drop-ins
 	# so dnsmasq is not restarted twice; start_service reconciles them.
-	[ "$action" = restart ] || "$LOGGING" disable
+	# `stop` marks the service stopped, so a trigger firing still queued in
+	# procd (debounced 3 s) does nothing until the next start (§4).
+	[ "$action" = restart ] || "$LOGGING" stop
 }
 
 service_triggers() {

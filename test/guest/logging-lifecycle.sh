@@ -128,6 +128,17 @@ t_ok "stop: drop-in removed" test ! -e "$DROPIN"
 t_ok "stop: dnsmasq restarted" abfm_wait_until 20 starts_at_least 1
 t_eq "stop: dnsmasq restarted once" 1 "$(dnsmasq_starts)"
 assert_no_procs "stopped"
+# A trigger firing that procd queued before the stop (its instance.update
+# debounce is 3 s) runs logging.uc reconcile after it: that must not bring
+# the drop-in back. Run one directly, then outlast the debounce so a real
+# queued firing has run too; both must change nothing (§4).
+mark
+/usr/libexec/adblock-fast-monitor/logging.uc reconcile
+t_ok "stopped: a late trigger reconcile keeps the drop-in removed" test ! -e "$DROPIN"
+sleep 5
+reconciled
+t_ok "stopped: still no drop-in after the trigger debounce" test ! -e "$DROPIN"
+t_eq "stopped: a late trigger reconcile restarts nothing" 0 "$(dnsmasq_starts)"
 mark
 $INIT start
 reconciled
